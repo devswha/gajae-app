@@ -44,12 +44,11 @@ import {
     abortOpenCodeSession,
 } from './opencode-cli.js';
 import {
-    spawnGjcRun,
-    abortGjcRun,
     getPendingGjcApprovalsForSession,
     resolveGjcToolApproval,
     shutdownGjcWorker,
 } from './gjc-worker-client.js';
+import { getProductionJobOrchestrator } from './services/gjc-job-orchestrator.js';
 import {
     stripAnsiSequences,
     normalizeDetectedUrl,
@@ -64,6 +63,7 @@ import mcpUtilsRoutes from './routes/mcp-utils.js';
 import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
 import agentRoutes from './routes/agent.js';
+import gjcJobsRoutes from './routes/gjc-jobs.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import userRoutes from './routes/user.js';
@@ -119,6 +119,65 @@ function getPendingProviderApprovalsForSession(sessionId) {
 }
 
 
+const gjcJobOrchestrator = getProductionJobOrchestrator();
+let gjcJobAuthorityAvailable = false;
+
+function gjcJobAuthorityError() {
+    const error = new Error('GJC job authority is unavailable.');
+    error.code = 'GJC_JOB_AUTHORITY_UNAVAILABLE';
+    return error;
+}
+
+function gjcRoutingError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+
+function gjcSpawn(message, options, writer) {
+    const appSessionId = writer.getAppSessionId?.();
+    const completion = (async () => {
+        if (!gjcJobAuthorityAvailable) {
+            throw gjcJobAuthorityError();
+        }
+
+        const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
+        const reusableBinding = !binding || binding.state === 'Closed' || binding.state === 'Released';
+        const run = reusableBinding
+            ? await gjcJobOrchestrator.start('gjc', appSessionId, options.projectPath ?? options.cwd, message, { ...options, writer })
+            : binding.state === 'Ready'
+                ? await gjcJobOrchestrator.turnStart('gjc', appSessionId, message, { ...options, writer })
+                : binding.state === 'Interrupted'
+                    ? (() => { throw gjcRoutingError('JOB_INTERRUPTED', `Session "${appSessionId}" has an interrupted GJC job. Resume it explicitly.`); })()
+                    : (() => { throw gjcRoutingError('RUN_IN_PROGRESS', `Session "${appSessionId}" already has a GJC job in progress.`); })();
+        return run.completion;
+    })();
+
+    completion.abortHandle = appSessionId;
+    return completion;
+}
+
+async function gjcResume(appSessionId, message, options, writer) {
+    if (!gjcJobAuthorityAvailable) {
+        throw gjcJobAuthorityError();
+    }
+
+    const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
+    if (!binding || binding.state !== 'Interrupted') {
+        throw gjcRoutingError('JOB_NOT_INTERRUPTED', `Session "${appSessionId}" has no interrupted GJC job to resume.`);
+    }
+
+    const run = await gjcJobOrchestrator.resume(binding.jobId, appSessionId, message, { ...options, writer, provider: 'gjc' });
+    return run.completion;
+}
+
+async function abortGjcJob(appSessionId) {
+    if (!gjcJobAuthorityAvailable) {
+        throw gjcJobAuthorityError();
+    }
+    return gjcJobOrchestrator.abort({ provider: 'gjc', appSessionId });
+}
+
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
@@ -134,17 +193,18 @@ const wss = createWebSocketServer(server, {
             cursor: spawnCursor,
             codex: queryCodex,
             opencode: spawnOpenCode,
-            gjc: spawnGjcRun,
+            gjc: gjcSpawn,
         },
         abortFns: {
             claude: abortClaudeSDKSession,
             cursor: abortCursorSession,
             codex: abortCodexSession,
             opencode: abortOpenCodeSession,
-            gjc: abortGjcRun,
+            gjc: abortGjcJob,
         },
         resolveToolApproval: resolveProviderToolApproval,
         getPendingApprovalsForSession: getPendingProviderApprovalsForSession,
+        gjcResume,
     },
     shell: {
         resolveProviderSessionId: (sessionId, provider) => {
@@ -240,6 +300,7 @@ app.use('/api/providers', authenticateToken, providerRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
+app.use('/api/gjc', authenticateToken, gjcJobsRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 
@@ -1587,6 +1648,13 @@ async function startServer() {
     try {
         // Initialize authentication database
         await initializeDatabase();
+        try {
+            await gjcJobOrchestrator.reconcile();
+            gjcJobAuthorityAvailable = true;
+        } catch (error) {
+            console.error('[GJC Jobs] Authority unavailable; GJC runs are disabled:', error?.message || error);
+        }
+
 
         // Fail-closed exposure guard: refuse non-loopback listen while no
         // account exists (first /register would be claimable network-wide) or
@@ -1661,7 +1729,13 @@ async function startServer() {
             }
             shutdownStarted = true;
 
-            // Stop new HTTP/WebSocket work before permanently gating GJC starts.
+            gjcJobAuthorityAvailable = false;
+            try {
+                await gjcJobOrchestrator.interruptForShutdown();
+            } catch (err) {
+                console.error('[GJC Jobs] Error interrupting jobs during shutdown:', err?.message || err);
+            }
+
             server.close();
             for (const client of wss.clients) {
                 client.terminate();
@@ -1673,6 +1747,11 @@ async function startServer() {
                 await shutdownGjcWorker();
             } catch (err) {
                 console.error('[GJC Worker] Error stopping worker during shutdown:', err?.message || err);
+            }
+            try {
+                gjcJobOrchestrator.close();
+            } catch (err) {
+                console.error('[GJC Jobs] Error closing authority clients during shutdown:', err?.message || err);
             }
             try {
                 await browserUseService.stopAllSessions();

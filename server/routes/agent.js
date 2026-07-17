@@ -985,7 +985,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     let branchInfo = null;
     let prInfo = null;
 
-    if (createBranch || createPR) {
+    if ((createBranch || createPR) && provider !== 'gjc') {
       try {
         console.log('🔄 Starting GitHub branch/PR creation workflow...');
 
@@ -1190,7 +1190,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     }
 
     // Clean up if requested
-    if (cleanup && githubUrl) {
+    if (cleanup && githubUrl && provider !== 'gjc') {
       // Only cleanup if we cloned a repo (not for existing project paths)
       const sessionIdForCleanup = writer.getSessionId();
       setTimeout(() => {
@@ -1202,7 +1202,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     console.error('❌ External session error:', error);
 
     // Clean up on error
-    if (finalProjectPath && cleanup && githubUrl) {
+    if (finalProjectPath && cleanup && githubUrl && provider !== 'gjc') {
       const sessionIdForCleanup = writer ? writer.getSessionId() : null;
       cleanupProject(finalProjectPath, sessionIdForCleanup);
     }

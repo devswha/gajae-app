@@ -95,6 +95,8 @@ pub struct JobSnapshot {
     last_sequence: u64,
     worktree_id: Option<String>,
     branch: Option<String>,
+    base_commit: Option<String>,
+    repository_root: Option<String>,
     current_run: Option<CurrentRun>,
     dispatch_checkpoint: Option<DispatchCheckpoint>,
 }
@@ -438,7 +440,7 @@ impl PersistentAuthority {
         }
         let state_value = state_filter.map(JobState::as_str);
         let after = after.unwrap_or("");
-        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
+        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
         let rows = statement
             .query_map(
                 params![state_value, provider, after, limit],
@@ -549,9 +551,13 @@ impl PersistentAuthority {
         lease: &Lease,
         worktree_id: &str,
         branch: &str,
+        base_commit: &str,
+        repository_root: &str,
     ) -> Result<JobSnapshot, AuthorityError> {
         validate_worktree_id(worktree_id)?;
         validate_branch(branch)?;
+        validate_id(base_commit)?;
+        validate_worktree_id(repository_root)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -560,23 +566,35 @@ impl PersistentAuthority {
         if state(&tx, id)? != JobState::Reserved {
             return Err(AuthorityError::InvalidTransition);
         }
-        let binding: (Option<String>, Option<String>) = tx
+        let binding: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = tx
             .query_row(
-                "SELECT worktree_id,branch FROM jobs WHERE id=?1",
+                "SELECT worktree_id,branch,base_commit,repository_root FROM jobs WHERE id=?1",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(|_| AuthorityError::Storage)?;
         match binding {
-            (None, None) => {
+            (None, None, None, None) => {
                 tx.execute(
-                    "UPDATE jobs SET worktree_id=?2,branch=?3 WHERE id=?1",
-                    params![id, worktree_id, branch],
+                    "UPDATE jobs SET worktree_id=?2,branch=?3,base_commit=?4,repository_root=?5 WHERE id=?1",
+                    params![id, worktree_id, branch, base_commit, repository_root],
                 )
                 .map_err(|_| AuthorityError::Storage)?;
             }
-            (Some(worktree), Some(existing_branch))
-                if worktree == worktree_id && existing_branch == branch => {}
+            (
+                Some(worktree),
+                Some(existing_branch),
+                Some(existing_base_commit),
+                Some(existing_repository_root),
+            ) if worktree == worktree_id
+                && existing_branch == branch
+                && existing_base_commit == base_commit
+                && existing_repository_root == repository_root => {}
             _ => return Err(AuthorityError::WorktreeConflict),
         }
         let result = snapshot_tx(&tx, id)?;
@@ -1045,16 +1063,16 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> Result<JobEvent, rusqlite::Error> 
     })
 }
 fn snapshot_connection(connection: &Connection, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_tx(tx: &Transaction<'_>, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::Error> {
     let state: String = row.get(2)?;
     let owner: Option<String> = row.get(3)?;
-    let run_id: Option<String> = row.get(8)?;
-    let dispatched_at: Option<String> = row.get(11)?;
+    let run_id: Option<String> = row.get(10)?;
+    let dispatched_at: Option<String> = row.get(13)?;
     Ok(JobSnapshot {
         job_id: row.get(0)?,
         provider: row.get(1)?,
@@ -1065,11 +1083,13 @@ fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::E
         }),
         worktree_id: row.get(5)?,
         branch: row.get(6)?,
-        last_sequence: row.get(7)?,
+        base_commit: row.get(7)?,
+        repository_root: row.get(8)?,
+        last_sequence: row.get(9)?,
         current_run: run_id.clone().map(|run_id| CurrentRun {
             run_id,
-            app_session_id: row.get(9).unwrap_or(None),
-            provider_session_id: row.get(10).unwrap_or(None),
+            app_session_id: row.get(11).unwrap_or(None),
+            provider_session_id: row.get(12).unwrap_or(None),
         }),
         dispatch_checkpoint: dispatched_at.map(|_| DispatchCheckpoint {
             run_id: run_id.unwrap_or_default(),
@@ -1276,6 +1296,8 @@ struct Request {
     cap: Option<u64>,
     worktree_id: Option<String>,
     branch: Option<String>,
+    base_commit: Option<String>,
+    repository_root: Option<String>,
     run_id: Option<String>,
     app_session_id: Option<String>,
     provider_session_id: Option<String>,
@@ -1472,6 +1494,14 @@ fn dispatch(
                     .ok_or(AuthorityError::InvalidIdentifier)?,
                 request
                     .branch
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .base_commit
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .repository_root
                     .as_deref()
                     .ok_or(AuthorityError::InvalidIdentifier)?,
             )?,
@@ -2083,10 +2113,12 @@ mod tests {
         assert_eq!(reserved.state, JobState::Reserved);
         let lease = reserved.lease.unwrap();
 
-        a.prepare("wait", &lease, "/tmp/tree", "job/wait").unwrap();
-        a.prepare("wait", &lease, "/tmp/tree", "job/wait").unwrap();
+        a.prepare("wait", &lease, "/tmp/tree", "job/wait", "base", "/tmp")
+            .unwrap();
+        a.prepare("wait", &lease, "/tmp/tree", "job/wait", "base", "/tmp")
+            .unwrap();
         assert_eq!(
-            a.prepare("wait", &lease, "/tmp/other", "job/wait"),
+            a.prepare("wait", &lease, "/tmp/other", "job/wait", "base", "/tmp"),
             Err(AuthorityError::WorktreeConflict)
         );
         let admitted = a.admit("wait", &lease, "run", "app").unwrap();
@@ -2124,12 +2156,21 @@ mod tests {
             &prepared_lease,
             "/tmp/prepared-tree",
             "job/prepared",
+            "base",
+            "/tmp",
         )
         .unwrap();
         a.reserve("queued", "p", "o", 64).unwrap();
         let queued_lease = a.snapshot("queued").unwrap().lease.unwrap();
-        a.prepare("queued", &queued_lease, "/tmp/queued-tree", "job/queued")
-            .unwrap();
+        a.prepare(
+            "queued",
+            &queued_lease,
+            "/tmp/queued-tree",
+            "job/queued",
+            "base",
+            "/tmp",
+        )
+        .unwrap();
         a.admit("queued", &queued_lease, "queued-run", "queued-app")
             .unwrap();
         let changed = a.reconcile().unwrap();
@@ -2139,6 +2180,8 @@ mod tests {
         let prepared = a.snapshot("prepared").unwrap();
         assert_eq!(prepared.state, JobState::Waiting);
         assert_eq!(prepared.worktree_id.as_deref(), Some("/tmp/prepared-tree"));
+        assert_eq!(prepared.base_commit.as_deref(), Some("base"));
+        assert_eq!(prepared.repository_root.as_deref(), Some("/tmp"));
         assert_eq!(a.snapshot("queued").unwrap().state, JobState::Interrupted);
 
         let readmitted = a
@@ -2161,11 +2204,18 @@ mod tests {
         a.reserve("j", "gjc", "o", 4).unwrap();
         let lease = a.snapshot("j").unwrap().lease.unwrap();
         assert_eq!(
-            a.prepare("j", &lease, "relative", "job/j"),
+            a.prepare("j", &lease, "relative", "job/j", "base", "/canonical"),
             Err(AuthorityError::InvalidIdentifier)
         );
-        a.prepare("j", &lease, "/canonical/worktree", "job/j")
-            .unwrap();
+        a.prepare(
+            "j",
+            &lease,
+            "/canonical/worktree",
+            "job/j",
+            "base",
+            "/canonical",
+        )
+        .unwrap();
         let admitted = a.admit("j", &lease, "r", "app").unwrap();
         assert_eq!(
             admitted.current_run,
@@ -2231,8 +2281,15 @@ mod tests {
             Err(AuthorityError::AlreadyExists)
         );
         let lease = a.snapshot("j").unwrap().lease.unwrap();
-        a.prepare("j", &lease, "/canonical/worktree", "job/j")
-            .unwrap();
+        a.prepare(
+            "j",
+            &lease,
+            "/canonical/worktree",
+            "job/j",
+            "base",
+            "/canonical",
+        )
+        .unwrap();
         a.admit("j", &lease, "r1", "app").unwrap();
         a.finalize_run("j", &lease, "r1", JobState::Succeeded, "done", json!(null))
             .unwrap();

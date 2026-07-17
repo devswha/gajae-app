@@ -77,6 +77,12 @@ type ChatWebSocketDependencies = {
   ) => void;
   /** Provider-runtime approvals included in `chat_subscribed` after reconnect. */
   getPendingApprovalsForSession: (providerSessionId: string) => unknown[];
+  gjcResume?: (
+    appSessionId: string,
+    command: string,
+    options: AnyRecord,
+    writer: unknown
+  ) => Promise<unknown>;
 };
 
 /**
@@ -144,7 +150,8 @@ async function handleChatSend(
   ws: WebSocket,
   userId: string | number | null,
   data: AnyRecord,
-  dependencies: ChatWebSocketDependencies
+  dependencies: ChatWebSocketDependencies,
+  resumeGjcJob = false
 ): Promise<void> {
   const sessionId = readRequiredSessionId(data);
   if (!sessionId) {
@@ -167,6 +174,14 @@ async function handleChatSend(
   const spawnFn = dependencies.spawnFns[provider];
   if (!spawnFn) {
     sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', `Provider "${provider}" is not available.`, sessionId);
+    return;
+  }
+  if (resumeGjcJob && provider !== 'gjc') {
+    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', 'gjc.job.resume requires a GJC session.', sessionId);
+    return;
+  }
+  if (resumeGjcJob && !dependencies.gjcResume) {
+    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', 'GJC job resume is not available.', sessionId);
     return;
   }
 
@@ -207,7 +222,9 @@ async function handleChatSend(
   };
 
   try {
-    const providerRun = spawnFn(command, runtimeOptions, run.writer);
+    const providerRun = resumeGjcJob
+      ? dependencies.gjcResume!(sessionId, command, runtimeOptions, run.writer)
+      : spawnFn(command, runtimeOptions, run.writer);
     if (provider === 'gjc') {
       const abortHandle = (providerRun as ProviderSpawnResult).abortHandle;
       if (abortHandle) {
@@ -218,6 +235,12 @@ async function handleChatSend(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : null;
+    if (provider === 'gjc' && code) {
+      sendProtocolError(ws, code, message, sessionId);
+    }
   } finally {
     // Safety net: a runtime that crashed (or resolved) without emitting its
     // terminal `complete` would otherwise leave the session stuck in
@@ -251,10 +274,23 @@ async function handleChatAbort(
   }
 
   const abortFn = dependencies.abortFns[run.provider];
-  const abortSessionId = run.providerSessionId ?? run.writer.getAbortHandle();
+  const abortSessionId = run.provider === 'gjc'
+    ? sessionId
+    : run.providerSessionId ?? run.writer.getAbortHandle();
   let success = false;
-  if (abortFn && abortSessionId) {
-    success = Boolean(await abortFn(abortSessionId));
+  try {
+    if (abortFn && abortSessionId) {
+      success = Boolean(await abortFn(abortSessionId));
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : null;
+    if (run.provider === 'gjc' && code) {
+      sendProtocolError(ws, code, error instanceof Error ? error.message : String(error), sessionId);
+      return;
+    }
+    throw error;
   }
   if (!success && run.provider === 'gjc') {
     sendProtocolError(ws, 'ABORT_FAILED', `Session "${sessionId}" could not be aborted.`, sessionId);
@@ -364,6 +400,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.abort`               { sessionId }
+ * - `gjc.job.resume`           { sessionId, content, options? }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
  *
@@ -398,6 +435,9 @@ export function handleChatConnection(
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);
+          return;
+        case 'gjc.job.resume':
+          await handleChatSend(ws, userId, data, dependencies, true);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);

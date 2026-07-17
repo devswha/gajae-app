@@ -108,3 +108,13 @@ test('a completion after an unacknowledged abort finalizes Aborting as succeeded
   assert.equal(jobs.state.state, 'succeeded');
   assert.equal(jobs.calls.at(-1)?.[0], 'finalize');
 });
+test('resolveBinding reads the durable app-session binding', async () => {
+  const jobs = new Jobs();
+  jobs.state = { jobId: 'job-abc', state: 'Interrupted', lease: { owner: 'owner', generation: 1 } };
+  const orchestrator = new JobOrchestrator({ jobs, git: new Git(), supervisor: new Supervisor() });
+
+  const binding = await orchestrator.resolveBinding('gjc', 'app-1');
+  assert.equal(binding?.jobId, 'job-abc');
+  assert.equal(binding?.state, 'Interrupted');
+  assert.equal(binding?.providerSessionId, 'provider-1');
+});
