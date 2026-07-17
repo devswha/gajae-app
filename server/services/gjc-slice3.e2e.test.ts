@@ -42,7 +42,7 @@ test('Slice 3 persists lease-free publish lifecycle events only after a run is r
     owner: 'slice3-owner',
     createId: () => `slice3-${++next}`,
   });
-  const handle = await orchestrator.start(root, 'admin event fixture', { appSessionId: 'slice3-session', writer: { send() {} } });
+  const handle = await orchestrator.start('gjc', 'slice3-session', root, 'admin event fixture', { writer: { send() {} } });
   const running = await jobs.get({ jobId: handle.jobId }) as { lease: { owner: string; generation: number }; state: string };
   await assert.rejects(jobs.appendAdminEvent({ jobId: handle.jobId, eventId: 'publish.started', payload: {} }), /invalid_transition/u);
   await jobs.runFinalize({

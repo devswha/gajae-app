@@ -78,3 +78,18 @@ test('jobs rejects oversized event frames before starting the shared authority',
   assert.equal(children.length, 0);
   client.close();
 });
+test('jobs reports authority generation health across restart and successful probe', async () => {
+  const children: FakeChild[] = []; const health: Array<[boolean, number]> = [];
+  const client = new GjcJobsClient({ database: '/jobs.sqlite', spawn: fake(children), restartDelayMs: 1, onHealthChange: (healthy, generation) => health.push([healthy, generation]) });
+  const pending = client.list(); const first = children[0]!;
+  first.frame({ protocolVersion: 1, id: idAt(first, 0), ok: true, result: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  first.frame({ protocolVersion: 1, id: idAt(first, 1), ok: true, result: [] });
+  await pending;
+  first.emit('close');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const second = children[1]!;
+  second.frame({ protocolVersion: 1, id: idAt(second, 0), ok: true, result: [] });
+  assert.deepEqual(health, [[true, 1], [false, 1], [true, 2]]);
+  client.close();
+});

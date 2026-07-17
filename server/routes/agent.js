@@ -12,7 +12,7 @@ import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnOpenCode } from '../opencode-cli.js';
-import { spawnGjcRun } from '../gjc-worker-client.js';
+import { getProductionJobOrchestrator } from '../services/gjc-job-orchestrator.js';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
 import { normalizeProjectPath } from '../shared/utils.js';
 
@@ -963,12 +963,12 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         permissionMode: 'bypassPermissions' // Agent runs are non-interactive, like the other providers above
       }, writer);
     } else if (provider === 'gjc') {
-      console.log('🦞 Starting gjc headless session');
-
-      await spawnGjcRun(message.trim(), {
+      console.log('🦞 Starting gjc job');
+      const appSessionId = sessionId || crypto.randomUUID();
+      writer.send({ type: 'app-session-id', appSessionId });
+      const run = await getProductionJobOrchestrator().start('gjc', appSessionId, finalProjectPath, message.trim(), {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
-        sessionId: sessionId || null,
         model: model || undefined,
         effort,
         permissionMode: 'bypassPermissions',
@@ -978,7 +978,9 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         toolNames: ['bash', 'read', 'write', 'edit', 'search', 'find', 'ask'],
         spawns: '*',
         bashPolicy: { allowedPrefixes: [] },
-      }, writer);
+        writer,
+      });
+      await run.completion;
     }
 
     // Handle GitHub branch and PR creation after successful agent completion

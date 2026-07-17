@@ -1,9 +1,7 @@
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
-import { getDatabasePath } from '../modules/database/connection.js';
 import { GjcGitClient } from './gjc-git-client.js';
-import { GjcJobsClient } from './gjc-jobs-client.js';
 
 type JobSnapshot = { jobId: string; worktreeId?: string | null; branch?: string | null; repositoryRoot?: string | null; baseCommit?: string | null };
 type Worktree = { worktreeId?: string; path?: string; branch?: string };
@@ -11,14 +9,17 @@ type Jobs = {
   get(params: Record<string, unknown>): Promise<unknown>;
   appendAdminEvent(params: Record<string, unknown>): Promise<unknown>;
 };
-type Git = { list(params?: Record<string, unknown>): Promise<unknown>; status(params: Record<string, unknown>): Promise<unknown> };
+type Git = {
+  list(params?: Record<string, unknown>): Promise<unknown>;
+  status(params: Record<string, unknown>): Promise<unknown>;
+  diff(params: Record<string, unknown>): Promise<unknown>;
+};
 
 function record(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid job authority response.'); return value as Record<string, unknown>; }
 function snapshot(value: unknown): JobSnapshot { const item = record(value); if (typeof item.jobId !== 'string') throw new Error('Invalid job authority response.'); return item as JobSnapshot; }
 function items(value: unknown): Worktree[] { const item = record(value); return Array.isArray(item.items) ? item.items.filter((entry): entry is Worktree => Boolean(entry) && typeof entry === 'object') : []; }
-function execute(cwd: string, args: string[]): Promise<string> { return new Promise((resolve, reject) => { const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = ''; let stderr = ''; child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; }); child.on('error', reject); child.on('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `git ${args[0]} failed`))); }); }
-
 /** Resolves git operations from an immutable job binding, never a client-supplied path. */
+function execute(cwd: string, args: string[]): Promise<string> { return new Promise((resolve, reject) => { const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = ''; let stderr = ''; child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; }); child.on('error', reject); child.on('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `git ${args[0]} failed`))); }); }
 export class GjcJobGitService {
   constructor(private readonly jobs: Jobs, private readonly gitForRoot: (root: string) => Git) {}
 
@@ -36,20 +37,24 @@ export class GjcJobGitService {
   }
 
   private async lifecycle<T>(jobId: string, operation: 'publish' | 'pr', action: () => Promise<T>): Promise<T> {
-    await this.recordAdminEvent(jobId, `${operation}.started`, {});
+    const attempt = randomUUID();
+    await this.recordAdminEvent(jobId, `${operation}.${attempt}.started`, { attempt });
     try {
       const result = await action();
-      await this.recordAdminEvent(jobId, `${operation}.completed`, {});
+      await this.recordAdminEvent(jobId, `${operation}.${attempt}.completed`, { attempt });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 1024) : String(error).slice(0, 1024);
-      await this.recordAdminEvent(jobId, `${operation}.failed`, { message });
+      await this.recordAdminEvent(jobId, `${operation}.${attempt}.failed`, { attempt, message });
       throw error;
     }
   }
 
   async status(jobId: string): Promise<unknown> { const binding = await this.resolve(jobId); return binding.git.status({ jobId, branch: binding.job.branch, path: binding.path }); }
-  async diff(jobId: string): Promise<{ baseCommit: string; patch: string }> { const binding = await this.resolve(jobId); return { baseCommit: binding.job.baseCommit!, patch: await execute(binding.path, ['diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', binding.job.baseCommit!]) }; }
+  async diff(jobId: string): Promise<unknown> {
+    const binding = await this.resolve(jobId);
+    return binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true });
+  }
   async publish(jobId: string): Promise<{ branch: string }> {
     return this.lifecycle(jobId, 'publish', async () => {
       const binding = await this.resolve(jobId);
@@ -58,23 +63,26 @@ export class GjcJobGitService {
     });
   }
   async hasCommits(jobId: string): Promise<boolean> { const binding = await this.resolve(jobId); return Boolean((await execute(binding.path, ['rev-list', '--max-count=1', `${binding.job.baseCommit}..HEAD`])).trim()); }
-  async prContext(jobId: string): Promise<{ branch: string; baseBranch: string; remoteUrl: string }> {
+  async createPullRequest<T>(jobId: string, create: (context: { branch: string; baseBranch: string; remoteUrl: string }) => Promise<T>): Promise<T> {
     return this.lifecycle(jobId, 'pr', async () => {
       const binding = await this.resolve(jobId);
       if (!await this.hasCommits(jobId)) throw new Error('Cannot create a pull request: the job branch has no commits beyond its base commit.');
       const reference = await execute(binding.path, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
       const baseBranch = reference.trim().replace(/^refs\/remotes\/origin\//u, '');
       if (!baseBranch) throw new Error('Unable to determine the remote default branch.');
-      return { branch: binding.job.branch!, baseBranch, remoteUrl: (await execute(binding.path, ['remote', 'get-url', 'origin'])).trim() };
+      return create({ branch: binding.job.branch!, baseBranch, remoteUrl: (await execute(binding.path, ['remote', 'get-url', 'origin'])).trim() });
     });
+  }
+  async prContext(jobId: string): Promise<{ branch: string; baseBranch: string; remoteUrl: string }> {
+    return this.createPullRequest(jobId, async context => context);
   }
 }
 
 let production: GjcJobGitService | undefined;
-export function getProductionGjcJobGitService(): GjcJobGitService {
+export function getProductionGjcJobGitService(jobs: Jobs): GjcJobGitService {
   if (production) return production;
   const clients = new Map<string, GjcGitClient>();
-  production = new GjcJobGitService(new GjcJobsClient({ database: join(dirname(getDatabasePath()), 'jobs.sqlite3') }), root => {
+  production = new GjcJobGitService(jobs, root => {
     let client = clients.get(root);
     if (!client) { client = new GjcGitClient({ workdir: root }); clients.set(root, client); }
     return client;

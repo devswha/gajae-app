@@ -23,12 +23,13 @@ export type GjcNativeSpawn = (command: string, args: string[], options: { detach
 export type GjcNativeClientOptions = {
   corePath?: string; spawn?: GjcNativeSpawn; platform?: NodeJS.Platform; environment?: NodeJS.ProcessEnv;
   compiled?: boolean; readyTimeoutMs?: number; restartDelayMs?: number; maxRestartDelayMs?: number; aggregateLimitBytes?: number;
+  onHealthChange?: (healthy: boolean, generation: number) => void;
 };
 type Pending = { method: string; resolve(value: unknown): void; reject(error: Error): void; items: unknown[]; chunks: Buffer[]; bytes: number; nextSequence: number };
 
 /** Protocol v1 NDJSON process owner. Failed requests are deliberately never replayed. */
 export class GjcNativeClient {
-  private readonly options: Required<Pick<GjcNativeClientOptions, 'spawn' | 'platform' | 'environment' | 'readyTimeoutMs' | 'restartDelayMs' | 'maxRestartDelayMs' | 'aggregateLimitBytes'>> & Pick<GjcNativeClientOptions, 'corePath' | 'compiled'>;
+  private readonly options: Required<Pick<GjcNativeClientOptions, 'spawn' | 'platform' | 'environment' | 'readyTimeoutMs' | 'restartDelayMs' | 'maxRestartDelayMs' | 'aggregateLimitBytes'>> & Pick<GjcNativeClientOptions, 'corePath' | 'compiled' | 'onHealthChange'>;
   private child?: Child;
   private generation = 0;
   private input = Buffer.alloc(0);
@@ -42,7 +43,7 @@ export class GjcNativeClient {
   private readyReject?: (error: Error) => void;
 
   constructor(private readonly command: 'git' | 'jobs', options: GjcNativeClientOptions = {}, private readonly launchArgs?: string[]) {
-    this.options = { spawn: options.spawn ?? spawnChild as unknown as GjcNativeSpawn, platform: options.platform ?? process.platform, environment: options.environment ?? process.env, readyTimeoutMs: options.readyTimeoutMs ?? 5_000, restartDelayMs: options.restartDelayMs ?? 50, maxRestartDelayMs: options.maxRestartDelayMs ?? 1_000, aggregateLimitBytes: options.aggregateLimitBytes ?? MAX_AGGREGATE_BYTES, corePath: options.corePath, compiled: options.compiled };
+    this.options = { spawn: options.spawn ?? spawnChild as unknown as GjcNativeSpawn, platform: options.platform ?? process.platform, environment: options.environment ?? process.env, readyTimeoutMs: options.readyTimeoutMs ?? 5_000, restartDelayMs: options.restartDelayMs ?? 50, maxRestartDelayMs: options.maxRestartDelayMs ?? 1_000, aggregateLimitBytes: options.aggregateLimitBytes ?? MAX_AGGREGATE_BYTES, corePath: options.corePath, compiled: options.compiled, onHealthChange: options.onHealthChange };
     this.backoff = this.options.restartDelayMs;
   }
 
@@ -174,6 +175,7 @@ export class GjcNativeClient {
     this.ready = true;
     this.backoff = this.options.restartDelayMs;
     this.readyResolve?.();
+    this.options.onHealthChange?.(true, generation);
   }
   private rejectPending(id: string, error: Error): void { const pending = this.pending.get(id); if (pending) { this.pending.delete(id); pending.reject(error); } }
   private failed(child?: Child, generation?: number): void {
@@ -181,6 +183,7 @@ export class GjcNativeClient {
     const failedChild = child ?? this.child;
     this.ready = false;
     this.readyReject?.(new Error(FAILURE));
+    this.options.onHealthChange?.(false, generation ?? this.generation);
     this.starting = undefined;
     for (const [id] of this.pending) this.rejectPending(id, new Error(FAILURE));
     if (failedChild && this.child === failedChild) this.child = undefined;

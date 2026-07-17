@@ -14,7 +14,7 @@ import { GjcJobsClient, GjcJobsEventTooLargeError } from './gjc-jobs-client.js';
 
 const execFile = promisify(execFileCallback);
 const corePath = join(process.cwd(), 'dist-native', 'gajae-core');
-const workerOptions = { appSessionId: 'e2e-session', writer: { send() {} } };
+const workerOptions = { writer: { send() {} } };
 
 class FakeSupervisor implements JobSupervisor {
   readonly inputs: GjcWorkerSpawnRun[] = [];
@@ -79,7 +79,7 @@ async function worktreeCount(root: string): Promise<number> {
 test('capacity rejects the fifth bound start without creating a conflicting binding', async (t) => {
   const f = await fixture(t);
   const results = await Promise.allSettled(Array.from({ length: 5 }, (_, index) =>
-    f.orchestrator.start(f.root, `message-${index}`, { ...workerOptions, appSessionId: `capacity-session-${index}`, cap: 4 }),
+    f.orchestrator.start('gjc', `capacity-session-${index}`, f.root, `message-${index}`, { ...workerOptions, cap: 4 }),
   ));
   const list = await f.jobs.list({});
   assert.ok(Array.isArray(list));
@@ -92,7 +92,7 @@ test('capacity rejects the fifth bound start without creating a conflicting bind
 
 test('start always dispatches from a managed worktree rather than the project root', async (t) => {
   const f = await fixture(t);
-  const result = await f.orchestrator.start(f.root, 'worktree window', workerOptions);
+  const result = await f.orchestrator.start('gjc', 'e2e-session', f.root, 'worktree window', workerOptions);
   const cwd = f.supervisor.inputs[0]?.options?.cwd;
   const expected = (await f.jobs.get({ jobId: result.jobId }) as { worktreeId: string }).worktreeId;
   assert.equal(cwd, expected);
@@ -105,18 +105,13 @@ test('start always dispatches from a managed worktree rather than the project ro
 
 test('reconcile then resume reuses the original worktree and creates a new run', async (t) => {
   const f = await fixture(t);
-  const first = await f.orchestrator.start(f.root, 'resume me', workerOptions);
+  const first = await f.orchestrator.start('gjc', 'e2e-session', f.root, 'resume me', workerOptions);
   const worktreesBefore = await worktreeCount(f.root);
   await f.orchestrator.reconcile();
   const interrupted = await f.jobs.get({ jobId: first.jobId }) as { state: string; worktreeId: string };
   assert.equal(interrupted.state, 'interrupted');
   assert.equal(interrupted.worktreeId, f.supervisor.inputs[0]?.options?.cwd);
-  const resumed = await f.orchestrator.resume(first.jobId, {
-    ...workerOptions,
-    projectPath: f.root,
-    message: 'resumed',
-    providerSessionId: 'provider-session',
-  });
+  const resumed = await f.orchestrator.resume(first.jobId, 'e2e-session', 'resumed', workerOptions);
   assert.notEqual(resumed.runId, first.runId);
   assert.equal(f.supervisor.inputs.length, 2);
   assert.equal(f.supervisor.inputs[1]?.options?.cwd, interrupted.worktreeId);
@@ -125,21 +120,16 @@ test('reconcile then resume reuses the original worktree and creates a new run',
 });
 test('resume at capacity preserves the interrupted job without starting a worker', async (t) => {
   const f = await fixture(t);
-  const interrupted = await f.orchestrator.start(f.root, 'interrupt me', workerOptions);
+  const interrupted = await f.orchestrator.start('gjc', 'e2e-session', f.root, 'interrupt me', workerOptions);
   await f.orchestrator.reconcile();
   assert.equal((await f.jobs.get({ jobId: interrupted.jobId }) as { state: string }).state, 'interrupted');
 
   await Promise.all(Array.from({ length: 4 }, (_, index) =>
-    f.orchestrator.start(f.root, `capacity-${index}`, { ...workerOptions, appSessionId: `capacity-session-${index}` }),
+    f.orchestrator.start('gjc', `capacity-session-${index}`, f.root, `capacity-${index}`, workerOptions),
   ));
   const startedWorkers = f.supervisor.inputs.length;
   await assert.rejects(
-    f.orchestrator.resume(interrupted.jobId, {
-      ...workerOptions,
-      projectPath: f.root,
-      message: 'resume',
-      providerSessionId: 'provider-session',
-    }),
+    f.orchestrator.resume(interrupted.jobId, 'e2e-session', 'resume', workerOptions),
     (error: unknown) => error instanceof GjcCapacityExhaustedError && error.jobId === interrupted.jobId,
   );
   assert.equal((await f.jobs.get({ jobId: interrupted.jobId }) as { state: string }).state, 'interrupted');
@@ -148,7 +138,7 @@ test('resume at capacity preserves the interrupted job without starting a worker
 
 test('confirmed prune rejects a dirty managed worktree without removing it', async (t) => {
   const f = await fixture(t);
-  const result = await f.orchestrator.start(f.root, 'make dirty', workerOptions);
+  const result = await f.orchestrator.start('gjc', 'e2e-session', f.root, 'make dirty', workerOptions);
   const path = join(f.root, '.gjc-worktrees', result.jobId);
   await writeFile(join(path, 'uncommitted.txt'), 'dirty\n');
   await assert.rejects(
@@ -161,7 +151,7 @@ test('confirmed prune rejects a dirty managed worktree without removing it', asy
 test('a closed jobs client rejects admission without creating state or a worktree', async (t) => {
   const f = await fixture(t);
   f.jobs.close();
-  await assert.rejects(f.orchestrator.start(f.root, 'must not start', workerOptions), /unavailable/u);
+  await assert.rejects(f.orchestrator.start('gjc', 'e2e-session', f.root, 'must not start', workerOptions), /unavailable/u);
   assert.equal(f.supervisor.inputs.length, 0);
   assert.equal(await worktreeCount(f.root), 1);
 
@@ -171,12 +161,12 @@ test('a closed jobs client rejects admission without creating state or a worktre
 });
 test('oversized worker events are rejected without interrupting other active jobs', async (t) => {
   const f = await fixture(t);
-  const first = await f.orchestrator.start(f.root, 'first', workerOptions);
+  const first = await f.orchestrator.start('gjc', 'e2e-session', f.root, 'first', workerOptions);
   await assert.rejects(
     f.jobs.appendEvent({ jobId: first.jobId, payload: { content: 'x'.repeat(64 * 1024) } }),
     (error: unknown) => error instanceof GjcJobsEventTooLargeError && error.code === 'event_too_large',
   );
-  const second = await f.orchestrator.start(f.root, 'second', { ...workerOptions, appSessionId: 'second-session' });
+  const second = await f.orchestrator.start('gjc', 'second-session', f.root, 'second', workerOptions);
   assert.equal((await f.jobs.get({ jobId: first.jobId }) as { state: string }).state, 'running');
   assert.equal((await f.jobs.get({ jobId: second.jobId }) as { state: string }).state, 'running');
 });

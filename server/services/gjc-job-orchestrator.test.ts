@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
 
-type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string } };
+type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string } };
 class Jobs implements JobAuthority {
   calls: Array<[string, Record<string, unknown>]> = []; state: Snap = { jobId: '', state: 'Reserved', lease: { owner: 'owner', generation: 1 } };
   private call(name: string, params: Record<string, unknown>): Promise<unknown> { this.calls.push([name, params]); return Promise.resolve(this.state); }
   reserve(p: Record<string, unknown>) { this.state = { ...this.state, jobId: String(p.jobId), state: 'Reserved', lease: { owner: String(p.owner), generation: 1 } }; return this.call('reserve', p); }
-  prepare(p: Record<string, unknown>) { this.state = { ...this.state, worktreeId: String(p.worktreeId), branch: String(p.branch) }; return this.call('prepare', p); }
+  prepare(p: Record<string, unknown>) { this.state = { ...this.state, worktreeId: String(p.worktreeId), repositoryRoot: String(p.repositoryRoot), branch: String(p.branch) }; return this.call('prepare', p); }
   admit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'Queued', currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('admit', p); }
   readmit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'Queued', lease: { owner: String(p.owner), generation: 2 }, currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('readmit', p); }
   transition(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state) }; return this.call('transition', p); }
@@ -31,7 +31,7 @@ const options = { appSessionId: 'app-1', writer: { send() {} } };
 test('start reserves before creating a worktree, admits caller-owned run id, then runs it', async () => {
   const jobs = new Jobs(); const git = new Git(); const supervisor = new Supervisor();
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
-  const result = await orchestrator.start('/project', 'hello', options);
+  const result = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
   assert.equal(result.jobId, 'job-abc');
   assert.deepEqual(jobs.calls.map(([name]) => name), ['reserve', 'prepare', 'admit', 'markDispatching', 'transition']);
   assert.deepEqual(git.calls, ['create']);
@@ -49,7 +49,7 @@ test('completion resolves only after durable finalization succeeds', async () =>
   jobs.finalize = async (p) => { jobs.calls.push(['finalize', p]); await finalizeGate; jobs.state = { ...jobs.state, state: String(p.state) }; return jobs.state; };
   const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => true };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
-  const run = await orchestrator.start('/project', 'hello', options);
+  const run = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
   let completed = false; void run.completion.then(() => { completed = true; });
   settle(); await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(completed, false); assert.equal(jobs.calls.at(-1)?.[0], 'finalize');
@@ -64,7 +64,7 @@ test('completion read-back accepts a committed success when the finalize respons
     throw new Error('finalize response lost');
   };
   const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => true };
-  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('/project', 'hello', options);
+  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
   settle();
   await run.completion;
   assert.equal(jobs.state.state, 'succeeded');
@@ -74,15 +74,15 @@ test('completion read-back accepts a committed success when the finalize respons
 test('capacity admission rejects while leaving the durable waiting job for a future dispatcher', async () => {
   const jobs = new Jobs(); jobs.reserve = async (p) => { jobs.calls.push(['reserve', p]); jobs.state = { ...jobs.state, jobId: String(p.jobId), state: 'Waiting' }; return jobs.state; };
   const git = new Git(); const supervisor = new Supervisor(); const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
-  await assert.rejects(orchestrator.start('/project', 'hello', options), (error: unknown) => error instanceof GjcCapacityExhaustedError && error.jobId === 'job-abc');
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), (error: unknown) => error instanceof GjcCapacityExhaustedError && error.jobId === 'job-abc');
   assert.equal(jobs.state.state, 'Waiting'); assert.deepEqual(git.calls, []); assert.equal(supervisor.input, undefined);
 });
 
 test('resume derives the repository root from its stored worktree and never creates one', async () => {
-  const jobs = new Jobs(); jobs.state = { jobId: 'job-abc', state: 'Interrupted', lease: { owner: 'old', generation: 1 }, worktreeId: '/project/.gjc-worktrees/job-abc', branch: 'job/job-abc' };
+  const jobs = new Jobs(); jobs.state = { jobId: 'job-abc', state: 'Interrupted', lease: { owner: 'old', generation: 1 }, worktreeId: '/project/.gjc-worktrees/job-abc', repositoryRoot: '/project', branch: 'job/job-abc' };
   const git = new Git(); const supervisor = new Supervisor(); let requestedRoot: string | undefined;
   const orchestrator = new JobOrchestrator({ jobs, gitForProject: (root) => (requestedRoot = root, git), supervisor, owner: 'owner', createId: () => 'next' });
-  await orchestrator.resume('job-abc', { ...options, message: 'resume', providerSessionId: 'provider-1' });
+  await orchestrator.resume('job-abc', 'app-1', 'resume', options);
   assert.equal(requestedRoot, '/project'); assert.deepEqual(git.calls, ['list', 'status']); assert.equal(supervisor.input?.options?.sessionId, 'provider-1'); assert.equal(supervisor.input?.options?.cwd, '/project/.gjc-worktrees/job-abc');
 });
 
@@ -100,7 +100,7 @@ test('a completion after an unacknowledged abort finalizes Aborting as succeeded
     abort: async () => false,
   };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
-  const run = await orchestrator.start('/project', 'hello', options);
+  const run = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
   assert.equal(await orchestrator.abort(run.jobId), false);
   assert.equal(jobs.state.state, 'aborting');
   settle();

@@ -142,12 +142,13 @@ function gjcSpawn(message, options, writer) {
         }
 
         const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
-        const reusableBinding = !binding || binding.state === 'Closed' || binding.state === 'Released';
+        const state = String(binding?.state || '').toLowerCase();
+        const reusableBinding = !binding || state === 'closed' || state === 'released';
         const run = reusableBinding
             ? await gjcJobOrchestrator.start('gjc', appSessionId, options.projectPath ?? options.cwd, message, { ...options, writer })
-            : binding.state === 'Ready'
+            : state === 'ready'
                 ? await gjcJobOrchestrator.turnStart('gjc', appSessionId, message, { ...options, writer })
-                : binding.state === 'Interrupted'
+                : state === 'interrupted'
                     ? (() => { throw gjcRoutingError('JOB_INTERRUPTED', `Session "${appSessionId}" has an interrupted GJC job. Resume it explicitly.`); })()
                     : (() => { throw gjcRoutingError('RUN_IN_PROGRESS', `Session "${appSessionId}" already has a GJC job in progress.`); })();
         return run.completion;
@@ -163,7 +164,7 @@ async function gjcResume(appSessionId, message, options, writer) {
     }
 
     const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
-    if (!binding || binding.state !== 'Interrupted') {
+    if (!binding || String(binding.state).toLowerCase() !== 'interrupted') {
         throw gjcRoutingError('JOB_NOT_INTERRUPTED', `Session "${appSessionId}" has no interrupted GJC job to resume.`);
     }
 
@@ -1730,10 +1731,12 @@ async function startServer() {
             shutdownStarted = true;
 
             gjcJobAuthorityAvailable = false;
+            let gjcShutdownFenced = false;
             try {
                 await gjcJobOrchestrator.interruptForShutdown();
+                gjcShutdownFenced = true;
             } catch (err) {
-                console.error('[GJC Jobs] Error interrupting jobs during shutdown:', err?.message || err);
+                console.error('[GJC Jobs] Shutdown fence failed; preserving worker and authority for next-open reconciliation:', err?.message || err);
             }
 
             server.close();
@@ -1743,15 +1746,17 @@ async function startServer() {
             wss.close();
             server.closeAllConnections?.();
 
-            try {
-                await shutdownGjcWorker();
-            } catch (err) {
-                console.error('[GJC Worker] Error stopping worker during shutdown:', err?.message || err);
-            }
-            try {
-                gjcJobOrchestrator.close();
-            } catch (err) {
-                console.error('[GJC Jobs] Error closing authority clients during shutdown:', err?.message || err);
+            if (gjcShutdownFenced) {
+                try {
+                    await shutdownGjcWorker();
+                } catch (err) {
+                    console.error('[GJC Worker] Error stopping worker during shutdown:', err?.message || err);
+                }
+                try {
+                    gjcJobOrchestrator.close();
+                } catch (err) {
+                    console.error('[GJC Jobs] Error closing authority clients during shutdown:', err?.message || err);
+                }
             }
             try {
                 await browserUseService.stopAllSessions();
