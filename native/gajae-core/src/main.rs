@@ -4,12 +4,13 @@ use std::io::{self, Read, Write};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 
-use gajae_core::{Command as CliCommand, jobs, map_exit_status, parse_args, pty, watcher};
+use gajae_core::{Command as CliCommand, git, jobs, map_exit_status, parse_args, pty, watcher};
 
 const USAGE_ERROR: &[u8] = b"gajae-core: usage error\n";
 const SPAWN_ERROR: &[u8] = b"gajae-core: spawn failed\n";
 const PROXY_ERROR: &[u8] = b"gajae-core: proxy failed\n";
 const JOBS_ERROR: &[u8] = b"gajae-core: jobs protocol failed\n";
+const GIT_ERROR: &[u8] = b"gajae-core: git protocol failed\n";
 const PTY_ERROR: &[u8] = b"gajae-core: pty protocol failed\n";
 
 fn main() -> ExitCode {
@@ -31,6 +32,13 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             } else {
                 fail(JOBS_ERROR)
+            }
+        }
+        Ok(CliCommand::Git { workdir }) => {
+            if git::run(&workdir, io::stdin().lock(), io::stdout().lock()) {
+                ExitCode::SUCCESS
+            } else {
+                fail(GIT_ERROR)
             }
         }
         Ok(CliCommand::Pty { program, args }) => {

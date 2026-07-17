@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+pub mod git;
 pub mod jobs;
 pub mod pty;
 pub mod watcher;
@@ -19,6 +20,9 @@ pub enum Command {
     },
     Jobs {
         database: PathBuf,
+    },
+    Git {
+        workdir: PathBuf,
     },
     Pty {
         program: OsString,
@@ -55,6 +59,7 @@ where
         },
         Some(command) if command == "watch" => parse_watch_args(args),
         Some(command) if command == "jobs" => parse_jobs_args(args),
+        Some(command) if command == "git" => parse_git_args(args),
         Some(command) if command == "pty" => parse_pty_args(args),
         _ => Err(ParseError),
     }
@@ -75,6 +80,20 @@ where
     Ok(Command::Jobs { database })
 }
 
+fn parse_git_args<I>(args: I) -> Result<Command, ParseError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    if args.next().as_deref() != Some(std::ffi::OsStr::new("--workdir")) {
+        return Err(ParseError);
+    }
+    let workdir = args.next().map(PathBuf::from).ok_or(ParseError)?;
+    if !workdir.is_absolute() || args.next().is_some() {
+        return Err(ParseError);
+    }
+    Ok(Command::Git { workdir })
+}
 fn parse_pty_args<I>(args: I) -> Result<Command, ParseError>
 where
     I: IntoIterator<Item = OsString>,
@@ -187,6 +206,20 @@ mod tests {
             })
         );
         assert_eq!(parse_args([os("pty"), os("program")]), Err(ParseError));
+    }
+    #[test]
+    fn parses_absolute_git_workdir_only() {
+        assert_eq!(
+            parse_args([os("git"), os("--workdir"), os("/tmp/repository")]),
+            Ok(Command::Git {
+                workdir: std::path::PathBuf::from("/tmp/repository")
+            })
+        );
+        assert_eq!(
+            parse_args([os("git"), os("--workdir"), os("relative")]),
+            Err(ParseError)
+        );
+        assert_eq!(parse_args([os("git")]), Err(ParseError));
     }
 
     #[test]

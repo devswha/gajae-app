@@ -13,6 +13,7 @@ const DEFAULT_CAPACITY: u64 = 4;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
+    Waiting,
     Reserved,
     Queued,
     Running,
@@ -27,7 +28,8 @@ impl JobState {
     fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Reserved, Self::Queued)
+            (Self::Waiting, Self::Reserved)
+                | (Self::Reserved, Self::Queued)
                 | (Self::Reserved, Self::Aborted)
                 | (Self::Queued, Self::Running)
                 | (Self::Queued, Self::Aborted)
@@ -38,6 +40,9 @@ impl JobState {
                 | (Self::Aborting, Self::Aborted)
                 | (Self::Aborting, Self::Failed)
                 | (Self::Aborting, Self::Interrupted)
+                | (Self::Waiting, Self::Failed)
+                | (Self::Reserved, Self::Failed)
+                | (Self::Queued, Self::Failed)
         )
     }
     fn is_terminal(self) -> bool {
@@ -45,6 +50,7 @@ impl JobState {
     }
     fn as_str(self) -> &'static str {
         match self {
+            Self::Waiting => "waiting",
             Self::Reserved => "reserved",
             Self::Queued => "queued",
             Self::Running => "running",
@@ -102,6 +108,7 @@ pub enum AuthorityError {
     TerminalJob,
     EventConflict,
     CapacityExhausted,
+    WorktreeConflict,
     Storage,
 }
 
@@ -345,18 +352,51 @@ impl PersistentAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| AuthorityError::Storage)?;
-        let count: u64 = tx.query_row("SELECT COUNT(*) FROM jobs WHERE state IN ('reserved','queued','running','aborting')", [], |r| r.get(0)).map_err(|_| AuthorityError::Storage)?;
-        if count >= cap {
-            return Err(AuthorityError::CapacityExhausted);
+        let existing: Option<(String, String)> = tx
+            .query_row("SELECT provider,state FROM jobs WHERE id=?1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()
+            .map_err(|_| AuthorityError::Storage)?;
+        let count = consuming_count(&tx)?;
+        match existing {
+            Some((existing_provider, existing_state)) => {
+                if existing_provider != provider
+                    || JobState::parse(&existing_state)? != JobState::Waiting
+                {
+                    return Err(AuthorityError::AlreadyExists);
+                }
+                if count >= cap {
+                    return snapshot_tx(&tx, id);
+                }
+                tx.execute(
+                    "UPDATE jobs SET state='reserved',lease_owner=?2,lease_generation=next_lease_generation,next_lease_generation=next_lease_generation+1 WHERE id=?1",
+                    params![id, owner],
+                ).map_err(|_| AuthorityError::Storage)?;
+            }
+            None if count >= cap => {
+                tx.execute("INSERT INTO jobs(id,provider,state,lease_generation,next_lease_generation) VALUES(?1,?2,'waiting',0,1)", params![id, provider]).map_err(map_insert)?;
+            }
+            None => {
+                tx.execute("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,'reserved',?3,1,2)", params![id, provider, owner]).map_err(map_insert)?;
+            }
         }
-        tx.execute("INSERT INTO jobs (id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES (?1,?2,'reserved',?3,1,2)", params![id,provider,owner]).map_err(map_insert)?;
         let result = snapshot_tx(&tx, id)?;
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(result)
     }
-    fn readmit(&mut self, id: &str, owner: &str, cap: u64) -> Result<JobSnapshot, AuthorityError> {
+    fn readmit(
+        &mut self,
+        id: &str,
+        owner: &str,
+        run_id: &str,
+        app_session_id: &str,
+        cap: u64,
+    ) -> Result<JobSnapshot, AuthorityError> {
         validate_id(id)?;
         validate_id(owner)?;
+        validate_id(run_id)?;
+        validate_id(app_session_id)?;
         if !(1..=64).contains(&cap) {
             return Err(AuthorityError::InvalidIdentifier);
         }
@@ -364,27 +404,136 @@ impl PersistentAuthority {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| AuthorityError::Storage)?;
-        let (state, lease_owner, generation): (String, Option<String>, u64) = tx
+        let (current, lease_owner, generation): (String, Option<String>, u64) = tx
             .query_row(
-                "SELECT state, lease_owner, next_lease_generation FROM jobs WHERE id=?1",
+                "SELECT state,lease_owner,next_lease_generation FROM jobs WHERE id=?1",
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(|_| AuthorityError::Storage)?
             .ok_or(AuthorityError::NotFound)?;
-        if JobState::parse(&state)? != JobState::Interrupted || lease_owner.is_some() {
+        if JobState::parse(&current)? != JobState::Interrupted || lease_owner.is_some() {
             return Err(AuthorityError::InvalidTransition);
         }
-        let count: u64 = tx.query_row("SELECT COUNT(*) FROM jobs WHERE state IN ('reserved','queued','running','aborting')", [], |r| r.get(0)).map_err(|_| AuthorityError::Storage)?;
-        if count >= cap {
+        if consuming_count(&tx)? >= cap {
             return Err(AuthorityError::CapacityExhausted);
         }
-        tx.execute(
-            "UPDATE jobs SET state='queued', lease_owner=?2, lease_generation=?3, next_lease_generation=?4 WHERE id=?1",
-            params![id, owner, generation, generation + 1],
-        )
-        .map_err(|_| AuthorityError::Storage)?;
+        tx.execute("UPDATE jobs SET state='queued',lease_owner=?2,lease_generation=?3,next_lease_generation=?4 WHERE id=?1", params![id, owner, generation, generation + 1]).map_err(|_| AuthorityError::Storage)?;
+        insert_run(&tx, id, run_id, app_session_id)?;
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
+    fn prepare(
+        &mut self,
+        id: &str,
+        lease: &Lease,
+        worktree_id: &str,
+        branch: &str,
+    ) -> Result<JobSnapshot, AuthorityError> {
+        validate_id(worktree_id)?;
+        validate_id(branch)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        verify_lease(&tx, id, lease)?;
+        if state(&tx, id)? != JobState::Reserved {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        let binding: (Option<String>, Option<String>) = tx
+            .query_row(
+                "SELECT worktree_id,branch FROM jobs WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| AuthorityError::Storage)?;
+        match binding {
+            (None, None) => {
+                tx.execute(
+                    "UPDATE jobs SET worktree_id=?2,branch=?3 WHERE id=?1",
+                    params![id, worktree_id, branch],
+                )
+                .map_err(|_| AuthorityError::Storage)?;
+            }
+            (Some(worktree), Some(existing_branch))
+                if worktree == worktree_id && existing_branch == branch => {}
+            _ => return Err(AuthorityError::WorktreeConflict),
+        }
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
+    fn admit(
+        &mut self,
+        id: &str,
+        lease: &Lease,
+        run_id: &str,
+        app_session_id: &str,
+    ) -> Result<JobSnapshot, AuthorityError> {
+        validate_id(run_id)?;
+        validate_id(app_session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        verify_lease(&tx, id, lease)?;
+        let current = state(&tx, id)?;
+        let binding: (Option<String>, Option<String>) = tx
+            .query_row(
+                "SELECT worktree_id,branch FROM jobs WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| AuthorityError::Storage)?;
+        if binding.0.is_none() || binding.1.is_none() {
+            return Err(AuthorityError::WorktreeConflict);
+        }
+        if current == JobState::Reserved {
+            tx.execute("UPDATE jobs SET state='queued' WHERE id=?1", [id])
+                .map_err(|_| AuthorityError::Storage)?;
+            insert_run(&tx, id, run_id, app_session_id)?;
+        } else if current != JobState::Queued || !same_run(&tx, id, run_id, app_session_id)? {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
+    fn bind_provider_session(
+        &mut self,
+        id: &str,
+        lease: &Lease,
+        run_id: &str,
+        provider_session_id: &str,
+    ) -> Result<JobSnapshot, AuthorityError> {
+        validate_id(run_id)?;
+        validate_id(provider_session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        verify_lease(&tx, id, lease)?;
+        let existing: Option<Option<String>> = tx
+            .query_row(
+                "SELECT provider_session_id FROM runs WHERE run_id=?1 AND job_id=?2",
+                params![run_id, id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| AuthorityError::Storage)?;
+        match existing {
+            Some(None) => {
+                tx.execute(
+                    "UPDATE runs SET provider_session_id=?3 WHERE run_id=?1 AND job_id=?2",
+                    params![run_id, id, provider_session_id],
+                )
+                .map_err(|_| AuthorityError::Storage)?;
+            }
+            Some(Some(value)) if value == provider_session_id => {}
+            _ => return Err(AuthorityError::InvalidTransition),
+        }
         let result = snapshot_tx(&tx, id)?;
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(result)
@@ -397,7 +546,7 @@ impl PersistentAuthority {
         let mut ids: Vec<String> = Vec::new();
         {
             let mut st = tx
-                .prepare("SELECT id FROM jobs WHERE state IN ('running','aborting') ORDER BY id")
+                .prepare("SELECT id FROM jobs WHERE state IN ('reserved','queued','running','aborting') ORDER BY id")
                 .map_err(|_| AuthorityError::Storage)?;
             let rows = st
                 .query_map([], |r| r.get::<_, String>(0))
@@ -406,7 +555,12 @@ impl PersistentAuthority {
                 ids.push(id.map_err(|_| AuthorityError::Storage)?);
             }
         }
-        tx.execute("UPDATE jobs SET state='interrupted',lease_owner=NULL WHERE state IN ('running','aborting')", []).map_err(|_| AuthorityError::Storage)?;
+        tx.execute(
+            "UPDATE jobs SET state='waiting',lease_owner=NULL WHERE state='reserved'",
+            [],
+        )
+        .map_err(|_| AuthorityError::Storage)?;
+        tx.execute("UPDATE jobs SET state='interrupted',lease_owner=NULL WHERE state IN ('queued','running','aborting')", []).map_err(|_| AuthorityError::Storage)?;
         let mut changed = Vec::new();
         for id in ids {
             changed.push(snapshot_tx(&tx, &id)?);
@@ -417,6 +571,40 @@ impl PersistentAuthority {
     fn snapshot(&self, id: &str) -> Result<JobSnapshot, AuthorityError> {
         snapshot_connection(&self.connection, id)
     }
+}
+fn consuming_count(tx: &Transaction<'_>) -> Result<u64, AuthorityError> {
+    tx.query_row(
+        "SELECT COUNT(*) FROM jobs WHERE state IN ('reserved','queued','running','aborting')",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|_| AuthorityError::Storage)
+}
+fn insert_run(
+    tx: &Transaction<'_>,
+    id: &str,
+    run_id: &str,
+    app_session_id: &str,
+) -> Result<(), AuthorityError> {
+    tx.execute(
+        "INSERT INTO runs(run_id,job_id,app_session_id) VALUES(?1,?2,?3)",
+        params![run_id, id, app_session_id],
+    )
+    .map_err(map_insert)?;
+    Ok(())
+}
+fn same_run(
+    tx: &Transaction<'_>,
+    id: &str,
+    run_id: &str,
+    app_session_id: &str,
+) -> Result<bool, AuthorityError> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND job_id=?2 AND app_session_id=?3)",
+        params![run_id, id, app_session_id],
+        |r| r.get(0),
+    )
+    .map_err(|_| AuthorityError::Storage)
 }
 fn verify_lease(tx: &Transaction<'_>, id: &str, lease: &Lease) -> Result<(), AuthorityError> {
     let actual: Option<(Option<String>, u64)> = tx
@@ -618,12 +806,12 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
             |r| r.get(0),
         )
         .map_err(|_| AuthorityError::Storage)?;
-    if version > 2 {
+    if version > 3 {
         return Err(AuthorityError::Storage);
     }
     if version == 0 {
         create_normalized(&tx)?;
-        tx.execute("INSERT INTO schema_migrations(version) VALUES(2)", [])
+        tx.execute("INSERT INTO schema_migrations(version) VALUES(3)", [])
             .map_err(|_| AuthorityError::Storage)?;
     } else if version == 1 {
         let blob: String = tx
@@ -656,6 +844,10 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         tx.execute_batch("DROP TABLE IF EXISTS job_authority;")
             .map_err(|_| AuthorityError::Storage)?;
         tx.execute("INSERT INTO schema_migrations(version) VALUES(2)", [])
+            .map_err(|_| AuthorityError::Storage)?;
+    }
+    if matches!(version, 1 | 2) {
+        tx.execute("INSERT INTO schema_migrations(version) VALUES(3)", [])
             .map_err(|_| AuthorityError::Storage)?;
     }
     tx.commit().map_err(|_| AuthorityError::Storage)
@@ -713,6 +905,11 @@ struct Request {
     after_cursor: Option<String>,
     limit: Option<u64>,
     cap: Option<u64>,
+    worktree_id: Option<String>,
+    branch: Option<String>,
+    run_id: Option<String>,
+    app_session_id: Option<String>,
+    provider_session_id: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -883,7 +1080,57 @@ fn dispatch(
                     .owner
                     .as_deref()
                     .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .run_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .app_session_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
                 request.cap.unwrap_or(DEFAULT_CAPACITY),
+            )?,
+        ),
+        "job.prepare" => serde_json::to_value(
+            authority.prepare(
+                id()?,
+                lease()?,
+                request
+                    .worktree_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .branch
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+            )?,
+        ),
+        "job.admit" => serde_json::to_value(
+            authority.admit(
+                id()?,
+                lease()?,
+                request
+                    .run_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .app_session_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+            )?,
+        ),
+        "run.bindProviderSession" => serde_json::to_value(
+            authority.bind_provider_session(
+                id()?,
+                lease()?,
+                request
+                    .run_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .provider_session_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
             )?,
         ),
         "capacity.reserve" => serde_json::to_value(
@@ -913,6 +1160,7 @@ fn error_code(error: AuthorityError) -> &'static str {
         AuthorityError::TerminalJob => "terminal_job",
         AuthorityError::EventConflict => "event_conflict",
         AuthorityError::CapacityExhausted => "capacity_exhausted",
+        AuthorityError::WorktreeConflict => "worktree_conflict",
         AuthorityError::Storage => "storage_failure",
     }
 }
@@ -1030,7 +1278,7 @@ mod tests {
             a.acquire("j", "worker-2"),
             Err(AuthorityError::InvalidTransition)
         );
-        let readmitted = a.readmit("j", "worker-2", 4).unwrap();
+        let readmitted = a.readmit("j", "worker-2", "r2", "session2", 4).unwrap();
         let new_lease = readmitted.lease.unwrap();
         assert_eq!(readmitted.state, JobState::Queued);
         assert_eq!(new_lease.owner, "worker-2");
@@ -1073,8 +1321,8 @@ mod tests {
             a.reserve(&format!("j{n}"), "p", "o", 4).unwrap();
         }
         assert_eq!(
-            a.reserve("j4", "p", "o", 4),
-            Err(AuthorityError::CapacityExhausted)
+            a.reserve("j4", "p", "o", 4).unwrap().state,
+            JobState::Waiting
         );
         let l = a.snapshot("j0").unwrap().lease.unwrap();
         assert_eq!(
@@ -1125,16 +1373,16 @@ mod tests {
             second.reserve("j4", "p", "o", 4)
         });
         let results = [first.join().unwrap(), second.join().unwrap()];
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 2);
         assert_eq!(
             results
                 .iter()
-                .filter(|result| **result == Err(AuthorityError::CapacityExhausted))
+                .filter(|result| result.as_ref().unwrap().state == JobState::Reserved)
                 .count(),
-            1
+            2
         );
         let check = PersistentAuthority::open(&p).unwrap();
-        assert_eq!(check.list(None, None, None, 10).unwrap().len(), 4);
+        assert_eq!(check.list(None, None, None, 10).unwrap().len(), 5);
         drop(check);
         std::fs::remove_dir_all(d).unwrap();
     }
@@ -1154,7 +1402,7 @@ mod tests {
                 .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
         drop(a);
         PersistentAuthority::open(&p).unwrap();
@@ -1259,5 +1507,91 @@ mod tests {
             );
             std::fs::remove_dir_all(d).unwrap();
         }
+    }
+    #[test]
+    fn admission_saga_markers_and_reconciliation() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+
+        a.reserve("full", "p", "o", 1).unwrap();
+        let waiting = a.reserve("wait", "p", "o", 1).unwrap();
+        assert_eq!(waiting.state, JobState::Waiting);
+        assert_eq!(waiting.lease, None);
+        let full_lease = a.snapshot("full").unwrap().lease.unwrap();
+        a.finalize("full", &full_lease, "failed", json!(null), JobState::Failed)
+            .unwrap();
+        let reserved = a.reserve("wait", "p", "o2", 1).unwrap();
+        assert_eq!(reserved.state, JobState::Reserved);
+        let lease = reserved.lease.unwrap();
+
+        a.prepare("wait", &lease, "tree", "branch").unwrap();
+        a.prepare("wait", &lease, "tree", "branch").unwrap();
+        assert_eq!(
+            a.prepare("wait", &lease, "other", "branch"),
+            Err(AuthorityError::WorktreeConflict)
+        );
+        let admitted = a.admit("wait", &lease, "run", "app").unwrap();
+        assert_eq!(admitted.state, JobState::Queued);
+        assert_eq!(
+            a.admit("wait", &lease, "run", "app").unwrap().state,
+            JobState::Queued
+        );
+        a.bind_provider_session("wait", &lease, "run", "provider")
+            .unwrap();
+        a.bind_provider_session("wait", &lease, "run", "provider")
+            .unwrap();
+        assert_eq!(
+            a.bind_provider_session("wait", &lease, "run", "other"),
+            Err(AuthorityError::InvalidTransition)
+        );
+        assert_eq!(
+            a.finalize(
+                "wait",
+                &lease,
+                "admission-failed",
+                json!(null),
+                JobState::Failed
+            )
+            .unwrap()
+            .state,
+            JobState::Failed
+        );
+
+        a.reserve("bare", "p", "o", 64).unwrap();
+        a.reserve("prepared", "p", "o", 64).unwrap();
+        let prepared_lease = a.snapshot("prepared").unwrap().lease.unwrap();
+        a.prepare(
+            "prepared",
+            &prepared_lease,
+            "prepared-tree",
+            "prepared-branch",
+        )
+        .unwrap();
+        a.reserve("queued", "p", "o", 64).unwrap();
+        let queued_lease = a.snapshot("queued").unwrap().lease.unwrap();
+        a.prepare("queued", &queued_lease, "queued-tree", "queued-branch")
+            .unwrap();
+        a.admit("queued", &queued_lease, "queued-run", "queued-app")
+            .unwrap();
+        let changed = a.reconcile().unwrap();
+        assert_eq!(changed.len(), 3);
+        assert_eq!(a.snapshot("bare").unwrap().state, JobState::Waiting);
+        let prepared = a.snapshot("prepared").unwrap();
+        assert_eq!(prepared.state, JobState::Waiting);
+        assert_eq!(prepared.worktree_id.as_deref(), Some("prepared-tree"));
+        assert_eq!(a.snapshot("queued").unwrap().state, JobState::Interrupted);
+
+        let readmitted = a
+            .readmit("queued", "new-owner", "new-run", "new-app", 64)
+            .unwrap();
+        assert_eq!(readmitted.state, JobState::Queued);
+        assert_eq!(
+            a.connection
+                .query_row("SELECT COUNT(*) FROM runs WHERE job_id='queued'", [], |r| r
+                    .get::<_, u64>(0))
+                .unwrap(),
+            2
+        );
+        std::fs::remove_dir_all(d).unwrap();
     }
 }
