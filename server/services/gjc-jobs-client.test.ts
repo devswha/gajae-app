@@ -30,7 +30,11 @@ test('jobs proves readiness through job.list probe and dispatches wrappers', asy
   const reconciled = client.reconcile(); await new Promise((resolve) => setImmediate(resolve));
   assert.equal(JSON.parse(child.stdin.writes[3]!).method, 'job.reconcile');
   child.frame({ protocolVersion: 1, id: idAt(child, 3), ok: true, result: { changedCount: 1, jobIds: ['run'] } });
-  assert.deepEqual(await reconciled, { changedCount: 1, jobIds: ['run'] }); client.close();
+  assert.deepEqual(await reconciled, { changedCount: 1, jobIds: ['run'] });
+  const admin = client.appendAdminEvent({ jobId: 'run', eventId: 'publish.started', payload: {} }); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(JSON.parse(child.stdin.writes[4]!).method, 'job.appendAdminEvent');
+  child.frame({ protocolVersion: 1, id: idAt(child, 4), ok: true, result: { sequence: 1 } });
+  assert.deepEqual(await admin, { sequence: 1 }); client.close();
 });
 test('jobs preserves native error codes in typed errors', async () => {
   const children: FakeChild[] = [];

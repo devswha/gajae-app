@@ -6,7 +6,7 @@ import { GjcJobGitService } from './gjc-job-git.service.js';
 test('job git status resolves only the stored managed worktree', async () => {
   const calls: Record<string, unknown>[] = [];
   const service = new GjcJobGitService(
-    { get: async () => ({ jobId: 'job-a', repositoryRoot: '/repo', worktreeId: '/repo/.gjc-worktrees/job-a', branch: 'job/job-a', baseCommit: 'abc1234' }) },
+    { get: async () => ({ jobId: 'job-a', repositoryRoot: '/repo', worktreeId: '/repo/.gjc-worktrees/job-a', branch: 'job/job-a', baseCommit: 'abc1234' }), appendAdminEvent: async () => ({}) },
     () => ({
       list: async () => ({ items: [{ worktreeId: '/repo/.gjc-worktrees/job-a', path: '/repo/.gjc-worktrees/job-a', branch: 'job/job-a' }] }),
       status: async params => { calls.push(params); return { clean: true, count: 0 }; },
@@ -22,7 +22,7 @@ test('job git status resolves only the stored managed worktree', async () => {
 
 test('job git resolution rejects a worktree moved off its stored branch', async () => {
   const service = new GjcJobGitService(
-    { get: async () => ({ jobId: 'job-a', repositoryRoot: '/repo', worktreeId: '/repo/.gjc-worktrees/job-a', branch: 'job/job-a', baseCommit: 'abc1234' }) },
+    { get: async () => ({ jobId: 'job-a', repositoryRoot: '/repo', worktreeId: '/repo/.gjc-worktrees/job-a', branch: 'job/job-a', baseCommit: 'abc1234' }), appendAdminEvent: async () => ({}) },
     () => ({ list: async () => ({ items: [{ worktreeId: '/repo/.gjc-worktrees/job-a', path: '/repo/.gjc-worktrees/job-a', branch: 'other' }] }), status: async () => ({ clean: true, count: 0 }) }),
   );
 

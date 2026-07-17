@@ -46,6 +46,11 @@ export class GjcJobsClient extends GjcNativeClient {
     if (Buffer.byteLength(frame, 'utf8') > MAX_JOBS_FRAME_BYTES) return Promise.reject(new GjcJobsEventTooLargeError());
     return this.request('event.append', params);
   }
+  appendAdminEvent(params: Record<string, unknown>): Promise<unknown> {
+    const frame = JSON.stringify({ ...params, protocolVersion: 1, id: REQUEST_ID_BYTES, method: 'job.appendAdminEvent' });
+    if (Buffer.byteLength(frame, 'utf8') > MAX_JOBS_FRAME_BYTES) return Promise.reject(new GjcJobsEventTooLargeError());
+    return this.request('job.appendAdminEvent', params);
+  }
   replayEvents(params: Record<string, unknown>): Promise<unknown> { return this.request('event.replay', params); }
   list(params: Record<string, unknown> = {}): Promise<unknown> { return this.request('job.list', params); }
   get(params: Record<string, unknown>): Promise<unknown> { return this.request('job.get', params); }

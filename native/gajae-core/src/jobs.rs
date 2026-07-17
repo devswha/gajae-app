@@ -300,6 +300,26 @@ impl PersistentAuthority {
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(event)
     }
+    fn append_admin_event(
+        &mut self,
+        id: &str,
+        event_id: &str,
+        payload: Value,
+    ) -> Result<JobEvent, AuthorityError> {
+        validate_id(event_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        // Administrative events are post-run records. A leased job may still be
+        // emitting run events, so never permit this bypass while a run is active.
+        if state(&tx, id)? != JobState::Ready {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        let event = append(&tx, id, event_id, &payload)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(event)
+    }
     fn append_event_for_run(
         &mut self,
         id: &str,
@@ -1434,6 +1454,17 @@ fn dispatch(
                 None => authority.append_event(id()?, lease()?, event_id, payload)?,
             })
         }
+        "job.appendAdminEvent" => {
+            let event_id = request
+                .event_id
+                .as_deref()
+                .ok_or(AuthorityError::InvalidIdentifier)?;
+            let payload = request
+                .payload
+                .clone()
+                .ok_or(AuthorityError::InvalidIdentifier)?;
+            serde_json::to_value(authority.append_admin_event(id()?, event_id, payload)?)
+        }
         "job.finalize" => serde_json::to_value(
             authority.finalize(
                 id()?,
@@ -1697,6 +1728,49 @@ mod tests {
             a.connection
                 .execute("INSERT INTO job_events VALUES('j',2,'e','{}')", [])
                 .is_err()
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn admin_events_append_after_a_run_and_reject_active_jobs() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        a.reserve("job", "gjc", "worker", 4).unwrap();
+        let lease = a.snapshot("job").unwrap().lease.unwrap();
+        a.prepare(
+            "job",
+            &lease,
+            "/tmp/job-worktree",
+            "job/job",
+            "base",
+            "/tmp/repository",
+        )
+        .unwrap();
+        a.admit("job", &lease, "run-1", "session").unwrap();
+        a.transition("job", &lease, JobState::Running).unwrap();
+        assert_eq!(
+            a.append_admin_event("job", "publish.started", json!({})),
+            Err(AuthorityError::InvalidTransition)
+        );
+        let ready = a
+            .finalize_run(
+                "job",
+                &lease,
+                "run-1",
+                JobState::Succeeded,
+                "run-1.complete",
+                json!({}),
+            )
+            .unwrap();
+        assert_eq!(ready.state, JobState::Ready);
+        let event = a
+            .append_admin_event("job", "publish.started", json!({"branch":"job/job"}))
+            .unwrap();
+        assert_eq!(event.sequence, 2);
+        assert_eq!(
+            a.append_admin_event("job", "publish.started", json!({"branch":"job/job"}))
+                .unwrap(),
+            event
         );
         std::fs::remove_dir_all(d).unwrap();
     }
