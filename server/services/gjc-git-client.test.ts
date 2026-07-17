@@ -6,38 +6,91 @@ import { GjcGitClient, type GjcNativeSpawn } from './gjc-git-client.js';
 class FakeChild extends EventEmitter {
   readonly stdout = new EventEmitter();
   readonly stdin = new EventEmitter() as EventEmitter & { writes: string[]; write(data: string): boolean; end(): void };
+  kills = 0;
   constructor() { super(); this.stdin.writes = []; this.stdin.write = (data) => (this.stdin.writes.push(data), true); this.stdin.end = () => {}; }
-  kill(): boolean { return true; }
+  kill(): boolean { this.kills += 1; return true; }
   emitFrame(frame: unknown): void { this.stdout.emit('data', Buffer.from(`${JSON.stringify(frame)}\n`)); }
 }
 function spawn(children: FakeChild[]): GjcNativeSpawn { return ((_command, _args, _options) => { const child = new FakeChild(); children.push(child); return child; }) as GjcNativeSpawn; }
 function requestId(child: FakeChild, index = -1): string { return JSON.parse(child.stdin.writes.at(index)!).id; }
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-test('git waits for ready, parses split frames, and stages stream frames', async () => {
+async function ready(client: GjcGitClient, children: FakeChild[]): Promise<FakeChild> {
+  const pending = client.start(); const child = children.at(-1)!;
+  child.emitFrame({ protocolVersion: 1, kind: 'ready' });
+  await pending;
+  return child;
+}
+
+test('git assembles staged list items and multi-chunk diff responses', async () => {
   const children: FakeChild[] = []; const client = new GjcGitClient({ workdir: '/repo', spawn: spawn(children) });
-  const pending = client.list(); const child = children[0]!;
-  child.stdout.emit('data', Buffer.from('{"protocolVersion":1,"kind":"rea'));
-  child.stdout.emit('data', Buffer.from('dy"}\n'));
-  await new Promise((resolve) => setImmediate(resolve));
-  const id = requestId(child);
-  child.emitFrame({ protocolVersion: 1, kind: 'item', id, sequence: 0, item: { path: 'a' } });
-  child.emitFrame({ protocolVersion: 1, kind: 'response', id, ok: true, result: { ok: true } });
-  assert.deepEqual(await pending, { ok: true }); client.close();
+  const child = await ready(client, children);
+  const listed = client.list(); await tick(); const listId = requestId(child);
+  child.emitFrame({ protocolVersion: 1, kind: 'item', id: listId, sequence: 0, item: { path: 'a' } });
+  child.emitFrame({ protocolVersion: 1, kind: 'item', id: listId, sequence: 1, item: { path: 'b' } });
+  child.emitFrame({ protocolVersion: 1, kind: 'response', id: listId, ok: true, result: { count: 2 } });
+  assert.deepEqual(await listed, { count: 2, items: [{ path: 'a' }, { path: 'b' }] });
+  const diff = client.diff(); await tick(); const diffId = requestId(child);
+  assert.equal(JSON.parse(child.stdin.writes.at(-1)!).method, 'diff');
+  child.emitFrame({ protocolVersion: 1, kind: 'chunk', id: diffId, sequence: 0, encoding: 'base64', data: Buffer.from('one ').toString('base64') });
+  child.emitFrame({ protocolVersion: 1, kind: 'chunk', id: diffId, sequence: 1, encoding: 'base64', data: Buffer.from('two').toString('base64') });
+  child.emitFrame({ protocolVersion: 1, kind: 'response', id: diffId, ok: true, result: { bytes: 7, chunks: 2, truncated: false } });
+  assert.deepEqual(await diff, { bytes: 7, chunks: 2, truncated: false, patch: Buffer.from('one two') });
+  client.close();
 });
 
-test('git rejects malformed and oversized frames', async () => {
+test('git rejects malformed frames, oversized aggregate streams, and kills the bad child', async () => {
+  const malformedChildren: FakeChild[] = []; const malformed = new GjcGitClient({ workdir: '/repo', spawn: spawn(malformedChildren), restartDelayMs: 1 });
+  const malformedRequest = malformed.list(); const bad = malformedChildren[0]!;
+  bad.stdout.emit('data', Buffer.from('bad\n'));
+  await assert.rejects(malformedRequest); assert.equal(bad.kills, 1); malformed.close();
+
   const children: FakeChild[] = []; const client = new GjcGitClient({ workdir: '/repo', spawn: spawn(children), restartDelayMs: 1 });
-  const pending = client.list(); children[0]!.stdout.emit('data', Buffer.from('bad\n'));
-  await assert.rejects(pending); client.close();
-  const next: FakeChild[] = []; const oversized = new GjcGitClient({ workdir: '/repo', spawn: spawn(next), restartDelayMs: 1 });
-  const rejected = oversized.list(); next[0]!.stdout.emit('data', Buffer.alloc(64 * 1024 + 1, 65));
-  await assert.rejects(rejected); oversized.close();
+  const child = await ready(client, children); const pending = client.diff(); await tick(); const id = requestId(child);
+  const data = Buffer.alloc(36 * 1024, 65).toString('base64');
+  for (let sequence = 0; sequence <= 455; sequence += 1) child.emitFrame({ protocolVersion: 1, kind: 'chunk', id, sequence, encoding: 'base64', data });
+  await assert.rejects(pending); assert.equal(child.kills, 1); client.close();
 });
 
-test('git EOF restarts and never replays mutations', async () => {
+test('git ignores stale child close events after replacing a failed child', async () => {
   const children: FakeChild[] = []; const client = new GjcGitClient({ workdir: '/repo', spawn: spawn(children), restartDelayMs: 1 });
-  const pending = client.create({ branch: 'x' }); const first = children[0]!; first.emitFrame({ protocolVersion: 1, kind: 'ready' });
-  await new Promise((resolve) => setImmediate(resolve)); assert.equal(first.stdin.writes.length, 1);
-  first.emit('exit', 1); await assert.rejects(pending);
-  await new Promise((resolve) => setTimeout(resolve, 10)); assert.equal(children.length, 2); assert.equal(children[1]!.stdin.writes.length, 0); client.close();
+  const first = await ready(client, children);
+  first.emit('exit', 1);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const second = children[1]!; second.emitFrame({ protocolVersion: 1, kind: 'ready' }); await tick();
+  const pending = client.list(); await tick(); const id = requestId(second);
+  first.emit('close');
+  second.emitFrame({ protocolVersion: 1, kind: 'response', id, ok: true, result: { count: 0 } });
+  assert.deepEqual(await pending, { count: 0, items: [] }); client.close();
+});
+
+test('git recovers from replacement spawn failure without hanging later requests', async () => {
+  const children: FakeChild[] = []; let attempts = 0;
+  const launcher = ((_command, _args, _options) => {
+    attempts += 1;
+    if (attempts === 2) throw new Error('replacement unavailable');
+    const child = new FakeChild(); children.push(child); return child;
+  }) as GjcNativeSpawn;
+  const client = new GjcGitClient({ workdir: '/repo', spawn: launcher, restartDelayMs: 1 });
+  const first = await ready(client, children); const failed = client.create({ branch: 'x' });
+  first.emit('exit', 1); await assert.rejects(failed);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const pending = client.list(); const replacement = children[1]!;
+  replacement.emitFrame({ protocolVersion: 1, kind: 'ready' }); await tick();
+  const id = requestId(replacement); replacement.emitFrame({ protocolVersion: 1, kind: 'response', id, ok: true, result: { count: 0 } });
+  assert.deepEqual(await pending, { count: 0, items: [] }); assert.equal(attempts, 3); client.close();
+});
+test('git serializes a request arriving during restart backoff onto the replacement generation', async () => {
+  const children: FakeChild[] = []; const client = new GjcGitClient({ workdir: '/repo', spawn: spawn(children), restartDelayMs: 5 });
+  const first = await ready(client, children);
+  first.emit('exit', 1);
+  const pending = client.list();
+  assert.equal(children.length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const replacement = children[1]!;
+  replacement.emitFrame({ protocolVersion: 1, kind: 'ready' }); await tick();
+  const id = requestId(replacement);
+  replacement.emitFrame({ protocolVersion: 1, kind: 'response', id, ok: true, result: { count: 0 } });
+  assert.deepEqual(await pending, { count: 0, items: [] });
+  client.close();
 });

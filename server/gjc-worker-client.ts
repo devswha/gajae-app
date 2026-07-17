@@ -61,6 +61,19 @@ type Child = {
   on(event: string, listener: (...args: any[]) => void): unknown;
 };
 
+export type GjcWorkerSpawnRun = {
+  runId: string;
+  appSessionId: string;
+  message: string;
+  options?: GjcWorkerOptions;
+  writer: GjcWorkerWriter;
+};
+export type GjcWorkerRun = {
+  started: Promise<void>;
+  completion: Promise<void>;
+  abortHandle: string;
+};
+
 type Spawn = (
   command: string,
   args: string[],
@@ -110,6 +123,10 @@ type Run = {
   providerSessionId?: string;
   resolve: () => void;
   reject: (error: Error) => void;
+  resolveStarted: () => void;
+  rejectStarted: (error: Error) => void;
+  started: boolean;
+
 };
 
 type PendingApproval = {
@@ -338,22 +355,24 @@ export class GjcWorkerSupervisor {
     }
   }
 
-  spawn(message: string, options: GjcWorkerOptions = {}, writer: GjcWorkerWriter): Promise<void> & { abortHandle: string } {
-    const runId = `run-${randomUUID()}`;
-    if (this.shuttingDown) {
-      const rejected = Promise.reject(new Error(SAFE_FAILURE)) as Promise<void> & {
-        abortHandle: string;
-      };
-      rejected.abortHandle = runId;
-      return rejected;
+  spawnRun(input: GjcWorkerSpawnRun): GjcWorkerRun {
+    const { runId, appSessionId, message, options = {}, writer } = input;
+    if (!safeId(runId) || !safeId(appSessionId) || this.runs.has(runId) || this.shuttingDown) {
+      const error = new Error(SAFE_FAILURE);
+      const started = Promise.reject(error);
+      const completion = Promise.reject(error);
+      void started.catch(() => {});
+      void completion.catch(() => {});
+      return { started, completion, abortHandle: runId };
     }
-    const appScope = safeId(writer.getAppSessionId?.()) ?? safeId(this.runtime.createScope()) ?? `gjc-${randomUUID()}`;
     let resolve!: () => void; let reject!: (error: Error) => void;
-    const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; }) as Promise<void> & { abortHandle: string };
-    promise.abortHandle = runId;
+    let resolveStarted!: () => void; let rejectStarted!: (error: Error) => void;
+    const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+    const started = new Promise<void>((res, rej) => { resolveStarted = res; rejectStarted = rej; });
+    void started.catch(() => {});
     const run: Run = {
       runId,
-      appScope,
+      appScope: appSessionId,
       writer,
       options,
       aborted: false,
@@ -363,11 +382,16 @@ export class GjcWorkerSupervisor {
       terminalFailed: false,
       resolve,
       reject,
+      resolveStarted,
+      rejectStarted,
+      started: false,
     };
     this.runs.set(runId, run);
     void this.startRun(run, message);
-    return promise;
+    return { started, completion, abortHandle: runId };
   }
+
+
 
   private async startRun(run: Run, message: string): Promise<void> {
     try {
@@ -393,6 +417,8 @@ export class GjcWorkerSupervisor {
       };
       const method = providerSessionId ? 'session.resume' : 'session.start';
       run.requestSent = true;
+      run.started = true;
+      run.resolveStarted();
       const response = await this.request(
         method,
         run.appScope,
@@ -774,6 +800,8 @@ export class GjcWorkerSupervisor {
   private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE): void {
     if (run.terminal) return;
     run.terminal = true;
+    if (!run.started) run.rejectStarted(new Error(failureMessage));
+
     this.runs.delete(run.runId);
     if (
       run.providerSessionId
@@ -933,10 +961,18 @@ export class GjcWorkerSupervisor {
 }
 
 const supervisor = new GjcWorkerSupervisor({ enrichOptions: enrichGjcSdkRunOptions });
-export function spawnGjc(message: string, options: GjcWorkerOptions = {}, writer: GjcWorkerWriter) { return supervisor.spawn(message, options, writer); }
-export function abortGjcSession(alias: string) { return supervisor.abort(alias); }
+export function getGjcWorkerSupervisor(): GjcWorkerSupervisor { return supervisor; }
 export function isGjcSessionActive(alias: string) { return supervisor.isActive(alias); }
 export function getActiveGjcSessions() { return supervisor.active(); }
 export function resolveGjcToolApproval(requestId: string, decision: GjcApprovalDecision) { return supervisor.resolveApproval(requestId, decision); }
 export function getPendingGjcApprovalsForSession(appSessionId: string) { return supervisor.pendingApprovals(appSessionId); }
 export function shutdownGjcWorker() { return supervisor.shutdown(); }
+export function spawnGjcRun(message: string, options: GjcWorkerOptions = {}, writer: GjcWorkerWriter): Promise<void> & { abortHandle: string } {
+  const runId = `run-${randomUUID()}`;
+  const appSessionId = writer.getAppSessionId?.() ?? options.sessionId ?? `gjc-${randomUUID()}`;
+  const run = supervisor.spawnRun({ runId, appSessionId, message, options, writer });
+  const completion = run.completion as Promise<void> & { abortHandle: string };
+  completion.abortHandle = run.abortHandle;
+  return completion;
+}
+export function abortGjcRun(runId: string) { return supervisor.abort(runId); }

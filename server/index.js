@@ -44,8 +44,8 @@ import {
     abortOpenCodeSession,
 } from './opencode-cli.js';
 import {
-    spawnGjc,
-    abortGjcSession,
+    spawnGjcRun,
+    abortGjcRun,
     getPendingGjcApprovalsForSession,
     resolveGjcToolApproval,
     shutdownGjcWorker,
@@ -118,6 +118,7 @@ function getPendingProviderApprovalsForSession(sessionId) {
     ];
 }
 
+
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
@@ -133,14 +134,14 @@ const wss = createWebSocketServer(server, {
             cursor: spawnCursor,
             codex: queryCodex,
             opencode: spawnOpenCode,
-            gjc: spawnGjc,
+            gjc: spawnGjcRun,
         },
         abortFns: {
             claude: abortClaudeSDKSession,
             cursor: abortCursorSession,
             codex: abortCodexSession,
             opencode: abortOpenCodeSession,
-            gjc: abortGjcSession,
+            gjc: abortGjcRun,
         },
         resolveToolApproval: resolveProviderToolApproval,
         getPendingApprovalsForSession: getPendingProviderApprovalsForSession,

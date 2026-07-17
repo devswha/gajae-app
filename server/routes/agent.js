@@ -12,7 +12,7 @@ import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnOpenCode } from '../opencode-cli.js';
-import { spawnGjc } from '../gjc-worker-client.js';
+import { spawnGjcRun } from '../gjc-worker-client.js';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
 import { normalizeProjectPath } from '../shared/utils.js';
 
@@ -965,7 +965,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     } else if (provider === 'gjc') {
       console.log('🦞 Starting gjc headless session');
 
-      await spawnGjc(message.trim(), {
+      await spawnGjcRun(message.trim(), {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         sessionId: sessionId || null,

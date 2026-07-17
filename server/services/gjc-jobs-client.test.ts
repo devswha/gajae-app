@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
-import { GjcJobsClient } from './gjc-jobs-client.js';
+import { GjcJobsClient, GjcJobsClientError, GjcJobsEventTooLargeError } from './gjc-jobs-client.js';
 import type { GjcNativeSpawn } from './gjc-git-client.js';
 
 class FakeChild extends EventEmitter {
@@ -22,7 +22,26 @@ test('jobs proves readiness through job.list probe and dispatches wrappers', asy
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(JSON.parse(child.stdin.writes[1]!).method, 'job.admit');
   child.frame({ protocolVersion: 1, id: idAt(child, 1), ok: true, result: { admitted: true } });
-  assert.deepEqual(await pending, { admitted: true }); client.close();
+  assert.deepEqual(await pending, { admitted: true });
+  const dispatching = client.markDispatching({ id: 'run', run_id: 'r1' }); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(JSON.parse(child.stdin.writes[2]!).method, 'job.markDispatching');
+  child.frame({ protocolVersion: 1, id: idAt(child, 2), ok: true, result: { currentRun: { runId: 'r1' }, dispatchCheckpoint: { dispatchedAt: 'now' } } });
+  assert.deepEqual(await dispatching, { currentRun: { runId: 'r1' }, dispatchCheckpoint: { dispatchedAt: 'now' } });
+  const reconciled = client.reconcile(); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(JSON.parse(child.stdin.writes[3]!).method, 'job.reconcile');
+  child.frame({ protocolVersion: 1, id: idAt(child, 3), ok: true, result: { changedCount: 1, jobIds: ['run'] } });
+  assert.deepEqual(await reconciled, { changedCount: 1, jobIds: ['run'] }); client.close();
+});
+test('jobs preserves native error codes in typed errors', async () => {
+  const children: FakeChild[] = [];
+  const client = new GjcJobsClient({ database: '/jobs.sqlite', spawn: fake(children) });
+  const pending = client.readmit({ jobId: 'job-1' });
+  const child = children[0]!;
+  child.frame({ protocolVersion: 1, id: idAt(child, 0), ok: true, result: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.frame({ protocolVersion: 1, id: idAt(child, 1), ok: false, error: { code: 'capacity_exhausted' } });
+  await assert.rejects(pending, (error: unknown) => error instanceof GjcJobsClientError && error.code === 'capacity_exhausted');
+  client.close();
 });
 
 test('jobs rejects requests on EOF, restarts, and does not replay admission', async () => {
@@ -45,4 +64,13 @@ test('jobs rejects malformed frames and aggregate overflow', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   child.frame({ protocolVersion: 1, kind: 'item', id: idAt(child, 1), sequence: 0, item: { too: 'large' } });
   await assert.rejects(pending); client.close();
+});
+test('jobs rejects oversized event frames before starting the shared authority', async () => {
+  const children: FakeChild[] = []; const client = new GjcJobsClient({ database: '/jobs.sqlite', spawn: fake(children) });
+  await assert.rejects(
+    client.appendEvent({ jobId: 'job-1', payload: { content: 'x'.repeat(64 * 1024) } }),
+    (error: unknown) => error instanceof GjcJobsEventTooLargeError && error.code === 'event_too_large',
+  );
+  assert.equal(children.length, 0);
+  client.close();
 });

@@ -98,8 +98,12 @@ database built with bundled SQLite. Rust exclusively owns its version table and
 sequential migrations; Node must not open this database. Invalid paths, unknown
 schema versions, migration failures, or corrupt state fail closed. Explicit
 transitions remain fenced by monotonically generated owner leases, and startup
-reconciliation moves persisted active jobs to `interrupted`. Git/worktree
-ownership has not moved. Worker Protocol v1 and all React behavior are unchanged.
+reconciliation moves persisted active jobs to `interrupted`. Native Git/worktree
+APIs, the TypeScript `JobOrchestrator`, and its admission saga are landed
+components only: production GJC execution remains on the single-turn worker
+facade. Automatic capacity dispatch, multi-turn continuity, and branch/PR work
+from managed worktrees are deferred to Slice 3. Worker Protocol v1 and all React
+behavior are unchanged.
 
 ### Native PTY lifecycle
 

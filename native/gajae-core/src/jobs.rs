@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 const DEFAULT_REPLAY_BUDGET: u64 = 60 * 1024;
 const DEFAULT_CAPACITY: u64 = 4;
 
+const MAX_RECONCILE_JOB_IDS: usize = 100;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
@@ -38,6 +40,7 @@ impl JobState {
                 | (Self::Running, Self::Failed)
                 | (Self::Running, Self::Interrupted)
                 | (Self::Aborting, Self::Aborted)
+                | (Self::Aborting, Self::Succeeded)
                 | (Self::Aborting, Self::Failed)
                 | (Self::Aborting, Self::Interrupted)
                 | (Self::Waiting, Self::Failed)
@@ -89,6 +92,28 @@ pub struct JobSnapshot {
     last_sequence: u64,
     worktree_id: Option<String>,
     branch: Option<String>,
+    current_run: Option<CurrentRun>,
+    dispatch_checkpoint: Option<DispatchCheckpoint>,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurrentRun {
+    run_id: String,
+    app_session_id: Option<String>,
+    provider_session_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DispatchCheckpoint {
+    run_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReconcileResult {
+    changed_count: u64,
+    job_ids: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,15 +135,57 @@ pub enum AuthorityError {
     CapacityExhausted,
     WorktreeConflict,
     Storage,
+    AuthorityHeld,
 }
 
 struct PersistentAuthority {
+    _lock: AuthorityLock,
     connection: Connection,
+}
+
+struct AuthorityLock {
+    _connection: Connection,
+}
+
+impl AuthorityLock {
+    fn acquire(database: &Path) -> Result<Self, AuthorityError> {
+        let mut lock_path = database.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let connection =
+            Connection::open(PathBuf::from(lock_path)).map_err(|_| AuthorityError::Storage)?;
+        connection
+            .busy_timeout(Duration::ZERO)
+            .map_err(|_| AuthorityError::Storage)?;
+        connection
+            .pragma_update(None, "locking_mode", "EXCLUSIVE")
+            .map_err(map_authority_lock_error)?;
+        connection
+            .execute_batch("BEGIN EXCLUSIVE; COMMIT;")
+            .map_err(map_authority_lock_error)?;
+        Ok(Self {
+            _connection: connection,
+        })
+    }
+}
+
+fn map_authority_lock_error(error: rusqlite::Error) -> AuthorityError {
+    match error {
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(
+                failure.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) =>
+        {
+            AuthorityError::AuthorityHeld
+        }
+        _ => AuthorityError::Storage,
+    }
 }
 
 impl PersistentAuthority {
     fn open(path: &Path) -> Result<Self, AuthorityError> {
         let path = validate_database_path(path)?;
+        let lock = AuthorityLock::acquire(&path)?;
         let mut connection = Connection::open(path).map_err(|_| AuthorityError::Storage)?;
         connection
             .pragma_update(None, "journal_mode", "WAL")
@@ -130,7 +197,10 @@ impl PersistentAuthority {
             .pragma_update(None, "busy_timeout", 5_000_i64)
             .map_err(|_| AuthorityError::Storage)?;
         migrate(&mut connection)?;
-        let mut authority = Self { connection };
+        let mut authority = Self {
+            _lock: lock,
+            connection,
+        };
         authority.reconcile()?;
         Ok(authority)
     }
@@ -285,7 +355,7 @@ impl PersistentAuthority {
             if !events.is_empty() && size > budget {
                 break;
             }
-            if size >= MAX_FRAME_BYTES as u64 {
+            if size > MAX_FRAME_BYTES as u64 + 1 {
                 return Err(AuthorityError::Storage);
             }
             events = candidate_replay.events;
@@ -325,7 +395,7 @@ impl PersistentAuthority {
         }
         let state_value = state_filter.map(JobState::as_str);
         let after = after.unwrap_or("");
-        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
+        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
         let rows = statement
             .query_map(
                 params![state_value, provider, after, limit],
@@ -432,8 +502,8 @@ impl PersistentAuthority {
         worktree_id: &str,
         branch: &str,
     ) -> Result<JobSnapshot, AuthorityError> {
-        validate_id(worktree_id)?;
-        validate_id(branch)?;
+        validate_worktree_id(worktree_id)?;
+        validate_branch(branch)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -538,21 +608,50 @@ impl PersistentAuthority {
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(result)
     }
-    fn reconcile(&mut self) -> Result<Vec<JobSnapshot>, AuthorityError> {
+    fn mark_dispatching(
+        &mut self,
+        id: &str,
+        lease: &Lease,
+        run_id: &str,
+    ) -> Result<JobSnapshot, AuthorityError> {
+        validate_id(run_id)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| AuthorityError::Storage)?;
-        let mut ids: Vec<String> = Vec::new();
+        verify_lease(&tx, id, lease)?;
+        if !matches!(state(&tx, id)?, JobState::Queued | JobState::Running) {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        let updated = tx
+            .execute(
+                "UPDATE runs SET dispatched_at=COALESCE(dispatched_at,CURRENT_TIMESTAMP) WHERE run_id=?1 AND job_id=?2",
+                params![run_id, id],
+            )
+            .map_err(|_| AuthorityError::Storage)?;
+        if updated != 1 {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
+    fn reconcile(&mut self) -> Result<ReconcileResult, AuthorityError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        let changed_count = consuming_count(&tx)?;
+        let mut job_ids = Vec::new();
         {
             let mut st = tx
-                .prepare("SELECT id FROM jobs WHERE state IN ('reserved','queued','running','aborting') ORDER BY id")
+                .prepare("SELECT id FROM jobs WHERE state IN ('reserved','queued','running','aborting') ORDER BY id LIMIT ?1")
                 .map_err(|_| AuthorityError::Storage)?;
             let rows = st
-                .query_map([], |r| r.get::<_, String>(0))
+                .query_map([MAX_RECONCILE_JOB_IDS], |r| r.get::<_, String>(0))
                 .map_err(|_| AuthorityError::Storage)?;
             for id in rows {
-                ids.push(id.map_err(|_| AuthorityError::Storage)?);
+                job_ids.push(id.map_err(|_| AuthorityError::Storage)?);
             }
         }
         tx.execute(
@@ -561,12 +660,11 @@ impl PersistentAuthority {
         )
         .map_err(|_| AuthorityError::Storage)?;
         tx.execute("UPDATE jobs SET state='interrupted',lease_owner=NULL WHERE state IN ('queued','running','aborting')", []).map_err(|_| AuthorityError::Storage)?;
-        let mut changed = Vec::new();
-        for id in ids {
-            changed.push(snapshot_tx(&tx, &id)?);
-        }
         tx.commit().map_err(|_| AuthorityError::Storage)?;
-        Ok(changed)
+        Ok(ReconcileResult {
+            changed_count,
+            job_ids,
+        })
     }
     fn snapshot(&self, id: &str) -> Result<JobSnapshot, AuthorityError> {
         snapshot_connection(&self.connection, id)
@@ -738,14 +836,16 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> Result<JobEvent, rusqlite::Error> 
     })
 }
 fn snapshot_connection(connection: &Connection, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_tx(tx: &Transaction<'_>, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::Error> {
     let state: String = row.get(2)?;
     let owner: Option<String> = row.get(3)?;
+    let run_id: Option<String> = row.get(8)?;
+    let dispatched_at: Option<String> = row.get(11)?;
     Ok(JobSnapshot {
         job_id: row.get(0)?,
         provider: row.get(1)?,
@@ -757,6 +857,14 @@ fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::E
         worktree_id: row.get(5)?,
         branch: row.get(6)?,
         last_sequence: row.get(7)?,
+        current_run: run_id.clone().map(|run_id| CurrentRun {
+            run_id,
+            app_session_id: row.get(9).unwrap_or(None),
+            provider_session_id: row.get(10).unwrap_or(None),
+        }),
+        dispatch_checkpoint: dispatched_at.map(|_| DispatchCheckpoint {
+            run_id: run_id.unwrap_or_default(),
+        }),
     })
 }
 
@@ -792,7 +900,7 @@ struct LegacyAuthority {
     jobs: HashMap<String, LegacyJob>,
 }
 fn create_normalized(tx: &Transaction<'_>) -> Result<(), AuthorityError> {
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, state TEXT NOT NULL, lease_owner TEXT NULL, lease_generation INTEGER NOT NULL DEFAULT 0, next_lease_generation INTEGER NOT NULL DEFAULT 1, worktree_id TEXT NULL, branch TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, app_session_id TEXT NULL, provider_session_id TEXT NULL); CREATE TABLE IF NOT EXISTS job_events (job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(job_id,sequence), UNIQUE(job_id,event_id)); CREATE INDEX IF NOT EXISTS job_events_job_sequence ON job_events(job_id,sequence);").map_err(|_| AuthorityError::Storage)
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, state TEXT NOT NULL, lease_owner TEXT NULL, lease_generation INTEGER NOT NULL DEFAULT 0, next_lease_generation INTEGER NOT NULL DEFAULT 1, worktree_id TEXT NULL, branch TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, app_session_id TEXT NULL, provider_session_id TEXT NULL, dispatched_at TEXT NULL); CREATE TABLE IF NOT EXISTS job_events (job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(job_id,sequence), UNIQUE(job_id,event_id)); CREATE INDEX IF NOT EXISTS job_events_job_sequence ON job_events(job_id,sequence);").map_err(|_| AuthorityError::Storage)
 }
 fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
     let tx = connection
@@ -806,12 +914,12 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
             |r| r.get(0),
         )
         .map_err(|_| AuthorityError::Storage)?;
-    if version > 3 {
+    if version > 4 {
         return Err(AuthorityError::Storage);
     }
     if version == 0 {
         create_normalized(&tx)?;
-        tx.execute("INSERT INTO schema_migrations(version) VALUES(3)", [])
+        tx.execute("INSERT INTO schema_migrations(version) VALUES(4)", [])
             .map_err(|_| AuthorityError::Storage)?;
     } else if version == 1 {
         let blob: String = tx
@@ -850,6 +958,14 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         tx.execute("INSERT INTO schema_migrations(version) VALUES(3)", [])
             .map_err(|_| AuthorityError::Storage)?;
     }
+    if matches!(version, 2 | 3) {
+        tx.execute("ALTER TABLE runs ADD COLUMN dispatched_at TEXT NULL", [])
+            .map_err(|_| AuthorityError::Storage)?;
+    }
+    if (1..4).contains(&version) {
+        tx.execute("INSERT INTO schema_migrations(version) VALUES(4)", [])
+            .map_err(|_| AuthorityError::Storage)?;
+    }
     tx.commit().map_err(|_| AuthorityError::Storage)
 }
 fn validate_legacy(legacy: &LegacyAuthority) -> Result<(), AuthorityError> {
@@ -885,6 +1001,40 @@ fn validate_id(value: &str) -> Result<(), AuthorityError> {
     } else {
         Ok(())
     }
+}
+fn validate_worktree_id(value: &str) -> Result<(), AuthorityError> {
+    if value.is_empty()
+        || value.len() > 4096
+        || !std::path::Path::new(value).is_absolute()
+        || value
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
+        Err(AuthorityError::InvalidIdentifier)
+    } else {
+        Ok(())
+    }
+}
+
+// A managed branch is exactly `job/<slug>`; the slug is lowercase ASCII
+// alphanumerics and hyphens. The authority keeps it otherwise opaque — git.rs
+// owns ref naming — but rejects path traversal, leading hyphens, and injection.
+fn validate_branch(value: &str) -> Result<(), AuthorityError> {
+    let slug = match value.strip_prefix("job/") {
+        Some(slug) => slug,
+        None => return Err(AuthorityError::InvalidIdentifier),
+    };
+    let bytes = slug.as_bytes();
+    if slug.is_empty()
+        || slug.len() > 128
+        || !bytes[0].is_ascii_alphanumeric()
+        || !bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+    {
+        return Err(AuthorityError::InvalidIdentifier);
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -942,7 +1092,7 @@ pub fn run<R: BufRead, W: Write>(database: &Path, mut input: R, mut output: W) -
     loop {
         frame.clear();
         let read = match Read::by_ref(&mut input)
-            .take(MAX_FRAME_BYTES as u64 + 1)
+            .take(MAX_FRAME_BYTES as u64 + 2)
             .read_until(b'\n', &mut frame)
         {
             Ok(v) => v,
@@ -951,7 +1101,7 @@ pub fn run<R: BufRead, W: Write>(database: &Path, mut input: R, mut output: W) -
         if read == 0 {
             return true;
         }
-        if frame.len() > MAX_FRAME_BYTES || !frame.ends_with(b"\n") {
+        if frame.len() > MAX_FRAME_BYTES + 1 || !frame.ends_with(b"\n") {
             return false;
         }
         frame.pop();
@@ -979,7 +1129,7 @@ pub fn run<R: BufRead, W: Write>(database: &Path, mut input: R, mut output: W) -
             },
         };
         let encoded = match serde_json::to_vec(&response) {
-            Ok(encoded) if encoded.len() < MAX_FRAME_BYTES => encoded,
+            Ok(encoded) if encoded.len() <= MAX_FRAME_BYTES => encoded,
             _ => match serde_json::to_vec(&Response {
                 protocol_version: 1,
                 id: &request.id,
@@ -987,7 +1137,7 @@ pub fn run<R: BufRead, W: Write>(database: &Path, mut input: R, mut output: W) -
                 result: None,
                 error: Some(error_code(AuthorityError::Storage)),
             }) {
-                Ok(encoded) if encoded.len() < MAX_FRAME_BYTES => encoded,
+                Ok(encoded) if encoded.len() <= MAX_FRAME_BYTES => encoded,
                 _ => return false,
             },
         };
@@ -1119,6 +1269,16 @@ fn dispatch(
                     .ok_or(AuthorityError::InvalidIdentifier)?,
             )?,
         ),
+        "job.markDispatching" => serde_json::to_value(
+            authority.mark_dispatching(
+                id()?,
+                lease()?,
+                request
+                    .run_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+            )?,
+        ),
         "run.bindProviderSession" => serde_json::to_value(
             authority.bind_provider_session(
                 id()?,
@@ -1161,6 +1321,7 @@ fn error_code(error: AuthorityError) -> &'static str {
         AuthorityError::EventConflict => "event_conflict",
         AuthorityError::CapacityExhausted => "capacity_exhausted",
         AuthorityError::WorktreeConflict => "worktree_conflict",
+        AuthorityError::AuthorityHeld => "authority_held",
         AuthorityError::Storage => "storage_failure",
     }
 }
@@ -1169,10 +1330,16 @@ fn error_code(error: AuthorityError) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
     fn db() -> (std::path::PathBuf, std::path::PathBuf) {
+        // A process-unique counter avoids collisions when parallel tests read
+        // the same coarse SystemTime nanosecond value (observed on macOS).
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
-            "gajae-jobs-{}",
+            "gajae-jobs-{}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1261,6 +1428,43 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
+    fn aborting_run_can_finalize_succeeded_only_with_current_lease() {
+        let (d, p) = db();
+        let mut authority = PersistentAuthority::open(&p).unwrap();
+        authority.reserve("j", "gjc", "worker", 4).unwrap();
+        let lease = authority.snapshot("j").unwrap().lease.unwrap();
+        authority.transition("j", &lease, JobState::Queued).unwrap();
+        authority
+            .transition("j", &lease, JobState::Running)
+            .unwrap();
+        authority
+            .transition("j", &lease, JobState::Aborting)
+            .unwrap();
+
+        let stale_lease = Lease {
+            owner: lease.owner.clone(),
+            generation: lease.generation + 1,
+        };
+        assert_eq!(
+            authority.finalize(
+                "j",
+                &stale_lease,
+                "stale-success",
+                json!(null),
+                JobState::Succeeded
+            ),
+            Err(AuthorityError::StaleLease)
+        );
+        assert_eq!(authority.snapshot("j").unwrap().state, JobState::Aborting);
+
+        let snapshot = authority
+            .finalize("j", &lease, "success", json!(null), JobState::Succeeded)
+            .unwrap();
+        assert_eq!(snapshot.state, JobState::Succeeded);
+        assert_eq!(snapshot.lease, None);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
     fn interruption_revokes_lease_and_readmit_fences_old_generation() {
         let (d, p) = db();
         let mut a = PersistentAuthority::open(&p).unwrap();
@@ -1342,6 +1546,10 @@ mod tests {
         let l = a.snapshot("run").unwrap().lease.unwrap();
         a.transition("run", &l, JobState::Queued).unwrap();
         a.transition("run", &l, JobState::Running).unwrap();
+        assert!(matches!(
+            PersistentAuthority::open(&p),
+            Err(AuthorityError::AuthorityHeld)
+        ));
         drop(a);
         let mut a = PersistentAuthority::open(&p).unwrap();
         let snapshot = a.snapshot("run").unwrap();
@@ -1356,34 +1564,87 @@ mod tests {
     #[test]
     fn immediate_reserve_serializes_competing_connections() {
         let (d, p) = db();
-        let mut first = PersistentAuthority::open(&p).unwrap();
+        let mut authority = PersistentAuthority::open(&p).unwrap();
         for n in 0..3 {
-            first.reserve(&format!("j{n}"), "p", "o", 4).unwrap();
+            authority.reserve(&format!("j{n}"), "p", "o", 4).unwrap();
         }
-        let mut second = PersistentAuthority::open(&p).unwrap();
+
+        let mut first = Connection::open(&p).unwrap();
+        let mut second = Connection::open(&p).unwrap();
+        first
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        second
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let barrier = Arc::new(Barrier::new(2));
         let first_barrier = Arc::clone(&barrier);
         let first = std::thread::spawn(move || {
             first_barrier.wait();
-            first.reserve("j3", "p", "o", 4)
+            let tx = first
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            let count: u64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM jobs WHERE state IN ('reserved','queued','running','aborting')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let state = if count < 4 { "reserved" } else { "waiting" };
+            tx.execute(
+                "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,'p',?2,CASE WHEN ?2='reserved' THEN 'o' END,CASE WHEN ?2='reserved' THEN 1 ELSE 0 END,CASE WHEN ?2='reserved' THEN 2 ELSE 1 END)",
+                params!["j3", state],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            state.to_owned()
         });
         let second_barrier = Arc::clone(&barrier);
         let second = std::thread::spawn(move || {
             second_barrier.wait();
-            second.reserve("j4", "p", "o", 4)
+            let tx = second
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            let count: u64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM jobs WHERE state IN ('reserved','queued','running','aborting')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let state = if count < 4 { "reserved" } else { "waiting" };
+            tx.execute(
+                "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,'p',?2,CASE WHEN ?2='reserved' THEN 'o' END,CASE WHEN ?2='reserved' THEN 1 ELSE 0 END,CASE WHEN ?2='reserved' THEN 2 ELSE 1 END)",
+                params!["j4", state],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            state.to_owned()
         });
-        let results = [first.join().unwrap(), second.join().unwrap()];
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 2);
+        let states = [first.join().unwrap(), second.join().unwrap()];
         assert_eq!(
-            results
+            states
                 .iter()
-                .filter(|result| result.as_ref().unwrap().state == JobState::Reserved)
+                .filter(|state| state.as_str() == "reserved")
                 .count(),
-            2
+            1
         );
-        let check = PersistentAuthority::open(&p).unwrap();
-        assert_eq!(check.list(None, None, None, 10).unwrap().len(), 5);
-        drop(check);
+        assert_eq!(
+            states
+                .iter()
+                .filter(|state| state.as_str() == "waiting")
+                .count(),
+            1
+        );
+        assert_eq!(
+            authority
+                .list(Some(JobState::Reserved), None, None, 10)
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(authority.list(None, None, None, 10).unwrap().len(), 5);
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
@@ -1402,7 +1663,7 @@ mod tests {
                 .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
         drop(a);
         PersistentAuthority::open(&p).unwrap();
@@ -1524,10 +1785,10 @@ mod tests {
         assert_eq!(reserved.state, JobState::Reserved);
         let lease = reserved.lease.unwrap();
 
-        a.prepare("wait", &lease, "tree", "branch").unwrap();
-        a.prepare("wait", &lease, "tree", "branch").unwrap();
+        a.prepare("wait", &lease, "/tmp/tree", "job/wait").unwrap();
+        a.prepare("wait", &lease, "/tmp/tree", "job/wait").unwrap();
         assert_eq!(
-            a.prepare("wait", &lease, "other", "branch"),
+            a.prepare("wait", &lease, "/tmp/other", "job/wait"),
             Err(AuthorityError::WorktreeConflict)
         );
         let admitted = a.admit("wait", &lease, "run", "app").unwrap();
@@ -1563,22 +1824,23 @@ mod tests {
         a.prepare(
             "prepared",
             &prepared_lease,
-            "prepared-tree",
-            "prepared-branch",
+            "/tmp/prepared-tree",
+            "job/prepared",
         )
         .unwrap();
         a.reserve("queued", "p", "o", 64).unwrap();
         let queued_lease = a.snapshot("queued").unwrap().lease.unwrap();
-        a.prepare("queued", &queued_lease, "queued-tree", "queued-branch")
+        a.prepare("queued", &queued_lease, "/tmp/queued-tree", "job/queued")
             .unwrap();
         a.admit("queued", &queued_lease, "queued-run", "queued-app")
             .unwrap();
         let changed = a.reconcile().unwrap();
-        assert_eq!(changed.len(), 3);
+        assert_eq!(changed.changed_count, 3);
+        assert_eq!(changed.job_ids.len(), 3);
         assert_eq!(a.snapshot("bare").unwrap().state, JobState::Waiting);
         let prepared = a.snapshot("prepared").unwrap();
         assert_eq!(prepared.state, JobState::Waiting);
-        assert_eq!(prepared.worktree_id.as_deref(), Some("prepared-tree"));
+        assert_eq!(prepared.worktree_id.as_deref(), Some("/tmp/prepared-tree"));
         assert_eq!(a.snapshot("queued").unwrap().state, JobState::Interrupted);
 
         let readmitted = a
@@ -1592,6 +1854,91 @@ mod tests {
                 .unwrap(),
             2
         );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn worktree_run_and_dispatch_checkpoint_are_durable() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        a.reserve("j", "gjc", "o", 4).unwrap();
+        let lease = a.snapshot("j").unwrap().lease.unwrap();
+        assert_eq!(
+            a.prepare("j", &lease, "relative", "job/j"),
+            Err(AuthorityError::InvalidIdentifier)
+        );
+        a.prepare("j", &lease, "/canonical/worktree", "job/j")
+            .unwrap();
+        let admitted = a.admit("j", &lease, "r", "app").unwrap();
+        assert_eq!(
+            admitted.current_run,
+            Some(CurrentRun {
+                run_id: "r".to_owned(),
+                app_session_id: Some("app".to_owned()),
+                provider_session_id: None,
+            })
+        );
+        assert_eq!(admitted.dispatch_checkpoint, None);
+        let dispatched = a.mark_dispatching("j", &lease, "r").unwrap();
+        assert_eq!(
+            dispatched.dispatch_checkpoint,
+            Some(DispatchCheckpoint {
+                run_id: "r".to_owned(),
+            })
+        );
+        a.bind_provider_session("j", &lease, "r", "provider")
+            .unwrap();
+        assert_eq!(
+            a.snapshot("j")
+                .unwrap()
+                .current_run
+                .unwrap()
+                .provider_session_id,
+            Some("provider".to_owned())
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn reconcile_mutates_all_jobs_but_bounds_job_ids() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        for number in 0..=MAX_RECONCILE_JOB_IDS {
+            a.connection
+                .execute(
+                    "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,'p','reserved','o',1,2)",
+                    [format!("j{number:03}")],
+                )
+                .unwrap();
+        }
+        let result = a.reconcile().unwrap();
+        assert_eq!(result.changed_count, (MAX_RECONCILE_JOB_IDS + 1) as u64);
+        assert_eq!(result.job_ids.len(), MAX_RECONCILE_JOB_IDS);
+        assert_eq!(
+            a.list(Some(JobState::Reserved), None, None, 100)
+                .unwrap()
+                .len(),
+            0
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_64_kib_request_body() {
+        let (d, p) = db();
+        let prefix = r#"{"protocolVersion":1,"id":"frame","method":"job.list","afterCursor":""#;
+        let suffix = r#""}"#;
+        let body = format!(
+            "{prefix}{}{suffix}",
+            "x".repeat(MAX_FRAME_BYTES - prefix.len() - suffix.len())
+        );
+        assert_eq!(body.len(), MAX_FRAME_BYTES);
+        let mut output = Vec::new();
+        assert!(run(
+            &p,
+            std::io::Cursor::new(format!("{body}\n").into_bytes()),
+            &mut output,
+        ));
+        assert!(!output.is_empty());
         std::fs::remove_dir_all(d).unwrap();
     }
 }

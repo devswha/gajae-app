@@ -26,16 +26,14 @@ Implementation progress:
   The Node client strictly validates and coalesces those events, cancels queued work
   during bounded shutdown, restarts with bounded backoff, reconciles GJC after each
   replacement, and has no Chokidar fallback.
-- **Checkpoint C slice 3 complete.** `gajae-core jobs` defines the single
-  in-memory job state-machine authority before persistence moves: fenced lease
-  generations guard mutations, transitions are explicit, active jobs reconcile
-  to `interrupted` after authority replacement, and event append/replay is ordered
-  and idempotent.
-- **Checkpoint C slice 4 complete.** Durable job authority state now lives in a
-  separate Rust-owned SQLite database using `rusqlite` with bundled SQLite.
-  Rust exclusively owns its sequential schema migrations; startup rejects
-  unknown versions or invalid paths, atomically persists each mutation, and
-  reconciles active jobs after process replacement.
+- **Checkpoint C slice 2 components landed.** `gajae-core jobs` and native
+  Git/worktree APIs provide the durable state-machine authority, fenced lease
+  generations, explicit transitions, crash reconciliation to `interrupted`, and
+  ordered idempotent event replay. The TypeScript `JobOrchestrator` admission
+  saga is verified as a component; it is not production execution wiring.
+  Durable authority state lives in a separate Rust-owned SQLite database using
+  `rusqlite` with bundled SQLite, sequential fail-closed migrations, and
+  atomic persisted mutations.
 - **Checkpoint C slice 5 complete.** `gajae-core pty` owns one native PTY child
   without a shell and exposes bounded base64 input/output, validated resize, exit,
   EOF cleanup, and explicit shutdown over a separate strict 64 KiB NDJSON API.
@@ -47,8 +45,9 @@ Implementation progress:
 - Source builds require the pinned Rust toolchain. Server release artifacts carry
   the host-native core executable and require no installed Rust toolchain.
 - Claude, Codex, Cursor, and OpenCode execution and watcher paths remain
-  unchanged. Git/worktree and broader SQLite-backed native APIs remain in
-  Checkpoint C.
+  unchanged. Production GJC execution remains on the G001 single-turn worker
+  facade; Slice 3 owns multi-turn continuity, managed-worktree branch/PR flow,
+  production orchestrator wiring, and automatic capacity dispatch.
 
 ## Purpose
 
@@ -190,7 +189,7 @@ Extraction must preserve the existing observable GJC behavior before responsibil
 
 ### Checkpoint C: introduce the Rust core — in progress
 
-Slices 1 through 5 are complete:
+Slices 1 through 5 and the Slice 2 job components are complete:
 
 - Route only the GJC Node worker launch through the mandatory Rust process host.
 - Keep Protocol v1 opaque to Rust and authoritative in TypeScript.
@@ -201,19 +200,16 @@ Slices 1 through 5 are complete:
   containment.
 - Preserve the existing TypeScript synchronizer, database upserts, WebSocket
   deltas, initial scan, restart reconciliation, and every non-GJC Chokidar watcher.
-- Define the native in-memory job authority through a separate strict 64 KiB
-  NDJSON API, without changing worker Protocol v1 or application persistence.
-- Persist the job authority in a separate Rust-owned database with bundled
-  SQLite and sequential fail-closed migrations.
+- Land native Git/worktree APIs, durable job persistence, and the typed
+  `JobOrchestrator` admission saga as verified components.
 - Add a native single-child PTY lifecycle API with bounded framed I/O, resize,
   exit reporting, and owner-driven shutdown.
 
-Remaining slices:
+Slice 3 remains pending:
 
-- Move Git/worktree operations and their required state behind explicit Rust
-  APIs. Durable job persistence and the native PTY lifecycle preserve the
-  defined state-machine, crash reconciliation, fenced lease, and ordered
-  idempotent replay semantics.
+- Wire production GJC starts to the orchestrator only with multi-turn
+  continuity and branch/PR-from-worktree behavior.
+- Add an automatic dispatcher for durable capacity-waiting jobs.
 
 ### Checkpoint D: thin desktop shell
 

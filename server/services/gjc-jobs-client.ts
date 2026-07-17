@@ -1,17 +1,48 @@
-import { GjcNativeClient, type GjcNativeClientOptions } from './gjc-git-client.js';
+import { GjcNativeClient, GjcNativeRequestError, type GjcNativeClientOptions } from './gjc-git-client.js';
 
 export type GjcJobsClientOptions = GjcNativeClientOptions & { database: string };
+const MAX_JOBS_FRAME_BYTES = 64 * 1024;
+const REQUEST_ID_BYTES = '00000000-0000-0000-0000-000000000000';
+export class GjcJobsClientError extends Error {
+  constructor(message: string, public readonly code?: string) {
+    super(message);
+    this.name = 'GjcJobsClientError';
+  }
+}
+/** An event that cannot fit in the native jobs NDJSON frame; chunking is deferred to Slice 4. */
+export class GjcJobsEventTooLargeError extends GjcJobsClientError {
+  constructor() {
+    super('GJC job event exceeds the 64 KiB native authority frame limit.', 'event_too_large');
+    this.name = 'GjcJobsEventTooLargeError';
+  }
+}
 
 /** Process owner for the durable native jobs protocol. A down client rejects new run admission. */
 export class GjcJobsClient extends GjcNativeClient {
   constructor(options: GjcJobsClientOptions) { super('jobs', options, ['jobs', '--database', options.database]); }
+  override async request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    try {
+      return await super.request(method, params);
+    } catch (error) {
+      if (error instanceof GjcNativeRequestError) {
+        throw new GjcJobsClientError(error.message, error.code);
+      }
+      throw error;
+    }
+  }
   reserve(params: Record<string, unknown>): Promise<unknown> { return this.request('capacity.reserve', params); }
   prepare(params: Record<string, unknown>): Promise<unknown> { return this.request('job.prepare', params); }
   admit(params: Record<string, unknown>): Promise<unknown> { return this.request('job.admit', params); }
   readmit(params: Record<string, unknown>): Promise<unknown> { return this.request('job.readmit', params); }
   transition(params: Record<string, unknown>): Promise<unknown> { return this.request('job.transition', params); }
+  markDispatching(params: Record<string, unknown>): Promise<unknown> { return this.request('job.markDispatching', params); }
   finalize(params: Record<string, unknown>): Promise<unknown> { return this.request('job.finalize', params); }
-  appendEvent(params: Record<string, unknown>): Promise<unknown> { return this.request('event.append', params); }
+  appendEvent(params: Record<string, unknown>): Promise<unknown> {
+    // Keep worker output from killing the shared authority. Durable event chunking/blob projection is Slice 4.
+    const frame = JSON.stringify({ ...params, protocolVersion: 1, id: REQUEST_ID_BYTES, method: 'event.append' });
+    if (Buffer.byteLength(frame, 'utf8') > MAX_JOBS_FRAME_BYTES) return Promise.reject(new GjcJobsEventTooLargeError());
+    return this.request('event.append', params);
+  }
   replayEvents(params: Record<string, unknown>): Promise<unknown> { return this.request('event.replay', params); }
   list(params: Record<string, unknown> = {}): Promise<unknown> { return this.request('job.list', params); }
   get(params: Record<string, unknown>): Promise<unknown> { return this.request('job.get', params); }

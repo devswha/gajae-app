@@ -20,6 +20,27 @@ import {
   type GjcWorkerResponseFrame,
   type JsonObject,
 } from './gjc-worker-protocol.js';
+let runSequence = 0;
+function spawn(
+  supervisor: GjcWorkerSupervisor,
+  message: string,
+  options: Parameters<GjcWorkerSupervisor['spawnRun']>[0]['options'] = {},
+  writer: Parameters<GjcWorkerSupervisor['spawnRun']>[0]['writer'],
+): Promise<void> & { abortHandle: string } {
+  const appSessionId = writer.getAppSessionId?.()
+    ?? (supervisor as unknown as { runtime: { createScope?: () => string } }).runtime.createScope?.()
+    ?? 'app-session-1';
+  const run = supervisor.spawnRun({
+    runId: `test-run-${++runSequence}`,
+    appSessionId,
+    message,
+    options,
+    writer,
+  });
+  const completion = run.completion as Promise<void> & { abortHandle: string };
+  completion.abortHandle = run.abortHandle;
+  return completion;
+}
 
 test('resume root resolution selects either allowlisted store from indexed session metadata', async () => {
   const tempDirectory = await mkdtemp(join(tmpdir(), 'gjc-resume-enrichment-'));
@@ -202,7 +223,7 @@ test('launches the Windows worker behind an atomic kill-on-close job guard', asy
     },
   });
 
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(peer.requests.length, 0);
   child.stdout.write(`${GJC_WINDOWS_JOB_GUARD_READY}\n`);
@@ -239,7 +260,7 @@ test('fails closed when the Windows job guard never proves app ownership', async
   });
 
   await assert.rejects(
-    supervisor.spawn('hello', {}, { send() {} }),
+    spawn(supervisor, 'hello', {}, { send() {} }),
     /GJC worker failed/,
   );
 
@@ -266,8 +287,8 @@ test('shares one handshake and sends one start request per concurrent run', asyn
   });
 
   await Promise.all([
-    supervisor.spawn('first', { sessionId: null, model: 'x' }, { send() {} }),
-    supervisor.spawn('second', {}, { send() {} }),
+    spawn(supervisor, 'first', { sessionId: null, model: 'x' }, { send() {} }),
+    spawn(supervisor, 'second', {}, { send() {} }),
   ]);
 
   assert.equal(peer.requests.filter((request) => request.method === 'worker.initialize').length, 1);
@@ -279,6 +300,25 @@ test('shares one handshake and sends one start request per concurrent run', asyn
   assert.equal(environmentExtendsProcessEnvWithAgentDir(launchEnvironment), true);
   assert.equal(command, '/test/gajae-core');
   assert.deepEqual(args, ['--', '/test/bun', '/test/gjc-bun-worker.js']);
+});
+test('spawnRun preserves caller-owned identifiers and resolves started when its request is written', async () => {
+  const child = new FakeChild();
+  const peer = new FakePeer(child);
+  const supervisor = new GjcWorkerSupervisor(runtime(child));
+  const run = supervisor.spawnRun({
+    runId: 'run-caller-owned',
+    appSessionId: 'app-caller-owned',
+    message: 'hello',
+    options: {},
+    writer: { send() {} },
+  });
+  peer.respond(await peer.waitFor('worker.initialize'));
+  const request = await peer.waitFor('session.start');
+  await run.started;
+  assert.equal(request.id, 'run-caller-owned');
+  assert.equal('sessionId' in request ? request.sessionId : undefined, 'app-caller-owned');
+  peer.respond(request);
+  await run.completion;
 });
 
 /**
@@ -315,7 +355,7 @@ test('wraps the source worker with Bun while only adding the injected agent dire
     },
   });
 
-  await supervisor.spawn('source', {}, { send() {} });
+  await spawn(supervisor, 'source', {}, { send() {} });
 
   assert.deepEqual(args, ['--', '/test/bun', '/test/gjc-bun-worker.ts']);
   assert.equal(environmentExtendsProcessEnvWithAgentDir(environment), true);
@@ -337,7 +377,7 @@ test('fails safely when the native core cannot launch without a Node fallback', 
   });
 
   await assert.rejects(
-    supervisor.spawn('hello', {}, { send() {} }),
+    spawn(supervisor, 'hello', {}, { send() {} }),
     /GJC worker failed/,
   );
   assert.deepEqual(commands, ['/missing/gajae-core']);
@@ -350,7 +390,7 @@ test('resumes by provider session and forwards events using immutable run identi
   const messages: unknown[] = [];
   let providerSessionId = '';
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-2'));
-  const run = supervisor.spawn('hello', { sessionId: 'provider-old' }, {
+  const run = spawn(supervisor, 'hello', { sessionId: 'provider-old' }, {
     send: (value) => messages.push(value),
     setSessionId: (id) => { providerSessionId = id; },
   });
@@ -379,7 +419,7 @@ test('aborting before the start request prevents the run from reaching the worke
   const child = new FakeChild();
   const peer = new FakePeer(child);
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-prestart'));
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
 
   assert.equal(await supervisor.abort(run.abortHandle), true);
   peer.respond(await peer.waitFor('worker.initialize'));
@@ -395,7 +435,7 @@ test('aborts an issued run by runId and waits for its terminal start response', 
   const peer = new FakePeer(child);
   replyToHandshake(peer);
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-abort'));
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   const start = await peer.waitFor('session.start');
   let settled = false;
   void run.then(() => { settled = true; });
@@ -418,7 +458,7 @@ test('keeps a run active when the worker cannot confirm abort', async () => {
   const peer = new FakePeer(child);
   replyToHandshake(peer);
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-abort-failed'));
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   const start = await peer.waitFor('session.start');
 
   const abortResult = supervisor.abort(run.abortHandle);
@@ -440,7 +480,7 @@ test('mirrors approval replay, reply, and cancellation in app-owned state', asyn
   replyToHandshake(peer);
   const messages: unknown[] = [];
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-approval'));
-  const run = supervisor.spawn('hello', {}, { send: (value) => messages.push(value) });
+  const run = spawn(supervisor, 'hello', {}, { send: (value) => messages.push(value) });
   const start = await peer.waitFor('session.start');
   const approval = { kind: 'permission_request', requestId: 'request-1', toolName: 'Bash' };
 
@@ -506,7 +546,7 @@ test('malformed worker output fails active work once and starts a fresh generati
       throw new Error('diagnostic unavailable');
     },
   });
-  const run = supervisor.spawn('hello', {}, { send: (value) => sent.push(value) });
+  const run = spawn(supervisor, 'hello', {}, { send: (value) => sent.push(value) });
   const firstStart = await firstPeer.waitFor('session.start');
   firstPeer.status('app-session-1', firstStart.id, 4_242);
 
@@ -516,7 +556,7 @@ test('malformed worker output fails active work once and starts a fresh generati
   assert.equal(sent.filter((value) => (value as { kind?: string }).kind === 'complete').length, 1);
   assert.deepEqual(ownedProcessKills, [4_242]);
 
-  await supervisor.spawn('again', {}, { send() {} });
+  await spawn(supervisor, 'again', {}, { send() {} });
   assert.equal(spawnCalls, 2);
 });
 
@@ -537,12 +577,12 @@ test('worker exit waits for tree termination before starting a fresh generation'
     spawn: () => children[spawnCalls++]!,
     killTree: () => termination,
   });
-  const failedRun = supervisor.spawn('first', {}, { send() {} });
+  const failedRun = spawn(supervisor, 'first', {}, { send() {} });
   const failure = assert.rejects(failedRun, /GJC worker failed/);
   await firstPeer.waitFor('worker.initialize');
 
   first.emit('exit', 1);
-  const replacement = supervisor.spawn('second', {}, { send() {} });
+  const replacement = spawn(supervisor, 'second', {}, { send() {} });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(spawnCalls, 1);
   releaseTermination();
@@ -564,13 +604,13 @@ test('failed tree cleanup permanently blocks a replacement worker generation', a
     },
     killTree: () => Promise.reject(new Error('tree still alive')),
   });
-  const failedRun = supervisor.spawn('first', {}, { send() {} });
+  const failedRun = spawn(supervisor, 'first', {}, { send() {} });
   await firstPeer.waitFor('session.start');
 
   first.stdout.write('not-json\n');
   await assert.rejects(failedRun, /GJC worker failed/);
   await assert.rejects(
-    supervisor.spawn('replacement', {}, { send() {} }),
+    spawn(supervisor, 'replacement', {}, { send() {} }),
     /GJC worker failed/,
   );
 
@@ -585,7 +625,7 @@ test('a timed-out auxiliary request does not corrupt other request correlation',
     ...runtime(child),
     requestTimeoutMs: 5,
   });
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   const start = await peer.waitFor('session.start');
 
   peer.event('app-session-1', start.id, 'ask.presented', {
@@ -617,12 +657,12 @@ test('ignores stale events when a later run reuses the same app scope', async ()
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'shared-app'));
   const writer = { send: (value: unknown) => messages.push(value) };
 
-  const oldRun = supervisor.spawn('old', {}, writer);
+  const oldRun = spawn(supervisor, 'old', {}, writer);
   const oldStart = await peer.waitFor('session.start');
   peer.respond(oldStart);
   await oldRun;
 
-  const newRun = supervisor.spawn('new', {}, writer);
+  const newRun = spawn(supervisor, 'new', {}, writer);
   const newStart = await peer.waitFor('session.start', 2);
   peer.event('shared-app', oldStart.id, 'message.delta', {
     message: { kind: 'stream_delta', content: 'stale' },
@@ -649,7 +689,7 @@ test('forwards one worker terminal event without synthesizing a duplicate', asyn
     ...runtime(child, 'app-terminal'),
     notifyRunFailed: () => { failures += 1; },
   });
-  const run = supervisor.spawn('hello', {}, { send: (value) => sent.push(value) });
+  const run = spawn(supervisor, 'hello', {}, { send: (value) => sent.push(value) });
   const start = await peer.waitFor('session.start');
   const terminal = { kind: 'complete', provider: 'gjc', exitCode: 1 };
 
@@ -675,7 +715,7 @@ test('completed terminal event remains authoritative if the worker exits before 
     notifyRunFailed: () => { failed += 1; },
     killProcessTree: (processId) => { ownedProcessKills.push(processId); },
   });
-  const run = supervisor.spawn('hello', {}, { send: (value) => sent.push(value) });
+  const run = spawn(supervisor, 'hello', {}, { send: (value) => sent.push(value) });
   const start = await peer.waitFor('session.start');
   const terminal = { kind: 'complete', provider: 'gjc', exitCode: 0 };
 
@@ -700,7 +740,7 @@ test('graceful shutdown waits for the worker response then terminates its proces
     ...runtime(child, 'app-shutdown'),
     notifyRunStopped: () => { stopped += 1; },
   });
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   const start = await peer.waitFor('session.start');
   const shutdownPromise = supervisor.shutdown();
   const shutdown = await peer.waitFor('worker.shutdown');
@@ -713,7 +753,7 @@ test('graceful shutdown waits for the worker response then terminates its proces
   assert.equal(stopped, 1);
   assert.equal(child.killed, true);
   await assert.rejects(
-    supervisor.spawn('too-late', {}, { send() {} }),
+    spawn(supervisor, 'too-late', {}, { send() {} }),
     /GJC worker failed/,
   );
 });
@@ -730,7 +770,7 @@ test('shutdown waits for in-flight exit cleanup and propagates its failure', asy
     ...runtime(child),
     killTree: () => termination,
   });
-  const run = supervisor.spawn('hello', {}, { send() {} });
+  const run = spawn(supervisor, 'hello', {}, { send() {} });
   const start = await peer.waitFor('session.start');
   peer.respond(start);
   await run;
