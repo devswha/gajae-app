@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn as spawnChild } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -6,7 +7,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { after, test } from 'node:test';
 
-import { GjcWorkerSupervisor, resolveGjcResumeSessionRoot } from './gjc-worker-client.js';
+import { GjcWorkerSupervisor, killWorkerTree, resolveGjcResumeSessionRoot } from './gjc-worker-client.js';
 import {
   GJC_WINDOWS_JOB_GUARD_ACK,
   GJC_WINDOWS_JOB_GUARD_READY,
@@ -83,6 +84,7 @@ class FakeChild extends EventEmitter {
   kill(): boolean {
     this.killed = true;
     this.emit('exit', 0);
+    this.emit('close', 0);
     return true;
   }
 }
@@ -793,4 +795,34 @@ test('shutdown waits for in-flight exit cleanup and propagates its failure', asy
   assert.equal(settled, false);
   rejectTermination(new Error('tree still alive'));
   await assert.rejects(shutdownPromise, /GJC worker failed/);
+});
+test('rejecting option enrichment settles a pre-request run as not_started', async () => {
+  const child = new FakeChild();
+  const peer = new FakePeer(child);
+  replyToHandshake(peer);
+  const supervisor = new GjcWorkerSupervisor({
+    ...runtime(child),
+    enrichOptions: async () => { throw new Error('configuration unavailable'); },
+  });
+  const run = supervisor.spawnRun({
+    runId: 'enrichment-failure',
+    appSessionId: 'app-enrichment',
+    message: 'hello',
+    writer: { send() {} },
+  });
+  await assert.rejects(run.started, /GJC worker failed/);
+  assert.equal(await run.outcome, 'not_started');
+  assert.equal(supervisor.isActive('enrichment-failure'), false);
+});
+test('production POSIX terminator waits for direct-child close and process-group absence', async () => {
+  const child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], {
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const processId = child.pid!;
+  await killWorkerTree(child);
+  assert.throws(
+    () => process.kill(-processId, 0),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === 'ESRCH',
+  );
 });

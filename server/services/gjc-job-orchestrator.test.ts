@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
+import type { GjcWorkerOutcome } from '../gjc-worker-client.js';
 
 type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string } };
 class Jobs implements JobAuthority {
@@ -187,4 +188,40 @@ test('resolveBinding reads the durable app-session binding', async () => {
   assert.equal(binding?.jobId, 'job-abc');
   assert.equal(binding?.state, 'Interrupted');
   assert.equal(binding?.providerSessionId, 'provider-1');
+});
+test('a running transition failure compensates before the worker outcome settles', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  let aborted = false;
+  const supervisor: JobSupervisor = {
+    spawnRun: (input) => ({
+      started: Promise.resolve(),
+      completion: new Promise<void>(() => {}),
+      outcome: new Promise<GjcWorkerOutcome>(() => {}),
+      phase: () => 'request_sent',
+      abortHandle: input.runId,
+    }),
+    abort: async () => (aborted = true, 'aborted'),
+  };
+  jobs.transition = async () => { throw new Error('running transition failed'); };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /running transition failed/);
+  assert.equal(aborted, true);
+  assert.equal(jobs.state.state, 'failed');
+});
+test('an early healthy authority notification waits for prior cleanup and reconciles once', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  let releaseAbort!: () => void;
+  const abortGate = new Promise<void>((resolve) => { releaseAbort = resolve; });
+  const supervisor: JobSupervisor = {
+    spawnRun: (input) => ({ started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }),
+    abort: async () => { await abortGate; return 'aborted'; },
+  };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
+  await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
+  const down = orchestrator.authorityHealth(false);
+  const up = orchestrator.authorityHealth(true);
+  releaseAbort();
+  await Promise.all([down, up]);
+  assert.equal(jobs.calls.filter(([name]) => name === 'reconcile').length, 1);
+  await orchestrator.start('gjc', 'app-2', '/project', 'hello', options);
 });

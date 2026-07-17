@@ -41,12 +41,23 @@ function failureError(error: unknown): Error { return error instanceof Error ? n
 function confirmedStop(outcome: GjcWorkerOutcome | boolean | undefined): boolean {
   return outcome === true || outcome === 'not_started' || outcome === 'aborted' || outcome === 'reaped';
 }
+async function settledOutcome(run: GjcWorkerRun | undefined): Promise<GjcWorkerOutcome | undefined> {
+  if (!run?.outcome) return undefined;
+  let outcome: GjcWorkerOutcome | undefined;
+  void run.outcome.then(
+    (value) => { outcome = value; },
+    () => { outcome = 'unconfirmed'; },
+  );
+  await Promise.resolve();
+  return outcome;
+}
 
 /** Durable v5 facade: Job is a bound workspace; every dispatch creates one fenced Run. */
 export class JobOrchestrator {
   private readonly owner: string; private readonly createId: () => string;
   private readonly queues = new Map<string, Promise<unknown>>(); private readonly activeRuns = new Map<string, { runId: string; lease: Lease; abortHandle: string }>();
   private admissionBlocked = false;
+  private healthChain: Promise<void> = Promise.resolve();
   constructor(private readonly deps: JobOrchestratorDependencies) { this.owner = deps.owner ?? `orchestrator-${randomUUID()}`; this.createId = deps.createId ?? randomUUID; }
   private git(root: string): GitWorktrees { const client = this.deps.gitForProject?.(root) ?? this.deps.git; if (!client) throw new Error('GJC Git worktree client is unavailable.'); return client; }
   private serial<T>(jobId: string, action: () => Promise<T>): Promise<T> { const prior = this.queues.get(jobId) ?? Promise.resolve(); const result = prior.catch(() => undefined).then(action); const tail = result.catch(() => undefined).finally(() => { if (this.queues.get(jobId) === tail) this.queues.delete(jobId); }); this.queues.set(jobId, tail); return result; }
@@ -109,10 +120,16 @@ export class JobOrchestrator {
     );
   }
   private async failRun(jobId: string, runId: string, expected: Lease, run: GjcWorkerRun | undefined, error: unknown): Promise<void> {
-    const outcome = await run?.outcome?.catch(() => 'unconfirmed' as const);
-    if (outcome === 'not_started') {
+    const outcome = await settledOutcome(run);
+    if (outcome === 'not_started' || run?.phase?.() === 'registered') {
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
       if (sameFence(fresh, runId, expected)) await this.cancelAdmission(jobId, fresh, error);
+      this.activeRuns.delete(jobId);
+      return;
+    }
+    if (outcome === 'reaped' || outcome === 'aborted') {
+      const fresh = snapshot(await this.deps.jobs.get({ jobId }));
+      if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', { kind: 'persistence_failed', error: failureError(error).message });
       this.activeRuns.delete(jobId);
       return;
     }
@@ -262,20 +279,25 @@ export class JobOrchestrator {
     }
   }
   reconcile(): Promise<unknown> { return this.deps.jobs.reconcile({}); }
-  async authorityHealth(healthy: boolean): Promise<void> {
-    if (!healthy) {
-      this.admissionBlocked = true;
-      const runs = [...this.activeRuns.values()];
-      const stopped = await Promise.all(runs.map(async (run) => {
-        const aborted = confirmedStop(await this.deps.supervisor.abort(run.abortHandle).catch(() => false));
-        return aborted || confirmedStop(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
-      }));
-      if (stopped.every(Boolean)) this.activeRuns.clear();
-      return;
-    }
-    if (this.activeRuns.size) throw new GjcJobsClientError('GJC worker reaping is unconfirmed.', 'authority_unavailable');
-    await this.deps.jobs.reconcile({});
-    this.admissionBlocked = false;
+  authorityHealth(healthy: boolean): Promise<void> {
+    const transition = async (): Promise<void> => {
+      if (!healthy) {
+        this.admissionBlocked = true;
+        const runs = [...this.activeRuns.values()];
+        const stopped = await Promise.all(runs.map(async (run) => {
+          const aborted = confirmedStop(await this.deps.supervisor.abort(run.abortHandle).catch(() => false));
+          return aborted || confirmedStop(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
+        }));
+        if (stopped.every(Boolean)) this.activeRuns.clear();
+        return;
+      }
+      if (this.activeRuns.size) throw new GjcJobsClientError('GJC worker reaping is unconfirmed.', 'authority_unavailable');
+      await this.deps.jobs.reconcile({});
+      this.admissionBlocked = false;
+    };
+    const result = this.healthChain.catch(() => undefined).then(transition);
+    this.healthChain = result.catch(() => undefined);
+    return result;
   }
 }
 type ProductionOrchestrator = JobOrchestrator & { close(): void }; let production: ProductionOrchestrator | undefined; let productionAuthority: GjcJobsClient | undefined;

@@ -72,8 +72,9 @@ export type GjcWorkerOutcome = 'not_started' | 'aborted' | 'reaped' | 'unconfirm
 export type GjcWorkerRun = {
   started: Promise<void>;
   completion: Promise<void>;
-  /** Settles even when completion is deliberately held behind a failed reap barrier. */
+  /** Settles only after the run has entered its terminal cleanup phase. */
   outcome?: Promise<GjcWorkerOutcome>;
+  phase?: () => 'registered' | 'request_sent' | 'terminal';
   abortHandle: string;
 };
 
@@ -111,6 +112,7 @@ export type GjcWorkerSupervisorRuntime = {
   enrichOptions?: GjcOptionsEnricher;
 };
 
+type RunPhase = 'registered' | 'request_sent' | 'terminal';
 type Run = {
   runId: string;
   appScope: string;
@@ -118,8 +120,7 @@ type Run = {
   options: GjcWorkerOptions;
   aborted: boolean;
   abortPromise?: Promise<boolean>;
-  requestSent: boolean;
-  terminal: boolean;
+  phase: RunPhase;
   terminalForwarded: boolean;
   terminalFailed: boolean;
   processId?: number;
@@ -130,7 +131,6 @@ type Run = {
   resolveStarted: () => void;
   rejectStarted: (error: Error) => void;
   started: boolean;
-
 };
 
 type PendingApproval = {
@@ -282,21 +282,53 @@ function taskkill(processId: number): Promise<void> {
   });
 }
 
-function killWorkerTree(child: Child): void | Promise<void> {
-  if (!child.pid) {
-    child.kill('SIGKILL');
-    return;
-  }
-
-  if (process.platform === 'win32') {
-    return taskkill(child.pid);
-  }
-
-  try {
-    process.kill(-child.pid, 'SIGKILL');
-  } catch {
-    child.kill('SIGKILL');
-  }
+export function killWorkerTree(child: Child): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let closed = false;
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const verifyProcessGroup = (): void => {
+      if (settled) return;
+      if (!child.pid) {
+        if (closed) finish();
+        return;
+      }
+      try {
+        process.kill(-child.pid, 0);
+        setTimeout(verifyProcessGroup, 25);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ESRCH' && closed) finish();
+        else if (code !== 'ESRCH') finish(new Error('GJC worker process group termination could not be verified.', { cause: error }));
+      }
+    };
+    child.on('close', () => {
+      closed = true;
+      verifyProcessGroup();
+    });
+    const timer = setTimeout(() => finish(new Error('GJC worker tree termination timed out.')), 5_000);
+    timer.unref?.();
+    try {
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !child.kill('SIGKILL')) throw error;
+        }
+      } else if (!child.kill('SIGKILL')) {
+        throw new Error('GJC worker process could not be terminated.');
+      }
+      verifyProcessGroup();
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error('GJC worker tree termination failed.'));
+    }
+  });
 }
 
 function killOwnedRunTree(processId: number): void | Promise<void> {
@@ -378,13 +410,13 @@ export class GjcWorkerSupervisor {
     const started = new Promise<void>((res, rej) => { resolveStarted = res; rejectStarted = rej; });
     void started.catch(() => {});
     const run: Run = {
-      runId, appScope: appSessionId, writer, options, aborted: false, requestSent: false,
-      terminal: false, terminalForwarded: false, terminalFailed: false, resolve, reject,
+      runId, appScope: appSessionId, writer, options, aborted: false, phase: 'registered',
+      terminalForwarded: false, terminalFailed: false, resolve, reject,
       resolveOutcome, resolveStarted, rejectStarted, started: false,
     };
     this.runs.set(runId, run);
     void this.startRun(run, message);
-    return { started, completion, outcome, abortHandle: runId };
+    return { started, completion, outcome, phase: () => run.phase, abortHandle: runId };
   }
 
 
@@ -392,7 +424,7 @@ export class GjcWorkerSupervisor {
   private async startRun(run: Run, message: string): Promise<void> {
     try {
       await this.ensureWorker();
-      if (run.terminal) return;
+      if (run.phase === 'terminal') return;
 
       const providerSessionId = safeId(run.options.sessionId);
       if (providerSessionId) {
@@ -402,7 +434,7 @@ export class GjcWorkerSupervisor {
 
       const options = safeOptions(await this.runtime.enrichOptions(run.options));
       if (!options) {
-        this.finish(run, true);
+        this.finish(run, true, SAFE_FAILURE, 'not_started');
         return;
       }
 
@@ -412,7 +444,7 @@ export class GjcWorkerSupervisor {
         ...(providerSessionId ? { providerSessionId } : {}),
       };
       const method = providerSessionId ? 'session.resume' : 'session.start';
-      run.requestSent = true;
+      run.phase = 'request_sent';
       run.started = true;
       run.resolveStarted();
       const response = await this.request(
@@ -425,7 +457,7 @@ export class GjcWorkerSupervisor {
       this.finish(run, run.terminalFailed || !response.ok);
     } catch (error) {
       // workerFailed owns terminal settlement and must first prove the reap barrier.
-      if (this.terminating || (this.terminationFailure && run.requestSent)) return;
+      if (this.terminating || (this.terminationFailure && run.phase === 'request_sent')) return;
       this.finish(
         run,
         true,
@@ -722,9 +754,9 @@ export class GjcWorkerSupervisor {
   abort(alias: string): Promise<GjcWorkerOutcome> {
     const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
     const run = runId ? this.runs.get(runId) : undefined;
-    if (!run || run.terminal) return Promise.resolve('unconfirmed');
+    if (!run || run.phase === 'terminal') return Promise.resolve('unconfirmed');
     if (run.abortPromise) return run.abortPromise.then((aborted) => aborted ? 'aborted' : 'unconfirmed');
-    if (!run.requestSent) {
+    if (run.phase === 'registered') {
       run.aborted = true;
       this.finish(run, false, SAFE_FAILURE, 'not_started');
       return Promise.resolve('not_started');
@@ -733,7 +765,7 @@ export class GjcWorkerSupervisor {
       runId: run.runId,
     }).then((response) => {
       const result = response.ok ? object(response.result) : undefined;
-      if (!response.ok || result?.aborted !== true || run.terminal) return false;
+      if (!response.ok || result?.aborted !== true || run.phase === 'terminal') return false;
       run.aborted = true;
       return true;
     }).catch(() => false).finally(() => {
@@ -780,7 +812,7 @@ export class GjcWorkerSupervisor {
   private restoreApproval(requestId: string, pending: PendingApproval): void {
     if (this.approvals.get(requestId) !== pending) return;
     const run = this.runs.get(pending.runId);
-    if (!run || run.terminal) {
+    if (!run || run.phase === 'terminal') {
       this.approvals.delete(requestId);
       return;
     }
@@ -799,9 +831,9 @@ export class GjcWorkerSupervisor {
       .map((item) => item.message);
   }
 
-  private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE, outcome: GjcWorkerOutcome = run.aborted ? 'aborted' : 'reaped'): void {
-    if (run.terminal) return;
-    run.terminal = true;
+  private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE, outcome: GjcWorkerOutcome = run.aborted ? 'aborted' : run.phase === 'registered' ? 'not_started' : 'reaped'): void {
+    if (run.phase === 'terminal') return;
+    run.phase = 'terminal';
     if (!run.started) run.rejectStarted(new Error(failureMessage));
     run.resolveOutcome(outcome);
 
