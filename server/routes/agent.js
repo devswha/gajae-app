@@ -973,6 +973,11 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         effort,
         permissionMode: 'bypassPermissions',
         sessionDir: process.env.GJC_LIVE_SESSION_DIR || undefined,
+        sessionRoot: process.env.GJC_LIVE_SESSION_DIR || path.join(os.tmpdir(), 'gjc-live-sessions'),
+        credential: { kind: 'stored' },
+        toolNames: ['bash', 'read', 'write', 'edit', 'search', 'find', 'ask'],
+        spawns: '*',
+        bashPolicy: { allowedPrefixes: [] },
       }, writer);
     }
 

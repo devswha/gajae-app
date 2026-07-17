@@ -12,6 +12,10 @@ const TARGET_GLIBC_VERSION = [2, 35, 0];
 const TARGET_PLATFORM = 'linux';
 const TARGET_ARCH = 'x64';
 const NATIVE_MODULES = ['better-sqlite3', 'bcrypt', 'node-pty'];
+const BUN_VERSION = '1.3.14';
+const GJC_SDK_PACKAGE = '@gajae-code/coding-agent';
+const GJC_NATIVES_PACKAGE = '@gajae-code/natives';
+const GJC_SDK_VERSION = '0.11.1';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..', '..');
@@ -126,17 +130,33 @@ async function collectElfFiles(directory) {
   }
   return files;
 }
+async function collectGjcNativesElfFiles(stageDir) {
+  const packageScope = path.join(stageDir, 'node_modules', '@gajae-code');
+  const entries = await fs.readdir(packageScope, { withFileTypes: true });
+  const elfFiles = [];
+  for (const entry of entries) {
+    if (entry.isDirectory() && entry.name.startsWith('natives-')) {
+      elfFiles.push(...await collectElfFiles(path.join(packageScope, entry.name)));
+    }
+  }
+  return elfFiles;
+}
 
 async function auditGlibcRequirements(stageDir) {
   const corePath = path.join(stageDir, 'dist-native', 'gajae-core');
-  const elfFiles = await collectElfFiles(path.join(stageDir, 'node_modules', NATIVE_MODULES[0]));
-  for (const moduleName of NATIVE_MODULES.slice(1)) {
+  const bunPath = path.join(stageDir, 'dist-native', 'bun');
+  const elfFiles = [];
+  for (const moduleName of NATIVE_MODULES) {
     elfFiles.push(...await collectElfFiles(path.join(stageDir, 'node_modules', moduleName)));
   }
+  elfFiles.push(...await collectGjcNativesElfFiles(stageDir));
   if (!(await isElfFile(corePath))) {
     throw new Error('dist-native/gajae-core is not a Linux ELF executable.');
   }
-  elfFiles.push(corePath);
+  if (!(await isElfFile(bunPath))) {
+    throw new Error('dist-native/bun is not a Linux ELF executable.');
+  }
+  elfFiles.push(corePath, bunPath);
   for (const filePath of elfFiles) {
     const versionInfo = await capture('readelf', ['--version-info', '--wide', filePath]);
     for (const match of versionInfo.matchAll(/\bGLIBC_(\d+)\.(\d+)(?:\.(\d+))?\b/gu)) {
@@ -157,6 +177,41 @@ async function pathExists(filePath) {
     return true;
   } catch {
     return false;
+  }
+}
+function assertGjcSdkProductionDependency(packageJson) {
+  if (packageJson.dependencies?.[GJC_SDK_PACKAGE] !== GJC_SDK_VERSION) {
+    throw new Error(`${GJC_SDK_PACKAGE}@${GJC_SDK_VERSION} must be an exact production dependency.`);
+  }
+}
+
+async function assertInstalledGjcSdkDependencies(stageDir) {
+  for (const packageName of [GJC_SDK_PACKAGE, GJC_NATIVES_PACKAGE]) {
+    let installedPackage;
+    try {
+      installedPackage = JSON.parse(await fs.readFile(
+        path.join(stageDir, 'node_modules', packageName, 'package.json'),
+        'utf8',
+      ));
+    } catch {
+      throw new Error(`Production installation is missing ${packageName}@${GJC_SDK_VERSION}.`);
+    }
+    if (installedPackage.version !== GJC_SDK_VERSION) {
+      throw new Error(`Production installation must resolve ${packageName}@${GJC_SDK_VERSION}.`);
+    }
+  }
+}
+
+async function assertBundledBun(directory) {
+  const bunPath = path.join(directory, 'dist-native', 'bun');
+  let version;
+  try {
+    version = (await capture(bunPath, ['--version'])).trim();
+  } catch {
+    throw new Error(`dist-native/bun must be an executable Bun ${BUN_VERSION} binary.`);
+  }
+  if (version !== BUN_VERSION) {
+    throw new Error(`dist-native/bun must report Bun ${BUN_VERSION}.`);
   }
 }
 
@@ -233,9 +288,9 @@ function sha256(filePath) {
 async function smokeNativeRuntime(stageDir) {
   const smokeSource = `
     import { constants } from 'node:fs';
-    import { access } from 'node:fs/promises';
+    import { access, mkdir } from 'node:fs/promises';
     import { createRequire } from 'node:module';
-    import { spawnSync } from 'node:child_process';
+    import { spawnSync, spawn } from 'node:child_process';
 
     import path from 'node:path';
     const require = createRequire(import.meta.url);
@@ -264,6 +319,81 @@ async function smokeNativeRuntime(stageDir) {
     if (core.status !== 0 || !core.stdout.startsWith('gajae-core ')) {
       throw new Error('gajae-core failed to start.');
     }
+
+    const bunPath = path.join(process.cwd(), 'dist-native', 'bun');
+    await access(bunPath, constants.X_OK);
+    const bun = spawnSync(bunPath, ['--version'], { encoding: 'utf8' });
+    if (bun.status !== 0 || bun.stdout.trim() !== '${BUN_VERSION}') {
+      throw new Error('Bun failed to start with the required version.');
+    }
+    const smokeAgentDir = path.join(process.cwd(), '.gjc-smoke-agent');
+    await mkdir(smokeAgentDir, { recursive: true });
+    await new Promise((resolve, reject) => {
+      const worker = spawn(bunPath, [path.join(process.cwd(), 'dist-server', 'server', 'gjc-bun-worker.js')], {
+        env: { ...process.env, GJC_WORKER_AGENT_DIR: smokeAgentDir },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      let initialized = false;
+      let shutdownResponses = 0;
+      const timeout = setTimeout(() => {
+        worker.kill();
+        reject(new Error('staged Bun worker timed out.'));
+      }, 10_000);
+      const fail = (error) => {
+        clearTimeout(timeout);
+        worker.kill();
+        reject(error);
+      };
+      worker.stdout.setEncoding('utf8');
+      worker.stderr.setEncoding('utf8');
+      worker.stdout.on('data', (chunk) => {
+        stdout += chunk;
+        const lines = stdout.split('\\n');
+        stdout = lines.pop();
+        try {
+          for (const line of lines) {
+            if (!line) continue;
+            const frame = JSON.parse(line);
+            if (frame.kind === 'response' && frame.id === 'stage-init') {
+              if (initialized || frame.payload?.ok !== true) {
+                throw new Error('staged Bun worker rejected initialization.');
+              }
+              initialized = true;
+              worker.stdin.write(JSON.stringify({
+                protocolVersion: 1,
+                kind: 'request',
+                id: 'stage-shutdown',
+                method: 'worker.shutdown',
+                payload: {},
+              }) + '\\n');
+              worker.stdin.end();
+            } else if (frame.kind === 'response' && frame.id === 'stage-shutdown') {
+              if (frame.payload?.ok !== true || ++shutdownResponses !== 1) {
+                throw new Error('staged Bun worker rejected shutdown.');
+              }
+            }
+          }
+        } catch (error) {
+          fail(error);
+        }
+      });
+      worker.stderr.on('data', (chunk) => { stderr += chunk; });
+      worker.once('error', fail);
+      worker.once('close', (code) => {
+        clearTimeout(timeout);
+        if (code === 0 && initialized && shutdownResponses === 1 && !stderr) resolve();
+        else reject(new Error('staged Bun worker exited with code ' + code + ': ' + stderr));
+      });
+      worker.stdin.write(JSON.stringify({
+        protocolVersion: 1,
+        kind: 'request',
+        id: 'stage-init',
+        method: 'worker.initialize',
+        payload: {},
+      }) + '\\n');
+    });
 
     await new Promise((resolve, reject) => {
       const terminal = pty.spawn(process.execPath, ['-e', 'process.exit(0)'], {
@@ -315,6 +445,8 @@ const packageJson = JSON.parse(
   await fs.readFile(path.join(rootDir, 'package.json'), 'utf8'),
 );
 const version = packageJson.version;
+assertGjcSdkProductionDependency(packageJson);
+await assertBundledBun(rootDir);
 const bundleName = `gajae-app-server-${version}-linux-x64-node22.tar.gz`;
 const bundleRoot = path.join(rootDir, 'release', 'server');
 const stageDir = path.join(bundleRoot, `.stage-${version}`);
@@ -365,6 +497,7 @@ try {
       npm_config_update_notifier: 'false',
     },
   });
+  await assertInstalledGjcSdkDependencies(stageDir);
 
   console.log(`Rebuilding ${NATIVE_MODULES.join(', ')} from source for Node.js ${TARGET_NODE_MAJOR}...`);
   await run('npm', ['rebuild', '--omit=dev', '--build-from-source', ...NATIVE_MODULES], {
@@ -385,6 +518,7 @@ try {
   await fs.rm(path.join(stageDir, 'package-lock.json'), { force: true });
   await fs.rm(path.join(stageDir, 'scripts', 'fix-node-pty.js'), { force: true });
   await fs.chmod(path.join(stageDir, 'scripts', 'gajae-app-runtime.mjs'), 0o755);
+  await fs.chmod(path.join(stageDir, 'dist-native', 'bun'), 0o755);
   await writeRuntimePackageJson(stageDir, packageJson);
 
   await createDeterministicArchive(stageDir, archivePath, sourceDateEpoch());

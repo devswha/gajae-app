@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:js|ts|tsx)$/;
+const BUN_TEST_FILE_PATTERN = /\.bun\.(?:test|spec)\.ts$/;
 const SKIPPED_DIRECTORIES = new Set(['dist', 'dist-server', 'node_modules', 'release']);
 
 const [nodeMajor, nodeMinor, nodePatch] = process.versions.node.split('.').map(Number);
@@ -56,12 +57,44 @@ function runTests(label, files, { tsconfig } = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const [serverTests, clientTests, electronTests] = await Promise.all([
+const REQUIRED_BUN_VERSION = '1.3.14';
+
+function resolveBunExecutable() {
+  const bundled = path.join(process.cwd(), 'dist-native', process.platform === 'win32' ? 'bun.exe' : 'bun');
+  const candidates = [bundled, 'bun'];
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ['--version'], { encoding: 'utf8' });
+    if (!probe.error && probe.status === 0) return { path: candidate, version: probe.stdout.trim() };
+  }
+  return null;
+}
+
+function runBunTests(label, files) {
+  if (files.length === 0) return;
+  const bun = resolveBunExecutable();
+  if (!bun) {
+    console.error(`[test] ${label}: Bun runtime is required (dist-native/bun or PATH); run scripts/fetch-bun.mjs.`);
+    process.exit(1);
+  }
+  if (bun.version !== REQUIRED_BUN_VERSION) {
+    console.error(`[test] ${label}: Bun ${REQUIRED_BUN_VERSION} is required; found ${bun.version || 'unknown'}.`);
+    process.exit(1);
+  }
+  console.log(`\n[test] ${label}: ${files.length} files (bun ${bun.version})`);
+  const result = spawnSync(bun.path, ['test', ...files], { cwd: process.cwd(), stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+const [serverTestsAll, clientTests, electronTests] = await Promise.all([
   collectTests('server'),
   collectTests('src'),
   collectTests('electron'),
 ]);
+const serverBunTests = serverTestsAll.filter((file) => BUN_TEST_FILE_PATTERN.test(file));
+const serverTests = serverTestsAll.filter((file) => !BUN_TEST_FILE_PATTERN.test(file));
 
 runTests('server', serverTests, { tsconfig: 'server/tsconfig.json' });
+runBunTests('server-bun', serverBunTests);
 runTests('client', clientTests, { tsconfig: 'tsconfig.json' });
 runTests('electron', electronTests);

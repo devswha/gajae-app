@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 
-import { GjcWorkerSupervisor } from './gjc-worker-client.js';
+import { GjcWorkerSupervisor, resolveGjcResumeSessionRoot } from './gjc-worker-client.js';
 import {
   GJC_WINDOWS_JOB_GUARD_ACK,
   GJC_WINDOWS_JOB_GUARD_READY,
@@ -17,6 +20,36 @@ import {
   type GjcWorkerResponseFrame,
   type JsonObject,
 } from './gjc-worker-protocol.js';
+
+test('resume root resolution selects either allowlisted store from indexed session metadata', async () => {
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'gjc-resume-enrichment-'));
+  const liveRoot = join(tempDirectory, 'live-sessions');
+  const savedRoot = join(homedir(), '.gjc', 'agent', 'sessions');
+  const savedDirectory = join(savedRoot, `gjc-worker-client-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  try {
+    await Promise.all([mkdir(liveRoot, { recursive: true }), mkdir(savedDirectory, { recursive: true })]);
+    const paths = {
+      live: join(liveRoot, 'live.jsonl'),
+      saved: join(savedDirectory, 'saved.jsonl'),
+    };
+    await Promise.all([writeFile(paths.live, '{}\n'), writeFile(paths.saved, '{}\n')]);
+    const lookup = async (sessionId: string) => paths[sessionId as keyof typeof paths];
+
+    assert.equal(await resolveGjcResumeSessionRoot('live', liveRoot, lookup), liveRoot);
+    assert.equal(await resolveGjcResumeSessionRoot('saved', liveRoot, lookup), savedRoot);
+  } finally {
+    await Promise.all([
+      rm(tempDirectory, { recursive: true, force: true }),
+      rm(savedDirectory, { recursive: true, force: true }),
+    ]);
+  }
+});
+// The supervisor intentionally unrefs its internal timers so a shutting-down
+// application is never kept alive. Tests that await only those timers would let
+// the event loop drain before they fire (observed on macOS), so hold one
+// referenced handle for the lifetime of this file.
+const keepAlive = setInterval(() => {}, 60_000);
+after(() => clearInterval(keepAlive));
 
 class FakeChild extends EventEmitter {
   readonly stdin = new PassThrough();
@@ -127,7 +160,8 @@ function runtime(child: FakeChild, scope = 'app-session-1') {
   return {
     spawn: () => child,
     corePath: '/test/gajae-core',
-    workerPath: '/test/gjc-worker.js',
+    workerPath: '/test/gjc-bun-worker.js',
+    bunPath: '/test/bun',
     compiled: true,
     createScope: () => scope,
     notifyRunStopped: () => {},
@@ -189,7 +223,7 @@ test('launches the Windows worker behind an atomic kill-on-close job guard', asy
   );
   assert.match(
     spawnOptions.env?.GAJAE_INTERNAL_JOB_COMMAND_LINE ?? '',
-    /gjc-worker\.js/,
+    /gjc-bun-worker\.js/,
   );
 });
 
@@ -217,14 +251,14 @@ test('shares one handshake and sends one start request per concurrent run', asyn
   let command = '';
   let args: string[] = [];
   let detached: boolean | undefined;
-  let inheritedEnvironment = false;
+  let launchEnvironment: NodeJS.ProcessEnv | undefined;
   const supervisor = new GjcWorkerSupervisor({
     ...runtime(child),
     spawn: (workerCommand, workerArgs, options) => {
       command = workerCommand;
       args = workerArgs;
       detached = options.detached;
-      inheritedEnvironment = options.env === process.env;
+      launchEnvironment = options.env;
       return child;
     },
   });
@@ -240,12 +274,29 @@ test('shares one handshake and sends one start request per concurrent run', asyn
   assert.deepEqual(starts[0]?.payload, { message: 'first', options: { model: 'x' } });
   assert.equal(peer.requests.some((request) => request.method === 'turn.start'), false);
   assert.equal(detached, process.platform !== 'win32');
-  assert.equal(inheritedEnvironment, true);
+  assert.equal(environmentExtendsProcessEnvWithAgentDir(launchEnvironment), true);
   assert.equal(command, '/test/gajae-core');
-  assert.deepEqual(args, ['--', process.execPath, '/test/gjc-worker.js']);
+  assert.deepEqual(args, ['--', '/test/bun', '/test/gjc-bun-worker.js']);
 });
 
-test('wraps the source worker command without changing its tsx environment', async () => {
+/**
+ * The launch env is process.env extended by exactly one injected key:
+ * GJC_WORKER_AGENT_DIR (explicit app-owned auth/config injection, F12).
+ */
+function environmentExtendsProcessEnvWithAgentDir(environment: NodeJS.ProcessEnv | undefined): boolean {
+  if (!environment) return false;
+  const keys = new Set(Object.keys(environment));
+  if (typeof environment.GJC_WORKER_AGENT_DIR !== 'string' || environment.GJC_WORKER_AGENT_DIR.length === 0) return false;
+  for (const key of Object.keys(process.env)) {
+    if (key === 'GJC_WORKER_AGENT_DIR') continue;
+    if (environment[key] !== process.env[key]) return false;
+    keys.delete(key);
+  }
+  keys.delete('GJC_WORKER_AGENT_DIR');
+  return keys.size === 0;
+}
+
+test('wraps the source worker with Bun while only adding the injected agent directory', async () => {
   const child = new FakeChild();
   const peer = new FakePeer(child);
   peer.handle((request) => peer.respond(request));
@@ -254,7 +305,7 @@ test('wraps the source worker command without changing its tsx environment', asy
   const supervisor = new GjcWorkerSupervisor({
     ...runtime(child),
     compiled: false,
-    workerPath: '/test/gjc-worker.ts',
+    workerPath: '/test/gjc-bun-worker.ts',
     spawn: (_command, workerArgs, options) => {
       args = workerArgs;
       environment = options.env;
@@ -264,14 +315,8 @@ test('wraps the source worker command without changing its tsx environment', asy
 
   await supervisor.spawn('source', {}, { send() {} });
 
-  assert.deepEqual(args, [
-    '--',
-    process.execPath,
-    '--import',
-    'tsx',
-    '/test/gjc-worker.ts',
-  ]);
-  assert.match(environment?.TSX_TSCONFIG_PATH ?? '', /server\/tsconfig\.json$/u);
+  assert.deepEqual(args, ['--', '/test/bun', '/test/gjc-bun-worker.ts']);
+  assert.equal(environmentExtendsProcessEnvWithAgentDir(environment), true);
 });
 
 test('fails safely when the native core cannot launch without a Node fallback', async () => {
@@ -280,6 +325,7 @@ test('fails safely when the native core cannot launch without a Node fallback', 
     corePath: '/missing/gajae-core',
     workerPath: '/test/gjc-worker.js',
     compiled: true,
+    bunPath: '/test/bun',
     spawn: (command) => {
       commands.push(command);
       throw new Error('missing');

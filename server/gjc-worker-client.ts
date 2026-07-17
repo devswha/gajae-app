@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { spawn as spawnChild } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Writable } from 'node:stream';
 
@@ -44,6 +48,7 @@ type RunStoppedNotifier = (notification: RunStoppedNotification) => unknown;
 type RunFailedNotifier = (notification: RunFailedNotification) => unknown;
 export type GjcApprovalDecision = { allow: boolean; updatedInput?: unknown; message?: string; rememberEntry?: unknown };
 export type GjcWorkerOptions = Record<string, unknown> & { sessionId?: string | null; cwd?: string; projectPath?: string; sessionSummary?: string };
+type GjcOptionsEnricher = (options: GjcWorkerOptions) => Promise<GjcWorkerOptions>;
 export type GjcWorkerWriter = { send(value: unknown): void; setSessionId?(id: string): void; getAppSessionId?(): string | undefined; userId?: string | number | null };
 type Child = {
   pid?: number;
@@ -73,6 +78,10 @@ export type GjcWorkerSupervisorRuntime = {
   workerPath?: string;
   corePath?: string;
   compiled?: boolean;
+  /** Explicit test/development override; production resolves the bundled Bun first. */
+  bunPath?: string;
+  /** Allows PATH lookup only for uncompiled development workers. */
+  allowDevelopmentBun?: boolean;
   initializeTimeoutMs?: number;
   requestTimeoutMs?: number;
   notifyRunStopped?: RunStoppedNotifier;
@@ -83,6 +92,7 @@ export type GjcWorkerSupervisorRuntime = {
   killProcessTree?: (processId: number) => void | Promise<void>;
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
+  enrichOptions?: GjcOptionsEnricher;
 };
 
 type Run = {
@@ -116,6 +126,7 @@ type ExpiredRequest = {
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const SAFE_FAILURE = 'GJC worker failed.';
+class GjcConfigurationError extends Error {}
 
 function safeId(value: unknown): string | undefined {
   return typeof value === 'string' && SAFE_ID.test(value) ? value : undefined;
@@ -141,6 +152,76 @@ function safeJsonObject(value: unknown): JsonObject | undefined {
 function safeOptions(options: GjcWorkerOptions): JsonObject | undefined {
   const { sessionId: _sessionId, ...rest } = options;
   return safeJsonObject(rest);
+}
+function containedBy(root: string, path: string): boolean {
+  const pathFromRoot = relative(root, path);
+  return pathFromRoot === '' || (!!pathFromRoot && !pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot));
+}
+
+type GjcSessionPathLookup = (sessionId: string) => Promise<string | undefined>;
+
+async function sessionJsonlPath(sessionId: string): Promise<string | undefined> {
+  const { sessionsDb } = await import('./modules/database/repositories/sessions.db.js');
+  const session = sessionsDb.getSessionByProviderSessionId('gjc', sessionId)
+    ?? sessionsDb.getSessionById(sessionId);
+  return session?.provider === 'gjc' ? session.jsonl_path ?? undefined : undefined;
+}
+
+export async function resolveGjcResumeSessionRoot(
+  sessionId: string,
+  liveSessionRoot: string,
+  lookup: GjcSessionPathLookup = sessionJsonlPath,
+): Promise<string | undefined> {
+  try {
+    const sessionPath = await realpath(await lookup(sessionId) ?? '');
+    const roots = [
+      join(homedir(), '.gjc', 'agent', 'sessions'),
+      liveSessionRoot,
+    ];
+    for (const root of roots) {
+      try {
+        const canonicalRoot = await realpath(root);
+        if (containedBy(canonicalRoot, sessionPath)) return canonicalRoot;
+      } catch {
+        // A missing or inaccessible allowlist root cannot contain a resumable session.
+      }
+    }
+  } catch {
+    // Session metadata is advisory; preserve the live-root fallback.
+  }
+  return undefined;
+}
+
+export async function enrichGjcSdkRunOptions(options: GjcWorkerOptions): Promise<GjcWorkerOptions> {
+  let modelId = options.modelId ?? options.model;
+  if (modelId === null || modelId === undefined) {
+    try {
+      const { providerModelsService } = await import('./modules/providers/services/provider-models.service.js');
+      modelId = (await providerModelsService.getCurrentActiveModel('gjc')).model;
+    } catch {
+      throw new GjcConfigurationError('Unable to resolve the active GJC model.');
+    }
+  }
+  if (typeof modelId !== 'string' || !modelId.trim()) {
+    throw new GjcConfigurationError('GJC requires a configured model ID.');
+  }
+
+  const liveSessionRoot = typeof options.sessionRoot === 'string' && options.sessionRoot
+    ? options.sessionRoot
+    : process.env.GJC_LIVE_SESSION_DIR ?? join(tmpdir(), 'gjc-live-sessions');
+  const sessionRoot = typeof options.sessionId === 'string' && options.sessionId
+    ? await resolveGjcResumeSessionRoot(options.sessionId, liveSessionRoot) ?? liveSessionRoot
+    : liveSessionRoot;
+  return {
+    ...options,
+    cwd: options.cwd ?? options.projectPath,
+    sessionRoot,
+    credential: options.credential ?? { kind: 'stored' },
+    modelId,
+    toolNames: options.toolNames ?? ['bash', 'read', 'write', 'edit', 'search', 'find', 'ask'],
+    spawns: options.spawns ?? '*',
+    bashPolicy: options.bashPolicy ?? { allowedPrefixes: [] },
+  };
 }
 
 function taskkill(processId: number): Promise<void> {
@@ -204,7 +285,7 @@ function killOwnedRunTree(processId: number): void | Promise<void> {
 
 /** Supervises the private Protocol v1 worker while preserving app-owned lifecycle state. */
 export class GjcWorkerSupervisor {
-  private readonly runtime: Required<Pick<GjcWorkerSupervisorRuntime, 'spawn' | 'initializeTimeoutMs' | 'requestTimeoutMs' | 'createScope' | 'diagnostic' | 'notifyRunStopped' | 'notifyRunFailed' | 'killTree' | 'killProcessTree' | 'platform' | 'environment'>> & Pick<GjcWorkerSupervisorRuntime, 'corePath' | 'workerPath' | 'compiled'>;
+  private readonly runtime: Required<Pick<GjcWorkerSupervisorRuntime, 'spawn' | 'initializeTimeoutMs' | 'requestTimeoutMs' | 'createScope' | 'diagnostic' | 'notifyRunStopped' | 'notifyRunFailed' | 'killTree' | 'killProcessTree' | 'platform' | 'environment' | 'enrichOptions'>> & Pick<GjcWorkerSupervisorRuntime, 'corePath' | 'workerPath' | 'compiled' | 'bunPath' | 'allowDevelopmentBun'>;
   private child?: Child;
   private ready = false;
   private starting?: Promise<void>;
@@ -225,6 +306,9 @@ export class GjcWorkerSupervisor {
       corePath: runtime.corePath,
       workerPath: runtime.workerPath,
       compiled: runtime.compiled,
+      bunPath: runtime.bunPath,
+      allowDevelopmentBun: runtime.allowDevelopmentBun ?? process.env.GAJAE_ALLOW_DEVELOPMENT_BUN === '1',
+      enrichOptions: runtime.enrichOptions ?? (async (options) => options),
       initializeTimeoutMs: runtime.initializeTimeoutMs ?? 5_000,
       requestTimeoutMs: runtime.requestTimeoutMs ?? 30_000,
       createScope: runtime.createScope ?? (() => `gjc-${randomUUID()}`),
@@ -296,7 +380,7 @@ export class GjcWorkerSupervisor {
         this.aliases.set(providerSessionId, run.runId);
       }
 
-      const options = safeOptions(run.options);
+      const options = safeOptions(await this.runtime.enrichOptions(run.options));
       if (!options) {
         this.finish(run, true);
         return;
@@ -317,8 +401,12 @@ export class GjcWorkerSupervisor {
         run.runId,
       );
       this.finish(run, run.terminalFailed || !response.ok);
-    } catch {
-      this.finish(run, true);
+    } catch (error) {
+      this.finish(
+        run,
+        true,
+        error instanceof GjcConfigurationError ? error.message : SAFE_FAILURE,
+      );
     }
   }
 
@@ -330,8 +418,15 @@ export class GjcWorkerSupervisor {
     if (this.ready && this.child) return Promise.resolve();
     if (this.starting) return this.starting;
     const compiled = this.runtime.compiled ?? !import.meta.url.endsWith('.ts');
-    const workerPath = this.runtime.workerPath ?? fileURLToPath(new URL(compiled ? './gjc-worker.js' : './gjc-worker.ts', import.meta.url));
-    const workerArgs = compiled ? [workerPath] : ['--import', 'tsx', workerPath];
+    const workerPath = this.runtime.workerPath ?? fileURLToPath(new URL(compiled ? './gjc-bun-worker.js' : './gjc-bun-worker.ts', import.meta.url));
+    const bundledBunPath = fileURLToPath(new URL(
+      compiled ? '../../dist-native/bun' : '../dist-native/bun',
+      import.meta.url,
+    ));
+    const bunPath = this.runtime.bunPath
+      ?? (existsSync(bundledBunPath) ? bundledBunPath : undefined)
+      ?? (!compiled && this.runtime.allowDevelopmentBun ? 'bun' : undefined);
+    if (!bunPath) throw new Error(SAFE_FAILURE);
     const coreExecutable = this.runtime.platform === 'win32'
       ? 'gajae-core.exe'
       : 'gajae-core';
@@ -341,13 +436,11 @@ export class GjcWorkerSupervisor {
         : `../dist-native/${coreExecutable}`,
       import.meta.url,
     ));
-    const coreArgs = ['--', process.execPath, ...workerArgs];
-    const workerEnv = compiled
-      ? this.runtime.environment
-      : {
-          ...this.runtime.environment,
-          TSX_TSCONFIG_PATH: fileURLToPath(new URL('./tsconfig.json', import.meta.url)),
-        };
+    const coreArgs = ['--', bunPath, workerPath];
+    const workerEnv = {
+      ...this.runtime.environment,
+      GJC_WORKER_AGENT_DIR: this.runtime.environment.GJC_WORKER_AGENT_DIR ?? join(homedir(), '.gjc', 'agent'),
+    };
     const launch = this.runtime.platform === 'win32'
       ? createWindowsJobLaunch(
           corePath,
@@ -678,7 +771,7 @@ export class GjcWorkerSupervisor {
       .map((item) => item.message);
   }
 
-  private finish(run: Run, failed: boolean): void {
+  private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE): void {
     if (run.terminal) return;
     run.terminal = true;
     this.runs.delete(run.runId);
@@ -698,7 +791,7 @@ export class GjcWorkerSupervisor {
         try {
           run.writer.send(createNormalizedMessage({
             kind: 'error',
-            content: SAFE_FAILURE,
+            content: failureMessage,
             provider: 'gjc',
             sessionId,
           }));
@@ -717,9 +810,9 @@ export class GjcWorkerSupervisor {
         provider: 'gjc',
         sessionId,
         sessionName: run.options.sessionSummary ?? null,
-        error: SAFE_FAILURE,
+        error: failureMessage,
       }));
-      run.reject(new Error(SAFE_FAILURE));
+      run.reject(new Error(failureMessage));
       return;
     }
 
@@ -839,7 +932,7 @@ export class GjcWorkerSupervisor {
   }
 }
 
-const supervisor = new GjcWorkerSupervisor();
+const supervisor = new GjcWorkerSupervisor({ enrichOptions: enrichGjcSdkRunOptions });
 export function spawnGjc(message: string, options: GjcWorkerOptions = {}, writer: GjcWorkerWriter) { return supervisor.spawn(message, options, writer); }
 export function abortGjcSession(alias: string) { return supervisor.abort(alias); }
 export function isGjcSessionActive(alias: string) { return supervisor.isActive(alias); }

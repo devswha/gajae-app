@@ -74,7 +74,9 @@ const source = await runCargo(cargoArgs);
 
 const profile = release ? 'release' : 'debug';
 const destination = path.join(outputDir, executableName);
-await fs.rm(outputDir, { recursive: true, force: true });
+// Replace only the core executable; dist-native also hosts the bundled Bun
+// runtime (scripts/fetch-bun.mjs), which a core rebuild must not delete.
+await fs.rm(destination, { force: true });
 await fs.mkdir(outputDir, { recursive: true });
 await fs.copyFile(source, destination);
 if (process.platform !== 'win32') await fs.chmod(destination, 0o755);

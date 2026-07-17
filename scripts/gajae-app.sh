@@ -331,8 +331,16 @@ wait_for_health() {
   return 1
 }
 
+warn_missing_bun() {
+  local app_root="$1"
+  if [[ ! -x "$app_root/dist-native/bun" ]]; then
+    warn "Bun 1.3.14 is missing from this source checkout; run node scripts/fetch-bun.mjs before using the GJC SDK worker"
+  fi
+}
+
 build_deployment() {
   local app_root="$1"
+  warn_missing_bun "$app_root"
   (
     cd "$app_root"
     npm ci >&2

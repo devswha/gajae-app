@@ -249,6 +249,12 @@ async function walkDirectory(directoryPath, category) {
       continue;
     }
 
+    // Third-party runtime binaries staged into dist-native (e.g. the bundled
+    // Bun runtime) are not project-authored content and exceed scan limits.
+    if (relativePath === 'dist-native/bun' || relativePath === 'dist-native/bun.exe') {
+      continue;
+    }
+
     if (entry.isDirectory()) {
       if (SKIPPED_DIRECTORIES.has(entry.name)) {
         continue;

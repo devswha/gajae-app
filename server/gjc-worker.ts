@@ -14,7 +14,12 @@ import {
   type JsonValue,
 } from './gjc-worker-protocol.js';
 
-export type GjcWorkerWriter = { send(value: unknown): void; setSessionId?(sessionId: string): void };
+export type GjcWorkerWriter = {
+  send(value: unknown): void;
+  setSessionId?(sessionId: string): void;
+  setCredential?(credential: { kind: 'stored'; providerId: string; credentialId: number }): void;
+  setModel?(model: string): void;
+};
 type SpawnedRun = Promise<unknown> & { abortHandle?: string; processId?: number };
 export type GjcWorkerRuntime = {
   spawnGjc(message: string, options: JsonObject, writer: GjcWorkerWriter): SpawnedRun;
@@ -33,6 +38,11 @@ type Run = {
   active: boolean;
   abortHandle?: string;
   providerSessionId?: string;
+  credential?: { kind: 'stored'; providerId: string; credentialId: number };
+  model?: string;
+  abortPromise?: Promise<boolean>;
+  abortDeadlineExceeded: boolean;
+  aborted: boolean;
   completion: Promise<void>;
   resolveCompletion: () => void;
 };
@@ -76,6 +86,15 @@ function awaitDrain(completions: Promise<void>[], timeoutMs: number): Promise<vo
       clearTimeout(timer);
       resolve();
     });
+  });
+}
+function awaitAbort(promise: Promise<boolean>, timeoutMs: number): Promise<boolean | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    void promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(false); },
+    );
   });
 }
 
@@ -153,10 +172,15 @@ export class GjcWorkerHost {
     if (!input || typeof input.message !== 'string' || options(input.options) === null || (request.method === 'session.resume' && (typeof input.providerSessionId !== 'string' || !input.providerSessionId))) return this.#response(request, failure('invalid_payload', 'Request payload is invalid.'));
     if (this.#runs.has(request.id)) return this.#response(request, failure('duplicate_run_id', 'A run with this id is already active.'));
     let resolveCompletion!: () => void;
-    const run: Run = { runId: request.id, scope: request.sessionId, active: true, completion: new Promise((resolve) => { resolveCompletion = resolve; }), resolveCompletion, ...(typeof input.providerSessionId === 'string' ? { providerSessionId: input.providerSessionId } : {}) };
+    const run: Run = { runId: request.id, scope: request.sessionId, active: true, aborted: false, abortDeadlineExceeded: false, completion: new Promise((resolve) => { resolveCompletion = resolve; }), resolveCompletion, ...(typeof input.providerSessionId === 'string' ? { providerSessionId: input.providerSessionId } : {}) };
     this.#runs.set(run.runId, run);
-    const writer: GjcWorkerWriter = { send: (message) => this.#normalized(run, message), setSessionId: (providerSessionId) => this.#captureSession(run, providerSessionId) };
-    let outcome: ReturnType<typeof success> | ReturnType<typeof failure> = failure('run_failed', 'GJC run failed.');
+    const writer: GjcWorkerWriter = {
+      send: (message) => this.#normalized(run, message),
+      setSessionId: (providerSessionId) => this.#captureSession(run, providerSessionId),
+      setCredential: (credential) => { if (run.active) run.credential = credential; },
+      setModel: (model) => { if (run.active) run.model = model; },
+    };
+    let completed = false;
     try {
       const spawned = this.#runtime!.spawnGjc(input.message, {
         ...options(input.options)!,
@@ -169,14 +193,30 @@ export class GjcWorkerHost {
         this.#event(run, 'worker.status', { processId });
       }
       await spawned;
-      outcome = success(run.providerSessionId
-        ? { runId: run.runId, providerSessionId: run.providerSessionId }
-        : { runId: run.runId });
+      completed = true;
     } catch {
       // Keep the safe default failure response.
     } finally {
+      if (run.abortPromise) {
+        const aborted = await awaitAbort(run.abortPromise, this.#closeDrainMs);
+        if (aborted === undefined || run.abortDeadlineExceeded) {
+          run.abortDeadlineExceeded = true;
+          completed = false;
+        } else {
+          // A rejected abort (false) leaves the run active per the live spec;
+          // the spawned run outcome alone governs `completed`.
+          run.aborted = aborted;
+        }
+      }
+      const result: JsonObject = {
+        runId: run.runId,
+        ...(run.providerSessionId ? { providerSessionId: run.providerSessionId } : {}),
+        ...(run.credential ? { credential: run.credential } : {}),
+        ...(run.model ? { model: run.model } : {}),
+        ...(run.aborted ? { aborted: true } : {}),
+      };
       this.#event(run, 'worker.status', { processId: null });
-      this.#response(request, outcome);
+      this.#response(request, completed ? success(result) : failure('run_failed', 'GJC run failed.'));
       run.active = false;
       if (this.#runs.get(run.runId) === run) this.#runs.delete(run.runId);
       run.resolveCompletion();
@@ -212,12 +252,17 @@ export class GjcWorkerHost {
       return this.#response(request, failure('run_not_found', 'No active run exists for this id.'));
     }
     try {
-      this.#response(request, success({
-        runId: run.runId,
-        aborted: await this.#runtime!.abortGjcSession(
-          run.abortHandle ?? run.providerSessionId ?? run.runId,
-        ),
-      }));
+      run.abortPromise ??= this.#runtime!.abortGjcSession(
+        run.abortHandle ?? run.providerSessionId ?? run.runId,
+      );
+      const aborted = await awaitAbort(run.abortPromise, this.#closeDrainMs);
+      if (aborted === undefined || run.abortDeadlineExceeded) {
+        run.abortDeadlineExceeded = true;
+        this.#response(request, failure('abort_failed', 'Unable to abort the run.'));
+      } else {
+        run.aborted = aborted;
+        this.#response(request, success({ runId: run.runId, aborted }));
+      }
     } catch {
       this.#response(request, failure('abort_failed', 'Unable to abort the run.'));
     }
@@ -254,19 +299,26 @@ export class GjcWorkerHost {
 export function createGjcWorkerHost(options: GjcWorkerHostOptions): GjcWorkerHost { return new GjcWorkerHost(options); }
 
 async function loadProductionRuntime(): Promise<GjcWorkerRuntime> {
-  const [cli, bridge] = await Promise.all([import('./gjc-cli.js'), import('./gjc-sdk-bridge.js')]);
-  return {
-    spawnGjc: (message, options, writer) => cli.spawnGjcWithRuntime(message, options, writer, { detached: false, notifyRunStopped: () => {}, notifyRunFailed: () => {} }) as SpawnedRun,
-    abortGjcSession: cli.abortGjcSession as GjcWorkerRuntime['abortGjcSession'],
-    resolveGjcToolApproval: bridge.resolveGjcToolApproval as GjcWorkerRuntime['resolveGjcToolApproval'],
-  };
+  // A non-literal dynamic import keeps the Node CLI/loopback implementation out of
+  // the Bun worker bundle while preserving the existing Node worker behavior.
+  const nodeRuntimeModule = './gjc-worker-node-runtime.js';
+  const nodeRuntime = await import(nodeRuntimeModule);
+  return nodeRuntime.loadNodeProductionRuntime();
 }
 
 /** Runs the private NDJSON executable using only stdin/stdout/stderr. */
-export function runGjcWorkerEntrypoint(input: Readable = process.stdin, output: Writable = process.stdout, diagnostics: Writable = process.stderr): void {
+export function runGjcWorkerEntrypoint(
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+  diagnostics: Writable = process.stderr,
+  options: { runtime?: () => Promise<GjcWorkerRuntime> } = {},
+): void {
   const decoder = new GjcWorkerNdjsonDecoder();
   let failed = false;
-  const host = new GjcWorkerHost({ emit: (frame) => { output.write(serializeGjcWorkerFrame(frame)); } });
+  const host = new GjcWorkerHost({
+    emit: (frame) => { output.write(serializeGjcWorkerFrame(frame)); },
+    runtime: options.runtime,
+  });
   const failClosed = (): void => {
     if (failed) return;
     failed = true;
