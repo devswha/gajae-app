@@ -17,6 +17,12 @@ class Jobs implements JobAuthority {
   get(p: Record<string, unknown>) { return this.call('get', p); }
   reconcile(p: Record<string, unknown> = {}) { return this.call('reconcile', p); }
   bindProviderSession(p: Record<string, unknown>) { return this.call('bindProviderSession', p); }
+  reserveStart(p: Record<string, unknown>) { return this.reserve(p); }
+  turnAdmit(p: Record<string, unknown>) { return this.admit(p); }
+  runFinalize(p: Record<string, unknown>) { return this.finalize({ ...p, state: p.terminalRunState }); }
+  bindingResolve(p: Record<string, unknown>) { return Promise.resolve({ jobId: this.state.jobId, state: this.state.state, providerSessionId: 'provider-1', ...p }); }
+  bindingRelease(p: Record<string, unknown>) { return this.call('bindingRelease', p); }
+  interruptForShutdown() { this.state = { ...this.state, state: 'Interrupted' }; return this.call('interruptForShutdown', {}); }
 }
 class Git implements GitWorktrees { calls: string[] = []; async create() { this.calls.push('create'); return { worktree: { worktreeId: '/project/.gjc-worktrees/job-abc', jobId: 'job-abc', path: '/project/.gjc-worktrees/job-abc', branch: 'job/job-abc', head: 'abc' } }; } async list() { this.calls.push('list'); return { items: [{ worktreeId: '/project/.gjc-worktrees/job-abc', path: '/project/.gjc-worktrees/job-abc' }] }; } async status() { this.calls.push('status'); return { branch: 'job/abc' }; } }
 class Supervisor implements JobSupervisor { input?: Parameters<JobSupervisor['spawnRun']>[0]; aborted?: string; spawnRun(input: Parameters<JobSupervisor['spawnRun']>[0]) { this.input = input; return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }; } async abort(id: string) { this.aborted = id; return true; } }

@@ -76,18 +76,17 @@ async function worktreeCount(root: string): Promise<number> {
   return stdout.split('\n').filter((line) => line.startsWith('worktree ')).length;
 }
 
-test('capacity rejects the fifth admission while retaining its durable waiting job', async (t) => {
+test('capacity rejects the fifth bound start without creating a conflicting binding', async (t) => {
   const f = await fixture(t);
   const results = await Promise.allSettled(Array.from({ length: 5 }, (_, index) =>
-    f.orchestrator.start(f.root, `message-${index}`, { ...workerOptions, cap: 4 }),
+    f.orchestrator.start(f.root, `message-${index}`, { ...workerOptions, appSessionId: `capacity-session-${index}`, cap: 4 }),
   ));
   const list = await f.jobs.list({});
   assert.ok(Array.isArray(list));
-  assert.equal(list.length, 5);
+  assert.equal(list.length, 4);
   assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
   assert.match(String((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason), /waiting for capacity/u);
   assert.equal(list.filter((job) => ['queued', 'running'].includes(String((job as { state: string }).state))).length, 4);
-  assert.equal(list.filter((job) => String((job as { state: string }).state) === 'waiting').length, 1);
   assert.equal(f.supervisor.inputs.length, 4);
 });
 
@@ -131,7 +130,7 @@ test('resume at capacity preserves the interrupted job without starting a worker
   assert.equal((await f.jobs.get({ jobId: interrupted.jobId }) as { state: string }).state, 'interrupted');
 
   await Promise.all(Array.from({ length: 4 }, (_, index) =>
-    f.orchestrator.start(f.root, `capacity-${index}`, workerOptions),
+    f.orchestrator.start(f.root, `capacity-${index}`, { ...workerOptions, appSessionId: `capacity-session-${index}` }),
   ));
   const startedWorkers = f.supervisor.inputs.length;
   await assert.rejects(
@@ -177,7 +176,7 @@ test('oversized worker events are rejected without interrupting other active job
     f.jobs.appendEvent({ jobId: first.jobId, payload: { content: 'x'.repeat(64 * 1024) } }),
     (error: unknown) => error instanceof GjcJobsEventTooLargeError && error.code === 'event_too_large',
   );
-  const second = await f.orchestrator.start(f.root, 'second', workerOptions);
+  const second = await f.orchestrator.start(f.root, 'second', { ...workerOptions, appSessionId: 'second-session' });
   assert.equal((await f.jobs.get({ jobId: first.jobId }) as { state: string }).state, 'running');
   assert.equal((await f.jobs.get({ jobId: second.jobId }) as { state: string }).state, 'running');
 });

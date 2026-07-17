@@ -33,10 +33,13 @@ export class GjcJobsClient extends GjcNativeClient {
   reserve(params: Record<string, unknown>): Promise<unknown> { return this.request('capacity.reserve', params); }
   prepare(params: Record<string, unknown>): Promise<unknown> { return this.request('job.prepare', params); }
   admit(params: Record<string, unknown>): Promise<unknown> { return this.request('job.admit', params); }
+  reserveStart(params: Record<string, unknown>): Promise<unknown> { return this.request('job.reserveStart', params); }
+  turnAdmit(params: Record<string, unknown>): Promise<unknown> { return this.request('job.turnAdmit', params); }
   readmit(params: Record<string, unknown>): Promise<unknown> { return this.request('job.readmit', params); }
   transition(params: Record<string, unknown>): Promise<unknown> { return this.request('job.transition', params); }
   markDispatching(params: Record<string, unknown>): Promise<unknown> { return this.request('job.markDispatching', params); }
   finalize(params: Record<string, unknown>): Promise<unknown> { return this.request('job.finalize', params); }
+  runFinalize(params: Record<string, unknown>): Promise<unknown> { return this.request('run.finalize', params); }
   appendEvent(params: Record<string, unknown>): Promise<unknown> {
     // Keep worker output from killing the shared authority. Durable event chunking/blob projection is Slice 4.
     const frame = JSON.stringify({ ...params, protocolVersion: 1, id: REQUEST_ID_BYTES, method: 'event.append' });
@@ -48,4 +51,7 @@ export class GjcJobsClient extends GjcNativeClient {
   get(params: Record<string, unknown>): Promise<unknown> { return this.request('job.get', params); }
   reconcile(params: Record<string, unknown> = {}): Promise<unknown> { return this.request('job.reconcile', params); }
   bindProviderSession(params: Record<string, unknown>): Promise<unknown> { return this.request('run.bindProviderSession', params); }
+  bindingResolve(params: Record<string, unknown>): Promise<unknown> { return this.request('binding.resolve', params); }
+  bindingRelease(params: Record<string, unknown>): Promise<unknown> { return this.request('binding.release', params); }
+  interruptForShutdown(): Promise<unknown> { return this.request('job.interruptForShutdown'); }
 }
