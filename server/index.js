@@ -1736,7 +1736,7 @@ async function startServer() {
                 await gjcJobOrchestrator.interruptForShutdown();
                 gjcShutdownFenced = true;
             } catch (err) {
-                console.error('[GJC Jobs] Shutdown fence failed; preserving worker and authority for next-open reconciliation:', err?.message || err);
+                console.error('[GJC Jobs] Shutdown fence failed; forcing worker tree reap while preserving authority failure evidence:', err?.message || err);
             }
 
             server.close();
@@ -1746,12 +1746,16 @@ async function startServer() {
             wss.close();
             server.closeAllConnections?.();
 
+            try {
+                await shutdownGjcWorker();
+            } catch (err) {
+                console.error('[GJC Worker] Worker tree reap failed during shutdown; refusing normal process exit:', err?.message || err);
+                process.exitCode = 1;
+                setInterval(() => {}, 60 * 60 * 1000);
+                return;
+            }
+
             if (gjcShutdownFenced) {
-                try {
-                    await shutdownGjcWorker();
-                } catch (err) {
-                    console.error('[GJC Worker] Error stopping worker during shutdown:', err?.message || err);
-                }
                 try {
                     gjcJobOrchestrator.close();
                 } catch (err) {

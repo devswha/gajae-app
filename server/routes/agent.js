@@ -12,7 +12,8 @@ import { queryClaudeSDK } from '../claude-sdk.js';
 import { spawnCursor } from '../cursor-cli.js';
 import { queryCodex } from '../openai-codex.js';
 import { spawnOpenCode } from '../opencode-cli.js';
-import { getProductionJobOrchestrator } from '../services/gjc-job-orchestrator.js';
+import { getProductionJobAuthority, getProductionJobOrchestrator } from '../services/gjc-job-orchestrator.js';
+import { getProductionGjcJobGitService } from '../services/gjc-job-git.service.js';
 import { providerModelsService } from '../modules/providers/services/provider-models.service.js';
 import { normalizeProjectPath } from '../shared/utils.js';
 
@@ -965,8 +966,11 @@ router.post('/', validateExternalApiKey, async (req, res) => {
     } else if (provider === 'gjc') {
       console.log('🦞 Starting gjc job');
       const appSessionId = sessionId || crypto.randomUUID();
+      const orchestrator = getProductionJobOrchestrator();
+      const binding = sessionId ? await orchestrator.resolveBinding('gjc', appSessionId) : null;
       writer.send({ type: 'app-session-id', appSessionId });
-      const run = await getProductionJobOrchestrator().start('gjc', appSessionId, finalProjectPath, message.trim(), {
+
+      const options = {
         projectPath: finalProjectPath,
         cwd: finalProjectPath,
         model: model || undefined,
@@ -979,14 +983,59 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         spawns: '*',
         bashPolicy: { allowedPrefixes: [] },
         writer,
-      });
+      };
+
+      let run;
+      if (!binding) {
+        run = await orchestrator.start('gjc', appSessionId, finalProjectPath, message.trim(), options);
+      } else if (binding.state.toLowerCase() === 'ready') {
+        run = await orchestrator.turnStart('gjc', appSessionId, message.trim(), options);
+      } else if (binding.state.toLowerCase() === 'interrupted') {
+        run = await orchestrator.resume(binding.jobId, appSessionId, message.trim(), options);
+      } else {
+        throw new Error(`GJC session is not available for a new turn (${binding.state}).`);
+      }
       await run.completion;
+      writer.gjcAppSessionId = appSessionId;
     }
 
     // Handle GitHub branch and PR creation after successful agent completion
     let branchInfo = null;
     let prInfo = null;
 
+    if ((createBranch || createPR) && provider === 'gjc') {
+      try {
+        const appSessionId = writer.gjcAppSessionId;
+        const binding = appSessionId && await getProductionJobOrchestrator().resolveBinding('gjc', appSessionId);
+        if (!binding) throw new Error('GJC job binding is unavailable for publish or pull request creation.');
+
+        const jobGit = getProductionGjcJobGitService(getProductionJobAuthority());
+        if (createBranch) {
+          const published = await jobGit.publish(binding.jobId);
+          branchInfo = { name: published.branch };
+        }
+        if (createPR) {
+          const tokenToUse = githubToken || githubTokensDb.getActiveGithubToken(req.user.id);
+          if (!tokenToUse) throw new Error('GitHub token required for pull request creation. Please configure a GitHub token in settings.');
+          const octokit = new Octokit({ auth: tokenToUse });
+          prInfo = await jobGit.createPullRequest(binding.jobId, async ({ branch, baseBranch, remoteUrl }) => {
+            const { owner, repo } = parseGitHubUrl(remoteUrl);
+            return createGitHubPR(octokit, owner, repo, branch, message, `## Changes\n\nAgent task: ${message}`, baseBranch);
+          });
+        }
+        if (stream) {
+          if (branchInfo) writer.send({ type: 'github-branch', branch: branchInfo });
+          if (prInfo) writer.send({ type: 'github-pr', pullRequest: prInfo });
+        }
+      } catch (error) {
+        console.error('❌ GJC GitHub branch/PR creation error:', error);
+        if (stream) writer.send({ type: 'github-error', error: error.message });
+        if (!stream) {
+          branchInfo = { error: error.message };
+          prInfo = { error: error.message };
+        }
+      }
+    }
     if ((createBranch || createPR) && provider !== 'gjc') {
       try {
         console.log('🔄 Starting GitHub branch/PR creation workflow...');
@@ -1177,7 +1226,8 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         sessionId: writer.getSessionId(),
         messages: assistantMessages,
         tokens: tokenSummary,
-        projectPath: finalProjectPath
+        projectPath: finalProjectPath,
+        ...(provider === 'gjc' && writer.gjcAppSessionId ? { appSessionId: writer.gjcAppSessionId } : {}),
       };
 
       // Add branch/PR info if created

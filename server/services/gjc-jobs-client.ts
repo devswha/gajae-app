@@ -43,6 +43,7 @@ export class GjcJobsClient extends GjcNativeClient {
   markDispatching(params: Record<string, unknown>): Promise<unknown> { return this.request('job.markDispatching', params); }
   finalize(params: Record<string, unknown>): Promise<unknown> { return this.request('job.finalize', params); }
   runFinalize(params: Record<string, unknown>): Promise<unknown> { return this.request('run.finalize', params); }
+  cancelAdmission(params: Record<string, unknown>): Promise<unknown> { return this.request('job.cancelAdmission', params); }
   appendEvent(params: Record<string, unknown>): Promise<unknown> {
     // Keep worker output from killing the shared authority. Durable event chunking/blob projection is Slice 4.
     const frame = JSON.stringify({ ...params, protocolVersion: 1, id: REQUEST_ID_BYTES, method: 'event.append' });

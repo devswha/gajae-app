@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
 
 type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string } };
 class Jobs implements JobAuthority {
-  calls: Array<[string, Record<string, unknown>]> = []; state: Snap = { jobId: '', state: 'Reserved', lease: { owner: 'owner', generation: 1 } };
+  calls: Array<[string, Record<string, unknown>]> = []; state: Snap = { jobId: '', state: 'reserved', lease: { owner: 'owner', generation: 1 } };
   private call(name: string, params: Record<string, unknown>): Promise<unknown> { this.calls.push([name, params]); return Promise.resolve(this.state); }
-  reserve(p: Record<string, unknown>) { this.state = { ...this.state, jobId: String(p.jobId), state: 'Reserved', lease: { owner: String(p.owner), generation: 1 } }; return this.call('reserve', p); }
+  reserve(p: Record<string, unknown>) { this.state = { ...this.state, jobId: String(p.jobId), state: 'reserved', lease: { owner: String(p.owner), generation: 1 } }; return this.call('reserve', p); }
   prepare(p: Record<string, unknown>) { this.state = { ...this.state, worktreeId: String(p.worktreeId), repositoryRoot: String(p.repositoryRoot), branch: String(p.branch) }; return this.call('prepare', p); }
-  admit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'Queued', currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('admit', p); }
-  readmit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'Queued', lease: { owner: String(p.owner), generation: 2 }, currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('readmit', p); }
-  transition(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state) }; return this.call('transition', p); }
-  markDispatching(p: Record<string, unknown>) { this.state = { ...this.state, state: 'Queued', dispatchCheckpoint: { runId: String(p.runId) } }; return this.call('markDispatching', p); }
-  finalize(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state) }; return this.call('finalize', p); }
+  admit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('admit', p); }
+  readmit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', lease: { owner: String(p.owner), generation: 2 }, currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('readmit', p); }
+  transition(p: Record<string, unknown>) { if (['succeeded', 'failed', 'aborted', 'interrupted'].includes(String(p.state))) return Promise.reject(new Error('invalid_transition')); this.state = { ...this.state, state: String(p.state) }; return this.call('transition', p); }
+  markDispatching(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', dispatchCheckpoint: { runId: String(p.runId) } }; return this.call('markDispatching', p); }
+  finalize(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state), lease: { owner: '', generation: 0 } }; return this.call('finalize', p); }
+  cancelAdmission(p: Record<string, unknown>) { this.state = { ...this.state, state: 'failed', lease: { owner: '', generation: 0 } }; return this.call('cancelAdmission', p); }
   appendEvent(p: Record<string, unknown>) { return this.call('appendEvent', p); }
   get(p: Record<string, unknown>) { return this.call('get', p); }
   reconcile(p: Record<string, unknown> = {}) { return this.call('reconcile', p); }
@@ -22,7 +24,7 @@ class Jobs implements JobAuthority {
   runFinalize(p: Record<string, unknown>) { return this.finalize({ ...p, state: p.terminalRunState }); }
   bindingResolve(p: Record<string, unknown>) { return Promise.resolve({ jobId: this.state.jobId, state: this.state.state, providerSessionId: 'provider-1', ...p }); }
   bindingRelease(p: Record<string, unknown>) { return this.call('bindingRelease', p); }
-  interruptForShutdown() { this.state = { ...this.state, state: 'Interrupted' }; return this.call('interruptForShutdown', {}); }
+  interruptForShutdown() { this.state = { ...this.state, state: 'interrupted' }; return this.call('interruptForShutdown', {}); }
 }
 class Git implements GitWorktrees { calls: string[] = []; async create() { this.calls.push('create'); return { worktree: { worktreeId: '/project/.gjc-worktrees/job-abc', jobId: 'job-abc', path: '/project/.gjc-worktrees/job-abc', branch: 'job/job-abc', head: 'abc' } }; } async list() { this.calls.push('list'); return { items: [{ worktreeId: '/project/.gjc-worktrees/job-abc', path: '/project/.gjc-worktrees/job-abc' }] }; } async status() { this.calls.push('status'); return { branch: 'job/abc' }; } }
 class Supervisor implements JobSupervisor { input?: Parameters<JobSupervisor['spawnRun']>[0]; aborted?: string; spawnRun(input: Parameters<JobSupervisor['spawnRun']>[0]) { this.input = input; return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }; } async abort(id: string) { this.aborted = id; return true; } }
@@ -69,6 +71,63 @@ test('completion read-back accepts a committed success when the finalize respons
   await run.completion;
   assert.equal(jobs.state.state, 'succeeded');
   assert.deepEqual(jobs.calls.slice(-2).map(([name]) => name), ['finalize', 'get']);
+});
+test('pre-run admission failure uses cancelAdmission instead of forbidden terminal transition', async () => {
+  const jobs = new Jobs(); const git = new Git(); git.create = async () => { throw new Error('worktree failed'); };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor: new Supervisor(), owner: 'owner', createId: () => 'abc' });
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /worktree failed/);
+  assert.equal(jobs.state.state, 'failed');
+  assert.equal(jobs.calls.at(-1)?.[0], 'cancelAdmission');
+  assert.equal(jobs.calls.some(([name, params]) => name === 'transition' && params.state === 'failed'), false);
+});
+
+test('worker failure finalizes durable state and rejects completion', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  const workerError = new Error('worker exploded');
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: Promise.reject(workerError), abortHandle: input.runId }), abort: async () => true };
+  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
+  await assert.rejects(run.completion, /worker exploded/);
+  assert.equal(jobs.state.state, 'failed');
+});
+
+test('durability failure latches before completion and cannot be reported as success', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  let complete!: () => void;
+  const workerCompletion = new Promise<void>((resolve) => { complete = resolve; });
+  const supervisor: JobSupervisor = {
+    spawnRun: (input) => {
+      input.writer.send({ kind: 'delta' });
+      return { started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId };
+    },
+    abort: async () => true,
+  };
+  jobs.appendEvent = async (p) => { jobs.calls.push(['appendEvent', p]); throw new Error('event disk failed'); };
+  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
+  complete();
+  await assert.rejects(run.completion, /event disk failed/);
+  assert.equal(jobs.state.state, 'failed');
+});
+
+test('failed post-spawn abort acknowledgement keeps the lease fenced', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), abortHandle: input.runId }), abort: async () => false };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
+  assert.equal(jobs.state.state, 'queued');
+  assert.equal(jobs.calls.some(([name]) => name === 'finalize'), false);
+});
+test('forced worker generation termination permits failed finalization after abort refusal', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  let terminated = false;
+  const supervisor: JobSupervisor = {
+    spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), abortHandle: input.runId }),
+    abort: async () => false,
+    terminate: async () => (terminated = true),
+  };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
+  assert.equal(terminated, true);
+  assert.equal(jobs.state.state, 'failed');
 });
 
 test('capacity admission rejects while leaving the durable waiting job for a future dispatcher', async () => {

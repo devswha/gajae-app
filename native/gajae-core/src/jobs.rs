@@ -380,6 +380,42 @@ impl PersistentAuthority {
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(result)
     }
+    fn cancel_admission(
+        &mut self,
+        id: &str,
+        lease: &Lease,
+        event_id: &str,
+        payload: Value,
+    ) -> Result<JobSnapshot, AuthorityError> {
+        validate_id(event_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        verify_lease(&tx, id, lease)?;
+        if !matches!(state(&tx, id)?, JobState::Reserved | JobState::Queued) {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        append(&tx, id, event_id, &payload)?;
+        tx.execute(
+            "UPDATE runs SET state='failed',outcome='failed' WHERE job_id=?1 AND state NOT IN ('succeeded','failed','aborted','interrupted')",
+            [id],
+        )
+        .map_err(|_| AuthorityError::Storage)?;
+        tx.execute(
+            "UPDATE session_job_bindings SET released_at=CURRENT_TIMESTAMP WHERE job_id=?1 AND released_at IS NULL",
+            [id],
+        )
+        .map_err(|_| AuthorityError::Storage)?;
+        tx.execute(
+            "UPDATE jobs SET state='failed',lease_owner=NULL WHERE id=?1",
+            [id],
+        )
+        .map_err(|_| AuthorityError::Storage)?;
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
     fn replay(
         &self,
         id: &str,
@@ -1490,6 +1526,20 @@ fn dispatch(
                 request.state.ok_or(AuthorityError::InvalidTransition)?,
             )?,
         ),
+        "job.cancelAdmission" => serde_json::to_value(
+            authority.cancel_admission(
+                id()?,
+                lease()?,
+                request
+                    .event_id
+                    .as_deref()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+                request
+                    .payload
+                    .clone()
+                    .ok_or(AuthorityError::InvalidIdentifier)?,
+            )?,
+        ),
         "event.replay" => serde_json::to_value(
             authority.replay(
                 id()?,
@@ -2328,6 +2378,72 @@ mod tests {
                     .get::<_, u64>(0))
                 .unwrap(),
             2
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn cancel_admission_releases_binding_and_capacity_before_running() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        let reserved = a.reserve_start("j", "p", "app", "owner", 1).unwrap();
+        let lease = reserved.lease.unwrap();
+        let cancelled = a
+            .cancel_admission("j", &lease, "admission-cancelled", json!({"kind":"failed"}))
+            .unwrap();
+        assert_eq!(cancelled.state, JobState::Failed);
+        assert!(cancelled.lease.is_none());
+        assert_eq!(a.resolve_binding("p", "app"), Err(AuthorityError::NotFound));
+        assert_eq!(
+            a.reserve("replacement", "p", "owner", 1).unwrap().state,
+            JobState::Reserved
+        );
+
+        let queued_lease = a.snapshot("replacement").unwrap().lease.unwrap();
+        a.prepare(
+            "replacement",
+            &queued_lease,
+            "/canonical/worktree",
+            "job/replacement",
+            "base",
+            "/canonical",
+        )
+        .unwrap();
+        a.admit("replacement", &queued_lease, "run", "app").unwrap();
+        assert_eq!(
+            a.cancel_admission("replacement", &queued_lease, "cancel-queued", json!(null))
+                .unwrap()
+                .state,
+            JobState::Failed
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn cancel_admission_rejects_running_and_terminal_jobs() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        a.reserve("j", "p", "owner", 2).unwrap();
+        let lease = a.snapshot("j").unwrap().lease.unwrap();
+        a.prepare(
+            "j",
+            &lease,
+            "/canonical/worktree",
+            "job/j",
+            "base",
+            "/canonical",
+        )
+        .unwrap();
+        a.admit("j", &lease, "run", "app").unwrap();
+        a.transition("j", &lease, JobState::Running).unwrap();
+        assert_eq!(
+            a.cancel_admission("j", &lease, "cancel-running", json!(null)),
+            Err(AuthorityError::InvalidTransition)
+        );
+        a.finalize("j", &lease, "failed", json!(null), JobState::Failed)
+            .unwrap();
+        assert_eq!(
+            a.cancel_admission("j", &lease, "cancel-terminal", json!(null)),
+            Err(AuthorityError::StaleLease)
         );
         std::fs::remove_dir_all(d).unwrap();
     }

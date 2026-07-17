@@ -746,6 +746,13 @@ export class GjcWorkerSupervisor {
     run.abortPromise = abortPromise;
     return abortPromise;
   }
+  async terminate(alias: string): Promise<boolean> {
+    const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
+    const child = this.child;
+    if (!runId || !this.runs.has(runId) || !child) return false;
+    await this.workerFailed(child);
+    return !this.runs.has(runId);
+  }
 
   isActive(alias: string): boolean {
     const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
