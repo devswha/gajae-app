@@ -16,6 +16,7 @@ import {
   GJC_WORKER_PROTOCOL_VERSION,
   GjcWorkerNdjsonDecoder,
   serializeGjcWorkerFrame,
+  GJC_WORKER_MAX_FRAME_BYTES,
   type GjcWorkerEventFrame,
   type GjcWorkerRequestFrame,
   type GjcWorkerResponseFrame,
@@ -321,6 +322,27 @@ test('spawnRun preserves caller-owned identifiers and resolves started when its 
   assert.equal('sessionId' in request ? request.sessionId : undefined, 'app-caller-owned');
   peer.respond(request);
   await run.completion;
+  assert.equal(await run.outcome, 'completed');
+});
+test('rejects an oversized start frame as not_started without terminating its worker generation', async () => {
+  const child = new FakeChild();
+  const peer = new FakePeer(child);
+  const supervisor = new GjcWorkerSupervisor(runtime(child));
+  const oversized = supervisor.spawnRun({
+    runId: 'oversized-start',
+    appSessionId: 'app-oversized',
+    message: 'x'.repeat(GJC_WORKER_MAX_FRAME_BYTES),
+    options: {},
+    writer: { send() {} },
+  });
+  peer.respond(await peer.waitFor('worker.initialize'));
+  await assert.rejects(oversized.started);
+  assert.equal(await oversized.outcome, 'not_started');
+  assert.equal(child.killed, false);
+
+  const next = spawn(supervisor, 'hello', {}, { send() {} });
+  peer.respond(await peer.waitFor('session.start'));
+  await next;
 });
 
 /**

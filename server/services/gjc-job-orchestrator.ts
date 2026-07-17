@@ -24,7 +24,7 @@ export type GitWorktrees = { create(params: Record<string, unknown>): Promise<un
 export type JobSupervisor = { spawnRun(input: GjcWorkerSpawnRun): GjcWorkerRun; abort(alias: string): Promise<GjcWorkerOutcome | boolean>; terminate?(alias: string): Promise<GjcWorkerOutcome | boolean> };
 export type JobOrchestratorOptions = GjcWorkerOptions & { writer: GjcWorkerWriter; jobId?: string; cap?: number; dispatched?: boolean };
 export type JobRunHandle = { jobId: string; runId?: string; state: string; started: Promise<void>; completion: Promise<void>; abortHandle: string };
-export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktrees; gitForProject?: (projectRoot: string) => GitWorktrees; supervisor: JobSupervisor; owner?: string; createId?: () => string; broadcast?: (jobId: string, event: unknown) => void };
+export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktrees; gitForProject?: (projectRoot: string) => GitWorktrees; supervisor: JobSupervisor; owner?: string; createId?: () => string; broadcast?: (jobId: string, event: unknown) => void; stopCompletionTimeoutMs?: number };
 export class GjcCapacityExhaustedError extends Error { constructor(public readonly jobId: string) { super(`GJC job ${jobId} is waiting for capacity.`); this.name = 'GjcCapacityExhaustedError'; } }
 
 const safe = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -38,8 +38,8 @@ function worktreePath(value: unknown, id: string): string | undefined { const it
 function sameFence(current: JobSnapshot, runId: string, expected: Lease): boolean { return current.currentRun?.runId === runId && current.lease?.owner === expected.owner && current.lease?.generation === expected.generation; }
 type PersistenceScope = { pending: Set<Promise<void>>; failure?: unknown };
 function failureError(error: unknown): Error { return error instanceof Error ? new Error(error.message) : new Error('Worker failed.'); }
-function confirmedStop(outcome: GjcWorkerOutcome | boolean | undefined): boolean {
-  return outcome === true || outcome === 'not_started' || outcome === 'aborted' || outcome === 'reaped';
+function confirmedReap(outcome: GjcWorkerOutcome | boolean | undefined): boolean {
+  return outcome === true || outcome === 'not_started' || outcome === 'reaped';
 }
 async function settledOutcome(run: GjcWorkerRun | undefined): Promise<GjcWorkerOutcome | undefined> {
   if (!run?.outcome) return undefined;
@@ -51,14 +51,35 @@ async function settledOutcome(run: GjcWorkerRun | undefined): Promise<GjcWorkerO
   await Promise.resolve();
   return outcome;
 }
+const STOP_COMPLETION_TIMEOUT_MS = 1_000;
+async function terminalCompletion(run: GjcWorkerRun, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run.completion.then(() => true, () => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => {
+          timer = undefined;
+          resolve(false);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Durable v5 facade: Job is a bound workspace; every dispatch creates one fenced Run. */
 export class JobOrchestrator {
-  private readonly owner: string; private readonly createId: () => string;
-  private readonly queues = new Map<string, Promise<unknown>>(); private readonly activeRuns = new Map<string, { runId: string; lease: Lease; abortHandle: string }>();
+  private readonly owner: string; private readonly createId: () => string; private readonly stopCompletionTimeoutMs: number;
+  private readonly queues = new Map<string, Promise<unknown>>(); private readonly activeRuns = new Map<string, { runId: string; lease: Lease; abortHandle: string; run: GjcWorkerRun }>();
   private admissionBlocked = false;
   private healthChain: Promise<void> = Promise.resolve();
-  constructor(private readonly deps: JobOrchestratorDependencies) { this.owner = deps.owner ?? `orchestrator-${randomUUID()}`; this.createId = deps.createId ?? randomUUID; }
+  constructor(private readonly deps: JobOrchestratorDependencies) {
+    this.owner = deps.owner ?? `orchestrator-${randomUUID()}`;
+    this.createId = deps.createId ?? randomUUID;
+    this.stopCompletionTimeoutMs = deps.stopCompletionTimeoutMs ?? STOP_COMPLETION_TIMEOUT_MS;
+  }
   private git(root: string): GitWorktrees { const client = this.deps.gitForProject?.(root) ?? this.deps.git; if (!client) throw new Error('GJC Git worktree client is unavailable.'); return client; }
   private serial<T>(jobId: string, action: () => Promise<T>): Promise<T> { const prior = this.queues.get(jobId) ?? Promise.resolve(); const result = prior.catch(() => undefined).then(action); const tail = result.catch(() => undefined).finally(() => { if (this.queues.get(jobId) === tail) this.queues.delete(jobId); }); this.queues.set(jobId, tail); return result; }
   private params(jobId: string, current: JobSnapshot): Record<string, unknown> { return { jobId, lease: lease(current) }; }
@@ -127,21 +148,22 @@ export class JobOrchestrator {
       this.activeRuns.delete(jobId);
       return;
     }
-    if (outcome === 'reaped' || outcome === 'aborted') {
+    if (outcome === 'reaped' || outcome === 'completed') {
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
       if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', { kind: 'persistence_failed', error: failureError(error).message });
       this.activeRuns.delete(jobId);
       return;
     }
-    let stopped = !run?.abortHandle;
-    if (run?.abortHandle) {
-      stopped = confirmedStop(await this.deps.supervisor.abort(run.abortHandle).catch(() => false));
-      if (!stopped) stopped = confirmedStop(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
-    }
-    if (!stopped) return;
+    if (!run || !await this.stopRun(run)) return;
     const fresh = snapshot(await this.deps.jobs.get({ jobId }));
     if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', { kind: 'persistence_failed', error: failureError(error).message });
     this.activeRuns.delete(jobId);
+  }
+  private async stopRun(run: GjcWorkerRun): Promise<boolean> {
+    const aborted = await this.deps.supervisor.abort(run.abortHandle).catch(() => false);
+    if (confirmedReap(aborted)) return true;
+    if (await terminalCompletion(run, this.stopCompletionTimeoutMs)) return true;
+    return confirmedReap(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
   }
   private async cancelAdmission(jobId: string, current: JobSnapshot, error: unknown): Promise<void> {
     await this.mutate(
@@ -158,7 +180,7 @@ export class JobOrchestrator {
       expected = lease(current);
       const scope: PersistenceScope = { pending: new Set() };
       run = this.deps.supervisor.spawnRun({ runId, appSessionId, message, options: { ...options, cwd, sessionId }, writer: this.writer(jobId, current, runId, options.writer, scope) });
-      this.activeRuns.set(jobId, { runId, lease: expected, abortHandle: run.abortHandle });
+      this.activeRuns.set(jobId, { runId, lease: expected, abortHandle: run.abortHandle, run });
       void run.completion.catch(() => {});
       await run.started;
       current = await this.mutate(jobId, () => this.deps.jobs.transition({ ...this.params(jobId, current), state: 'running' }), (fresh) => lower(fresh.state) === 'running');
@@ -260,8 +282,7 @@ export class JobOrchestrator {
       if (lower(current.state) === 'running') current = snapshot(await this.deps.jobs.transition({ ...this.params(jobId, current), state: 'aborting' }));
       const active = this.activeRuns.get(jobId);
       if (!active) return false;
-      let stopped = confirmedStop(await this.deps.supervisor.abort(active.abortHandle).catch(() => false));
-      if (!stopped) stopped = confirmedStop(await this.deps.supervisor.terminate?.(active.abortHandle).catch(() => false));
+      const stopped = await this.stopRun(active.run);
       if (!stopped) return false;
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
       if (sameFence(fresh, active.runId, active.lease)) await this.finalize(jobId, fresh, active.runId, 'aborted', { kind: 'aborted' });
@@ -284,10 +305,7 @@ export class JobOrchestrator {
       if (!healthy) {
         this.admissionBlocked = true;
         const runs = [...this.activeRuns.values()];
-        const stopped = await Promise.all(runs.map(async (run) => {
-          const aborted = confirmedStop(await this.deps.supervisor.abort(run.abortHandle).catch(() => false));
-          return aborted || confirmedStop(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
-        }));
+        const stopped = await Promise.all(runs.map((run) => this.stopRun(run.run)));
         if (stopped.every(Boolean)) this.activeRuns.clear();
         return;
       }

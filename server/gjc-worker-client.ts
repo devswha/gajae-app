@@ -68,13 +68,13 @@ export type GjcWorkerSpawnRun = {
   options?: GjcWorkerOptions;
   writer: GjcWorkerWriter;
 };
-export type GjcWorkerOutcome = 'not_started' | 'aborted' | 'reaped' | 'unconfirmed';
+export type GjcWorkerOutcome = 'not_started' | 'aborted' | 'completed' | 'reaped' | 'unconfirmed';
 export type GjcWorkerRun = {
   started: Promise<void>;
   completion: Promise<void>;
-  /** Settles only after the run has entered its terminal cleanup phase. */
+  /** The terminal run outcome. `reaped` proves OS process-tree termination only. */
   outcome?: Promise<GjcWorkerOutcome>;
-  phase?: () => 'registered' | 'request_sent' | 'terminal';
+  phase?: () => 'registered' | 'request_issued' | 'run_terminal';
   abortHandle: string;
 };
 
@@ -112,7 +112,7 @@ export type GjcWorkerSupervisorRuntime = {
   enrichOptions?: GjcOptionsEnricher;
 };
 
-type RunPhase = 'registered' | 'request_sent' | 'terminal';
+type RunPhase = 'registered' | 'request_issued' | 'run_terminal';
 type Run = {
   runId: string;
   appScope: string;
@@ -424,7 +424,7 @@ export class GjcWorkerSupervisor {
   private async startRun(run: Run, message: string): Promise<void> {
     try {
       await this.ensureWorker();
-      if (run.phase === 'terminal') return;
+      if (run.phase === 'run_terminal') return;
 
       const providerSessionId = safeId(run.options.sessionId);
       if (providerSessionId) {
@@ -444,20 +444,22 @@ export class GjcWorkerSupervisor {
         ...(providerSessionId ? { providerSessionId } : {}),
       };
       const method = providerSessionId ? 'session.resume' : 'session.start';
-      run.phase = 'request_sent';
-      run.started = true;
-      run.resolveStarted();
       const response = await this.request(
         method,
         run.appScope,
         payload,
         null,
         run.runId,
+        () => {
+          run.phase = 'request_issued';
+          run.started = true;
+          run.resolveStarted();
+        },
       );
       this.finish(run, run.terminalFailed || !response.ok);
     } catch (error) {
       // workerFailed owns terminal settlement and must first prove the reap barrier.
-      if (this.terminating || (this.terminationFailure && run.phase === 'request_sent')) return;
+      if (this.terminating || (this.terminationFailure && run.phase === 'request_issued')) return;
       this.finish(
         run,
         true,
@@ -607,6 +609,7 @@ export class GjcWorkerSupervisor {
     payload: JsonObject,
     timeout: number | null = this.runtime.requestTimeoutMs,
     id = `req-${randomUUID()}`,
+    onWritten?: () => void,
   ): Promise<GjcWorkerResponsePayload> {
     const child = this.child;
     if (!child) return Promise.reject(new Error(SAFE_FAILURE));
@@ -618,8 +621,19 @@ export class GjcWorkerSupervisor {
       ...(sessionId ? { sessionId } : {}),
       payload,
     } as GjcWorkerRequestFrame;
+    let frame: string;
+    try {
+      frame = serializeGjcWorkerFrame(request);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const tracked = this.tracker.track(request);
-    try { child.stdin.write(serializeGjcWorkerFrame(request)); } catch { this.workerFailed(child); }
+    try {
+      child.stdin.write(frame);
+      onWritten?.();
+    } catch {
+      void this.workerFailed(child);
+    }
     if (timeout === null) return tracked;
     return new Promise<GjcWorkerResponsePayload>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -754,7 +768,7 @@ export class GjcWorkerSupervisor {
   abort(alias: string): Promise<GjcWorkerOutcome> {
     const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
     const run = runId ? this.runs.get(runId) : undefined;
-    if (!run || run.phase === 'terminal') return Promise.resolve('unconfirmed');
+    if (!run || run.phase === 'run_terminal') return Promise.resolve('unconfirmed');
     if (run.abortPromise) return run.abortPromise.then((aborted) => aborted ? 'aborted' : 'unconfirmed');
     if (run.phase === 'registered') {
       run.aborted = true;
@@ -765,7 +779,7 @@ export class GjcWorkerSupervisor {
       runId: run.runId,
     }).then((response) => {
       const result = response.ok ? object(response.result) : undefined;
-      if (!response.ok || result?.aborted !== true || run.phase === 'terminal') return false;
+      if (!response.ok || result?.aborted !== true || run.phase === 'run_terminal') return false;
       run.aborted = true;
       return true;
     }).catch(() => false).finally(() => {
@@ -812,7 +826,7 @@ export class GjcWorkerSupervisor {
   private restoreApproval(requestId: string, pending: PendingApproval): void {
     if (this.approvals.get(requestId) !== pending) return;
     const run = this.runs.get(pending.runId);
-    if (!run || run.phase === 'terminal') {
+    if (!run || run.phase === 'run_terminal') {
       this.approvals.delete(requestId);
       return;
     }
@@ -831,9 +845,9 @@ export class GjcWorkerSupervisor {
       .map((item) => item.message);
   }
 
-  private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE, outcome: GjcWorkerOutcome = run.aborted ? 'aborted' : run.phase === 'registered' ? 'not_started' : 'reaped'): void {
-    if (run.phase === 'terminal') return;
-    run.phase = 'terminal';
+  private finish(run: Run, failed: boolean, failureMessage = SAFE_FAILURE, outcome: GjcWorkerOutcome = run.aborted ? 'aborted' : run.phase === 'registered' ? 'not_started' : 'completed'): void {
+    if (run.phase === 'run_terminal') return;
+    run.phase = 'run_terminal';
     if (!run.started) run.rejectStarted(new Error(failureMessage));
     run.resolveOutcome(outcome);
 
