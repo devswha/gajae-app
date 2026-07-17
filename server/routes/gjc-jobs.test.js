@@ -37,6 +37,7 @@ test('GJC jobs routes keep the authority alive across invalid and valid paginati
     assert.equal((await server.request('/jobs?cursor=invalid%20cursor')).status, 400);
     const response = await server.request('/jobs?limit=10');
     assert.equal(response.status, 200);
+    assert.equal((await server.request('/jobs?cursor=MIGRATED_Job.1%3Aorigin')).status, 200);
     assert.deepEqual(await response.json(), []);
   } finally {
     await server.close();
@@ -48,7 +49,7 @@ test('GJC jobs routes keep the authority alive across invalid and valid paginati
 });
 
 test('GJC jobs pagination decodes HTTP query values into the native envelope', () => {
-  assert.deepEqual(decodeListQuery({ limit: '10', cursor: 'job-alpha' }), { afterCursor: 'job-alpha', limit: 10 });
+  assert.deepEqual(decodeListQuery({ limit: '10', cursor: 'MIGRATED_Job.1:origin' }), { afterCursor: 'MIGRATED_Job.1:origin', limit: 10 });
   assert.deepEqual(decodeListQuery({ limit: '999' }), { limit: 100 });
   assert.deepEqual(decodeReplayQuery({ cursor: '12' }), { after: 12 });
 });
@@ -70,4 +71,5 @@ test('GJC jobs errors use availability, conflict, and missing-resource statuses'
   assert.equal(statusForGjcError(error('capacity_exhausted')), 409);
   assert.equal(statusForGjcError(error('not_found')), 404);
   assert.equal(statusForGjcError(error('invalid_request')), 400);
+  assert.equal(statusForGjcError(error('storage_failure')), 503);
 });

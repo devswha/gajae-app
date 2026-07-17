@@ -9,7 +9,7 @@ import { getProductionGjcJobGitService } from '../services/gjc-job-git.service.j
 
 const MAX_LIST_LIMIT = 100;
 const MAX_SAFE_U64 = Number.MAX_SAFE_INTEGER;
-const OPAQUE_CURSOR = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+const NATIVE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CONFLICT_CODES = new Set(['already_exists', 'invalid_transition', 'lease_held', 'stale_lease', 'terminal_job', 'event_conflict', 'worktree_conflict', 'authority_held', 'conflict', 'capacity_exhausted']);
 const router = express.Router();
 const writer = { send() {} };
@@ -32,7 +32,7 @@ export const decodeListQuery = query => {
   const limit = u64(query.limit, 'limit');
   if (limit === 0) throw invalidQuery('limit must be at least 1.');
   const cursor = queryValue(query.cursor, 'cursor');
-  if (cursor && !OPAQUE_CURSOR.test(cursor)) throw invalidQuery('cursor is invalid.');
+  if (cursor && !NATIVE_ID.test(cursor)) throw invalidQuery('cursor is invalid.');
   return { ...(cursor ? { afterCursor: cursor } : {}), ...(limit === undefined ? {} : { limit: Math.min(limit, MAX_LIST_LIMIT) }) };
 };
 export const decodeReplayQuery = query => {
@@ -42,6 +42,7 @@ export const decodeReplayQuery = query => {
 export const statusForGjcError = error => {
   const code = error?.code;
   if (code === 'GJC_JOB_AUTHORITY_UNAVAILABLE' || code === 'authority_unavailable' || code === 'authority-down' || code === 'authority_down' || /authority is unavailable/u.test(error?.message ?? '')) return 503;
+  if (code === 'storage_failure') return 503;
   if (code === 'not_found') return 404;
   if (CONFLICT_CODES.has(code) || error?.name === 'GjcCapacityExhaustedError') return 409;
   return 400;

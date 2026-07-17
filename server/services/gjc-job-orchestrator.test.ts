@@ -80,6 +80,17 @@ test('pre-run admission failure uses cancelAdmission instead of forbidden termin
   assert.equal(jobs.calls.at(-1)?.[0], 'cancelAdmission');
   assert.equal(jobs.calls.some(([name, params]) => name === 'transition' && params.state === 'failed'), false);
 });
+test('surfaces an unconfirmed cancelAdmission failure instead of hiding a fenced lease', async () => {
+  const jobs = new Jobs(); const git = new Git();
+  git.create = async () => { throw new Error('worktree failed'); };
+  jobs.cancelAdmission = async (p) => {
+    jobs.calls.push(['cancelAdmission', p]);
+    throw new Error('cancel storage failed');
+  };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor: new Supervisor(), owner: 'owner', createId: () => 'abc' });
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /cancel storage failed/);
+  assert.equal(jobs.state.state, 'reserved');
+});
 
 test('worker failure finalizes durable state and rejects completion', async () => {
   const jobs = new Jobs(); const git = new Git();
@@ -108,13 +119,13 @@ test('durability failure latches before completion and cannot be reported as suc
   assert.equal(jobs.state.state, 'failed');
 });
 
-test('failed post-spawn abort acknowledgement keeps the lease fenced', async () => {
+test('a never-dispatched start failure cancels admission instead of leaving a queued lease', async () => {
   const jobs = new Jobs(); const git = new Git();
-  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), abortHandle: input.runId }), abort: async () => false };
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), outcome: Promise.resolve('not_started'), abortHandle: input.runId }), abort: async () => 'unconfirmed' };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
   await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
-  assert.equal(jobs.state.state, 'queued');
-  assert.equal(jobs.calls.some(([name]) => name === 'finalize'), false);
+  assert.equal(jobs.state.state, 'failed');
+  assert.equal(jobs.calls.some(([name]) => name === 'cancelAdmission'), true);
 });
 test('forced worker generation termination permits failed finalization after abort refusal', async () => {
   const jobs = new Jobs(); const git = new Git();

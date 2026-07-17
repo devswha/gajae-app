@@ -421,7 +421,7 @@ test('aborting before the start request prevents the run from reaching the worke
   const supervisor = new GjcWorkerSupervisor(runtime(child, 'app-prestart'));
   const run = spawn(supervisor, 'hello', {}, { send() {} });
 
-  assert.equal(await supervisor.abort(run.abortHandle), true);
+  assert.equal(await supervisor.abort(run.abortHandle), 'not_started');
   peer.respond(await peer.waitFor('worker.initialize'));
   await run;
   await new Promise((resolve) => setImmediate(resolve));
@@ -444,7 +444,7 @@ test('aborts an issued run by runId and waits for its terminal start response', 
   const abort = await peer.waitFor('turn.abort');
   assert.deepEqual(abort.payload, { runId: start.id });
   peer.respond(abort, { ok: true, result: { runId: start.id, aborted: true } });
-  assert.equal(await abortResult, true);
+  assert.equal(await abortResult, 'aborted');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(settled, false);
 
@@ -468,7 +468,7 @@ test('keeps a run active when the worker cannot confirm abort', async () => {
     result: { runId: start.id, aborted: false },
   });
 
-  assert.equal(await abortResult, false);
+  assert.equal(await abortResult, 'unconfirmed');
   assert.equal(supervisor.isActive(run.abortHandle), true);
   peer.respond(start);
   await run;
@@ -578,7 +578,7 @@ test('worker exit waits for tree termination before starting a fresh generation'
     killTree: () => termination,
   });
   const failedRun = spawn(supervisor, 'first', {}, { send() {} });
-  const failure = assert.rejects(failedRun, /GJC worker failed/);
+  const failure = failedRun.then(() => assert.fail('worker exit must reject the active run'), () => {});
   await firstPeer.waitFor('worker.initialize');
 
   first.emit('exit', 1);
@@ -604,11 +604,16 @@ test('failed tree cleanup permanently blocks a replacement worker generation', a
     },
     killTree: () => Promise.reject(new Error('tree still alive')),
   });
-  const failedRun = spawn(supervisor, 'first', {}, { send() {} });
+  const failedRun = supervisor.spawnRun({
+    runId: 'failed-reap-run',
+    appSessionId: 'app-session-1',
+    message: 'first',
+    writer: { send() {} },
+  });
   await firstPeer.waitFor('session.start');
 
   first.stdout.write('not-json\n');
-  await assert.rejects(failedRun, /GJC worker failed/);
+  assert.equal(await failedRun.outcome, 'unconfirmed');
   await assert.rejects(
     spawn(supervisor, 'replacement', {}, { send() {} }),
     /GJC worker failed/,

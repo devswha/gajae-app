@@ -18,6 +18,8 @@ import { providerModelsService } from '../modules/providers/services/provider-mo
 import { normalizeProjectPath } from '../shared/utils.js';
 
 const router = express.Router();
+const NATIVE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
+const isValidGjcSessionId = value => typeof value === 'string' && value === value.trim() && NATIVE_ID.test(value);
 
 /**
  * Middleware to authenticate agent API requests.
@@ -838,6 +840,9 @@ router.post('/', validateExternalApiKey, async (req, res) => {
 
   if (!['claude', 'cursor', 'codex', 'opencode', 'gjc'].includes(provider)) {
     return res.status(400).json({ error: 'provider must be "claude", "cursor", "codex", "opencode", or "gjc"' });
+  }
+  if (provider === 'gjc' && sessionId !== undefined && !isValidGjcSessionId(sessionId)) {
+    return res.status(400).json({ error: 'sessionId must be a non-empty native-compatible identifier.' });
   }
 
   // Validate GitHub branch/PR creation requirements
