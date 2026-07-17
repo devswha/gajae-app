@@ -294,6 +294,7 @@ test('native job authority persists and reconciles state across process replacem
       id: 'reserve',
       method: 'capacity.reserve',
       jobId: 'job-1',
+      provider: 'gjc',
       owner: 'worker-a',
       cap: 4,
     },

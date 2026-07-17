@@ -357,6 +357,7 @@ fn diff(
         mode: String,
         #[serde(default)]
         include_untracked: bool,
+        base_commit: Option<String>,
     }
     let value: Diff =
         serde_json::from_value(params.clone()).map_err(|_| GitError::InvalidRequest)?;
@@ -373,6 +374,13 @@ fn diff(
     ];
     match value.mode.as_str() {
         "head" => args.push("HEAD"),
+        "base" => args.push(
+            value
+                .base_commit
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or(GitError::InvalidRequest)?,
+        ),
         "staged" => args.push("--cached"),
         "unstaged" => {}
         _ => return Err(GitError::InvalidRequest),
@@ -938,7 +946,7 @@ mod tests {
             "branch": "job/job-1",
             "path": path,
         });
-        create(&repo.path, &params).unwrap();
+        let created = create(&repo.path, &params).unwrap();
         let mut list_stream = Vec::new();
         let list_result = list(&repo.path, "list-test", &json!({}), &mut list_stream).unwrap();
         assert_eq!(list_result["count"], 1);
@@ -954,7 +962,8 @@ mod tests {
                 "jobId": "job-1",
                 "branch": "job/job-1",
                 "path": path,
-                "mode": "head",
+                "mode": "base",
+                "baseCommit": created["worktree"]["head"],
             }),
             &mut stream,
         )

@@ -15,7 +15,6 @@ const MAX_RECONCILE_JOB_IDS: usize = 100;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobState {
-    Waiting,
     Reserved,
     Queued,
     Running,
@@ -31,8 +30,7 @@ impl JobState {
     fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Waiting, Self::Reserved)
-                | (Self::Reserved, Self::Queued)
+            (Self::Reserved, Self::Queued)
                 | (Self::Reserved, Self::Aborted)
                 | (Self::Queued, Self::Running)
                 | (Self::Queued, Self::Aborted)
@@ -44,7 +42,6 @@ impl JobState {
                 | (Self::Aborting, Self::Succeeded)
                 | (Self::Aborting, Self::Failed)
                 | (Self::Aborting, Self::Interrupted)
-                | (Self::Waiting, Self::Failed)
                 | (Self::Reserved, Self::Failed)
                 | (Self::Queued, Self::Failed)
                 | (Self::Ready, Self::Queued)
@@ -55,7 +52,6 @@ impl JobState {
     }
     fn as_str(self) -> &'static str {
         match self {
-            Self::Waiting => "waiting",
             Self::Reserved => "reserved",
             Self::Queued => "queued",
             Self::Running => "running",
@@ -495,23 +491,8 @@ impl PersistentAuthority {
             .map_err(|_| AuthorityError::Storage)?;
         let count = consuming_count(&tx)?;
         match existing {
-            Some((existing_provider, existing_state)) => {
-                if existing_provider != provider
-                    || JobState::parse(&existing_state)? != JobState::Waiting
-                {
-                    return Err(AuthorityError::AlreadyExists);
-                }
-                if count >= cap {
-                    return snapshot_tx(&tx, id);
-                }
-                tx.execute(
-                    "UPDATE jobs SET state='reserved',lease_owner=?2,lease_generation=next_lease_generation,next_lease_generation=next_lease_generation+1 WHERE id=?1",
-                    params![id, owner],
-                ).map_err(|_| AuthorityError::Storage)?;
-            }
-            None if count >= cap => {
-                tx.execute("INSERT INTO jobs(id,provider,state,lease_generation,next_lease_generation) VALUES(?1,?2,'waiting',0,1)", params![id, provider]).map_err(map_insert)?;
-            }
+            Some(_) => return Err(AuthorityError::AlreadyExists),
+            None if count >= cap => return Err(AuthorityError::CapacityExhausted),
             None => {
                 tx.execute("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,'reserved',?3,1,2)", params![id, provider, owner]).map_err(map_insert)?;
             }
@@ -762,9 +743,6 @@ impl PersistentAuthority {
             None => {
                 tx.execute("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,'reserved',?3,1,2)", params![id, provider, owner]).map_err(map_insert)?;
             }
-            Some("waiting") => {
-                tx.execute("UPDATE jobs SET provider=?2,state='reserved',lease_owner=?3,lease_generation=next_lease_generation,next_lease_generation=next_lease_generation+1 WHERE id=?1", params![id, provider, owner]).map_err(|_| AuthorityError::Storage)?;
-            }
             _ => return Err(AuthorityError::AlreadyExists),
         }
         tx.execute(
@@ -892,8 +870,8 @@ impl PersistentAuthority {
         let mut job_ids = Vec::new();
         {
             let mut st = tx
-                .prepare("SELECT id FROM jobs WHERE state IN ('reserved','queued','running','aborting') ORDER BY id LIMIT ?1")
-                .map_err(|_| AuthorityError::Storage)?;
+            .prepare("SELECT id FROM jobs WHERE state IN ('reserved','queued','running','aborting') ORDER BY id LIMIT ?1")
+            .map_err(|_| AuthorityError::Storage)?;
             let rows = st
                 .query_map([MAX_RECONCILE_JOB_IDS], |r| r.get::<_, String>(0))
                 .map_err(|_| AuthorityError::Storage)?;
@@ -901,12 +879,40 @@ impl PersistentAuthority {
                 job_ids.push(id.map_err(|_| AuthorityError::Storage)?);
             }
         }
-        tx.execute(
-            "UPDATE jobs SET state='waiting',lease_owner=NULL WHERE state='reserved'",
-            [],
+        let active_runs: Vec<(String, String)> = {
+            let mut st = tx
+            .prepare("SELECT r.run_id,r.job_id FROM runs r JOIN jobs j ON j.id=r.job_id WHERE j.state IN ('queued','running','aborting') AND r.state NOT IN ('succeeded','failed','aborted','interrupted')")
+            .map_err(|_| AuthorityError::Storage)?;
+            let rows = st
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|_| AuthorityError::Storage)?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|_| AuthorityError::Storage)?
+        };
+        for (run_id, job_id) in active_runs {
+            let event_id = format!("shutdown-interrupted:{run_id}");
+            append(
+                &tx,
+                &job_id,
+                &event_id,
+                &serde_json::json!({"type":"interrupted","reason":"shutdown"}),
+            )?;
+            tx.execute(
+                "UPDATE job_events SET run_id=?3 WHERE job_id=?1 AND event_id=?2",
+                params![job_id, event_id, run_id],
+            )
+            .map_err(|_| AuthorityError::Storage)?;
+            tx.execute(
+            "UPDATE runs SET state='interrupted',outcome='interrupted' WHERE run_id=?1 AND job_id=?2 AND state NOT IN ('succeeded','failed','aborted','interrupted')",
+            params![run_id, job_id],
         )
         .map_err(|_| AuthorityError::Storage)?;
-        tx.execute("UPDATE jobs SET state='interrupted',lease_owner=NULL WHERE state IN ('queued','running','aborting')", []).map_err(|_| AuthorityError::Storage)?;
+        }
+        tx.execute(
+        "UPDATE jobs SET state='interrupted',lease_owner=NULL WHERE state IN ('reserved','queued','running','aborting')",
+        [],
+    )
+    .map_err(|_| AuthorityError::Storage)?;
         tx.commit().map_err(|_| AuthorityError::Storage)?;
         Ok(ReconcileResult {
             changed_count,
@@ -1156,7 +1162,7 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|_| AuthorityError::Storage)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);").map_err(|_| AuthorityError::Storage)?;
-    let version: i64 = tx
+    let mut version: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
             [],
@@ -1170,7 +1176,9 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         create_normalized(&tx)?;
         tx.execute("INSERT INTO schema_migrations(version) VALUES(5)", [])
             .map_err(|_| AuthorityError::Storage)?;
-    } else if version == 1 {
+        version = 5;
+    }
+    if version == 1 {
         let blob: String = tx
             .query_row("SELECT state_json FROM job_authority WHERE id=1", [], |r| {
                 r.get(0)
@@ -1200,27 +1208,24 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         }
         tx.execute_batch("DROP TABLE IF EXISTS job_authority;")
             .map_err(|_| AuthorityError::Storage)?;
-        tx.execute("INSERT INTO schema_migrations(version) VALUES(2)", [])
+        tx.execute("INSERT INTO schema_migrations(version) VALUES(5)", [])
             .map_err(|_| AuthorityError::Storage)?;
+        version = 5;
     }
-    if matches!(version, 1 | 2) {
+    if version == 2 {
         tx.execute("INSERT INTO schema_migrations(version) VALUES(3)", [])
             .map_err(|_| AuthorityError::Storage)?;
+        version = 3;
     }
-    if matches!(version, 2 | 3) {
+    if version == 3 {
         tx.execute("ALTER TABLE runs ADD COLUMN dispatched_at TEXT NULL", [])
             .map_err(|_| AuthorityError::Storage)?;
-    }
-    if (1..4).contains(&version) {
         tx.execute("INSERT INTO schema_migrations(version) VALUES(4)", [])
             .map_err(|_| AuthorityError::Storage)?;
+        version = 4;
     }
     if version == 4 {
         tx.execute_batch("ALTER TABLE jobs ADD COLUMN base_commit TEXT NULL; ALTER TABLE jobs ADD COLUMN repository_root TEXT NULL; ALTER TABLE runs ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'; ALTER TABLE runs ADD COLUMN outcome TEXT NULL; ALTER TABLE job_events ADD COLUMN run_id TEXT NULL REFERENCES runs(run_id); CREATE TABLE session_job_bindings (provider TEXT NOT NULL, app_session_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id), provider_session_id TEXT NULL, bound_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, released_at TEXT NULL, UNIQUE(job_id)); CREATE UNIQUE INDEX active_session_job_bindings ON session_job_bindings(provider,app_session_id) WHERE released_at IS NULL;").map_err(|_| AuthorityError::Storage)?;
-        tx.execute("INSERT INTO schema_migrations(version) VALUES(5)", [])
-            .map_err(|_| AuthorityError::Storage)?;
-    }
-    if (1..4).contains(&version) {
         tx.execute("INSERT INTO schema_migrations(version) VALUES(5)", [])
             .map_err(|_| AuthorityError::Storage)?;
     }
@@ -1421,7 +1426,12 @@ fn dispatch(
             .ok_or(AuthorityError::InvalidIdentifier)
     };
     let lease = || request.lease.as_ref().ok_or(AuthorityError::StaleLease);
-    let provider = || Ok(request.provider.as_deref().unwrap_or("gjc"));
+    let provider = || {
+        request
+            .provider
+            .as_deref()
+            .ok_or(AuthorityError::InvalidIdentifier)
+    };
     let value = match request.method.as_str() {
         "job.get" => serde_json::to_value(authority.snapshot(id()?)?),
         "lease.acquire" => serde_json::to_value(
@@ -1927,8 +1937,8 @@ mod tests {
             a.reserve(&format!("j{n}"), "p", "o", 4).unwrap();
         }
         assert_eq!(
-            a.reserve("j4", "p", "o", 4).unwrap().state,
-            JobState::Waiting
+            a.reserve("j4", "p", "o", 4),
+            Err(AuthorityError::CapacityExhausted)
         );
         let l = a.snapshot("j0").unwrap().lease.unwrap();
         assert_eq!(
@@ -1993,7 +2003,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            let state = if count < 4 { "reserved" } else { "waiting" };
+            let state = if count < 4 { "reserved" } else { "interrupted" };
             tx.execute(
                 "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,'p',?2,CASE WHEN ?2='reserved' THEN 'o' END,CASE WHEN ?2='reserved' THEN 1 ELSE 0 END,CASE WHEN ?2='reserved' THEN 2 ELSE 1 END)",
                 params!["j3", state],
@@ -2015,7 +2025,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            let state = if count < 4 { "reserved" } else { "waiting" };
+            let state = if count < 4 { "reserved" } else { "interrupted" };
             tx.execute(
                 "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,'p',?2,CASE WHEN ?2='reserved' THEN 'o' END,CASE WHEN ?2='reserved' THEN 1 ELSE 0 END,CASE WHEN ?2='reserved' THEN 2 ELSE 1 END)",
                 params!["j4", state],
@@ -2035,7 +2045,7 @@ mod tests {
         assert_eq!(
             states
                 .iter()
-                .filter(|state| state.as_str() == "waiting")
+                .filter(|state| state.as_str() == "interrupted")
                 .count(),
             1
         );
@@ -2075,7 +2085,7 @@ mod tests {
     fn late_v1_migration_failure_rolls_back_normalized_schema_and_data() {
         let (d, p) = db();
         let c = Connection::open(&p).unwrap();
-        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(1); CREATE TABLE job_authority(id INTEGER PRIMARY KEY,state_json TEXT NOT NULL); CREATE TRIGGER fail_v2 BEFORE INSERT ON schema_migrations WHEN NEW.version=2 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(1); CREATE TABLE job_authority(id INTEGER PRIMARY KEY,state_json TEXT NOT NULL); CREATE TRIGGER fail_v5 BEFORE INSERT ON schema_migrations WHEN NEW.version=5 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
         let blob = json!({"jobs":{"old":{"state":"queued","lease":null,"next_lease_generation":1,"events":[{"sequence":1,"eventId":"e","payload":{"x":1}}]}}}).to_string();
         c.execute("INSERT INTO job_authority VALUES(1,?1)", [&blob])
             .unwrap();
@@ -2172,14 +2182,64 @@ mod tests {
         }
     }
     #[test]
+    fn migrates_v2_and_v3_to_v5_atomically() {
+        for version in [2, 3] {
+            let (d, p) = db();
+            let c = Connection::open(&p).unwrap();
+            c.execute_batch(&format!(
+                "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES({version}); CREATE TABLE jobs (id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, state TEXT NOT NULL, lease_owner TEXT NULL, lease_generation INTEGER NOT NULL DEFAULT 0, next_lease_generation INTEGER NOT NULL DEFAULT 1, worktree_id TEXT NULL, branch TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE runs (run_id TEXT PRIMARY KEY NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, app_session_id TEXT NULL, provider_session_id TEXT NULL); CREATE TABLE job_events (job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(job_id,sequence), UNIQUE(job_id,event_id)); CREATE INDEX job_events_job_sequence ON job_events(job_id,sequence);"
+            ))
+            .unwrap();
+            drop(c);
+            let authority = PersistentAuthority::open(&p).unwrap();
+            assert_eq!(
+                authority
+                    .connection
+                    .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                5
+            );
+            authority
+                .connection
+                .query_row("SELECT base_commit FROM jobs LIMIT 1", [], |_| Ok(()))
+                .optional()
+                .unwrap();
+            drop(authority);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+
+        let (d, p) = db();
+        let c = Connection::open(&p).unwrap();
+        c.execute_batch("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(2); CREATE TABLE jobs (id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, state TEXT NOT NULL, lease_owner TEXT NULL, lease_generation INTEGER NOT NULL, next_lease_generation INTEGER NOT NULL, worktree_id TEXT NULL, branch TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE runs (run_id TEXT PRIMARY KEY NOT NULL, job_id TEXT NOT NULL, app_session_id TEXT NULL, provider_session_id TEXT NULL); CREATE TABLE job_events (job_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(job_id,sequence), UNIQUE(job_id,event_id)); CREATE TRIGGER fail_v5 BEFORE INSERT ON schema_migrations WHEN NEW.version=5 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+        drop(c);
+        assert!(matches!(
+            PersistentAuthority::open(&p),
+            Err(AuthorityError::Storage)
+        ));
+        let c = Connection::open(&p).unwrap();
+        assert_eq!(
+            c.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert!(
+            c.query_row("SELECT base_commit FROM jobs LIMIT 1", [], |_| Ok(()))
+                .is_err()
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
     fn admission_saga_markers_and_reconciliation() {
         let (d, p) = db();
         let mut a = PersistentAuthority::open(&p).unwrap();
 
         a.reserve("full", "p", "o", 1).unwrap();
-        let waiting = a.reserve("wait", "p", "o", 1).unwrap();
-        assert_eq!(waiting.state, JobState::Waiting);
-        assert_eq!(waiting.lease, None);
+        assert_eq!(
+            a.reserve("wait", "p", "o", 1),
+            Err(AuthorityError::CapacityExhausted)
+        );
         let full_lease = a.snapshot("full").unwrap().lease.unwrap();
         a.finalize("full", &full_lease, "failed", json!(null), JobState::Failed)
             .unwrap();
@@ -2250,9 +2310,9 @@ mod tests {
         let changed = a.reconcile().unwrap();
         assert_eq!(changed.changed_count, 3);
         assert_eq!(changed.job_ids.len(), 3);
-        assert_eq!(a.snapshot("bare").unwrap().state, JobState::Waiting);
+        assert_eq!(a.snapshot("bare").unwrap().state, JobState::Interrupted);
         let prepared = a.snapshot("prepared").unwrap();
-        assert_eq!(prepared.state, JobState::Waiting);
+        assert_eq!(prepared.state, JobState::Interrupted);
         assert_eq!(prepared.worktree_id.as_deref(), Some("/tmp/prepared-tree"));
         assert_eq!(prepared.base_commit.as_deref(), Some("base"));
         assert_eq!(prepared.repository_root.as_deref(), Some("/tmp"));
@@ -2374,6 +2434,21 @@ mod tests {
         let result = a.interrupt_for_shutdown().unwrap();
         assert_eq!(result.changed_count, 1);
         assert_eq!(a.snapshot("j").unwrap().state, JobState::Interrupted);
+        assert_eq!(
+            a.connection
+                .query_row("SELECT state FROM runs WHERE run_id='r2'", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "interrupted"
+        );
+        let events = a.replay("j", 0, 999, "test").unwrap().events;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.event_id == "shutdown-interrupted:r2")
+                .count(),
+            1
+        );
         a.release_binding("j").unwrap();
         assert_eq!(a.resolve_binding("p", "app"), Err(AuthorityError::NotFound));
         std::fs::remove_dir_all(d).unwrap();
