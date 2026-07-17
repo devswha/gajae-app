@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -35,8 +35,10 @@ test('resume root resolution selects either allowlisted store from indexed sessi
     await Promise.all([writeFile(paths.live, '{}\n'), writeFile(paths.saved, '{}\n')]);
     const lookup = async (sessionId: string) => paths[sessionId as keyof typeof paths];
 
-    assert.equal(await resolveGjcResumeSessionRoot('live', liveRoot, lookup), liveRoot);
-    assert.equal(await resolveGjcResumeSessionRoot('saved', liveRoot, lookup), savedRoot);
+    // The resolver returns the canonical (realpath) root; macOS resolves the
+    // temp store under /var to /private/var, so normalize expectations too.
+    assert.equal(await resolveGjcResumeSessionRoot('live', liveRoot, lookup), await realpath(liveRoot));
+    assert.equal(await resolveGjcResumeSessionRoot('saved', liveRoot, lookup), await realpath(savedRoot));
   } finally {
     await Promise.all([
       rm(tempDirectory, { recursive: true, force: true }),

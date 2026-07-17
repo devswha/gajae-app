@@ -289,8 +289,15 @@ test('native job authority persists and reconciles state across process replacem
   const database = path.join(temporaryRoot, 'jobs.sqlite3');
   const lease = { owner: 'worker-a', generation: 1 };
   const frames = [
-    { protocolVersion: 1, id: 'create', method: 'job.create', jobId: 'job-1' },
-    { protocolVersion: 1, id: 'acquire', method: 'lease.acquire', jobId: 'job-1', owner: 'worker-a' },
+    {
+      protocolVersion: 1,
+      id: 'reserve',
+      method: 'capacity.reserve',
+      jobId: 'job-1',
+      owner: 'worker-a',
+      cap: 4,
+    },
+    { protocolVersion: 1, id: 'queue', method: 'job.transition', jobId: 'job-1', lease, state: 'queued' },
     { protocolVersion: 1, id: 'start', method: 'job.transition', jobId: 'job-1', lease, state: 'running' },
     {
       protocolVersion: 1,
@@ -310,8 +317,16 @@ test('native job authority persists and reconciles state across process replacem
       eventId: 'message-1',
       payload: { text: 'hello' },
     },
+    {
+      protocolVersion: 1,
+      id: 'event-2',
+      method: 'event.append',
+      jobId: 'job-1',
+      lease,
+      eventId: 'message-2',
+      payload: { text: 'world' },
+    },
   ];
-
   try {
     const first = await runCore(
       ['jobs', '--database', database],
@@ -322,13 +337,22 @@ test('native job authority persists and reconciles state across process replacem
     assert.equal(first.stderr.length, 0);
     const firstResponses = first.stdout.toString('utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.deepEqual(firstResponses.map((response) => response.id), frames.map((frame) => frame.id));
-    assert.deepEqual(firstResponses[1].result, lease);
+    assert.deepEqual(firstResponses[0].result.lease, lease);
+    assert.equal(firstResponses[1].result.state, 'queued');
     assert.equal(firstResponses[2].result.state, 'running');
     assert.deepEqual(firstResponses[3].result, firstResponses[4].result);
 
     const restartFrames = [
       { protocolVersion: 1, id: 'get', method: 'job.get', jobId: 'job-1' },
-      { protocolVersion: 1, id: 'replay', method: 'event.replay', jobId: 'job-1', after: 0 },
+      {
+        protocolVersion: 1,
+        id: 'replay',
+        method: 'event.replay',
+        jobId: 'job-1',
+        after: 0,
+        byteBudget: 180,
+      },
+      { protocolVersion: 1, id: 'replay-page-2', method: 'event.replay', jobId: 'job-1', after: 1, byteBudget: 180 },
     ];
     const second = await runCore(
       ['jobs', '--database', database],
@@ -339,11 +363,22 @@ test('native job authority persists and reconciles state across process replacem
     const secondResponses = second.stdout.toString('utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(secondResponses[0].result.state, 'interrupted');
     assert.equal(secondResponses[0].result.lease, null);
-    assert.deepEqual(secondResponses[1].result, [{
-      sequence: 1,
-      eventId: 'message-1',
-      payload: { text: 'hello' },
-    }]);
+    assert.deepEqual(secondResponses[1].result, {
+      events: [{
+        sequence: 1,
+        eventId: 'message-1',
+        payload: { text: 'hello' },
+      }],
+      nextCursor: 1,
+    });
+    assert.deepEqual(secondResponses[2].result, {
+      events: [{
+        sequence: 2,
+        eventId: 'message-2',
+        payload: { text: 'world' },
+      }],
+      nextCursor: null,
+    });
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
