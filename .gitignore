@@ -19,6 +19,8 @@ src-tauri/target/
 src-tauri/binaries/
 src-tauri/resources/server-payload/
 src-tauri/gen/
+# GJC durable job worktrees (runtime, per-job)
+.gjc-worktrees/
 
 # Local agent runtime state
 .gjc/
