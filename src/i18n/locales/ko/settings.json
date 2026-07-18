@@ -3,7 +3,6 @@
   "tabs": {
     "account": "계정",
     "permissions": "권한",
-    "mcpServers": "MCP 서버",
     "appearance": "외관"
   },
   "account": {
@@ -15,24 +14,6 @@
     "email": "이메일",
     "profile": "프로필",
     "changePassword": "비밀번호 변경"
-  },
-  "mcp": {
-    "title": "MCP 서버",
-    "addServer": "서버 추가",
-    "editServer": "서버 편집",
-    "deleteServer": "서버 삭제",
-    "serverName": "서버 이름",
-    "serverType": "서버 유형",
-    "config": "설정",
-    "testConnection": "연결 테스트",
-    "status": "상태",
-    "connected": "연결됨",
-    "disconnected": "연결 끊김",
-    "scope": {
-      "label": "범위",
-      "user": "사용자",
-      "project": "프로젝트"
-    }
   },
   "appearance": {
     "title": "외관",
@@ -86,13 +67,9 @@
   },
   "mainTabs": {
     "label": "설정",
-    "agents": "에이전트",
     "appearance": "외관",
     "git": "Git",
-    "apiTokens": "API & 토큰",
-    "tasks": "작업",
     "notifications": "알림",
-    "plugins": "플러그인",
     "about": "정보"
   },
   "notifications": {
@@ -156,55 +133,6 @@
       }
     }
   },
-  "mcpForm": {
-    "title": {
-      "add": "MCP 서버 추가",
-      "edit": "MCP 서버 편집"
-    },
-    "importMode": {
-      "form": "폼 입력",
-      "json": "JSON 가져오기"
-    },
-    "scope": {
-      "label": "범위",
-      "userGlobal": "사용자 (전역)",
-      "projectLocal": "프로젝트 (로컬)",
-      "userDescription": "사용자 범위: 모든 프로젝트에서 사용 가능",
-      "projectDescription": "로컬 범위: 선택한 프로젝트에서만 사용 가능",
-      "cannotChange": "기존 서버를 편집할 때는 범위를 변경할 수 없습니다"
-    },
-    "fields": {
-      "serverName": "서버 이름",
-      "transportType": "전송 유형",
-      "command": "명령어",
-      "arguments": "인수 (한 줄에 하나씩)",
-      "jsonConfig": "JSON 설정",
-      "url": "URL",
-      "envVars": "환경 변수 (KEY=value, 한 줄에 하나씩)",
-      "headers": "헤더 (KEY=value, 한 줄에 하나씩)",
-      "selectProject": "프로젝트 선택..."
-    },
-    "placeholders": {
-      "serverName": "my-server"
-    },
-    "validation": {
-      "missingType": "필수 항목 누락: type",
-      "stdioRequiresCommand": "stdio 유형은 command 필드가 필요합니다",
-      "httpRequiresUrl": "{{type}} 유형은 url 필드가 필요합니다",
-      "invalidJson": "잘못된 JSON 형식",
-      "jsonHelp": "MCP 서버 설정을 JSON 형식으로 붙여넣으세요. 예시:",
-      "jsonExampleStdio": "• stdio: {\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"@upstash/context7-mcp\"]}",
-      "jsonExampleHttp": "• http/sse: {\"type\":\"http\",\"url\":\"https://api.example.com/mcp\"}"
-    },
-    "configDetails": "설정 상세 ({{configFile}}에서)",
-    "projectPath": "경로: {{path}}",
-    "actions": {
-      "cancel": "취소",
-      "saving": "저장 중...",
-      "addServer": "서버 추가",
-      "updateServer": "서버 업데이트"
-    }
-  },
   "saveStatus": {
     "success": "설정이 저장되었습니다!",
     "error": "설정 저장 실패",
@@ -232,109 +160,6 @@
     "status": {
       "success": "저장 완료"
     }
-  },
-  "apiKeys": {
-    "title": "API 키",
-    "description": "다른 애플리케이션에서 외부 API에 접근하기 위한 API 키를 생성합니다.",
-    "newKey": {
-      "alertTitle": "⚠️ API 키를 저장하세요",
-      "alertMessage": "이 키는 지금만 볼 수 있습니다. 안전하게 보관하세요.",
-      "iveSavedIt": "저장했습니다"
-    },
-    "form": {
-      "placeholder": "API 키 이름 (예: Production Server)",
-      "createButton": "생성",
-      "cancelButton": "취소"
-    },
-    "newButton": "새 API 키",
-    "empty": "생성된 API 키가 없습니다.",
-    "list": {
-      "created": "생성일:",
-      "lastUsed": "마지막 사용:"
-    },
-    "confirmDelete": "이 API 키를 삭제하시겠습니까?",
-    "status": {
-      "active": "활성",
-      "inactive": "비활성"
-    },
-    "github": {
-      "title": "GitHub 토큰",
-      "description": "외부 API를 통해 비공개 저장소를 clone하기 위한 GitHub Personal Access Token을 추가합니다.",
-      "descriptionAlt": "비공개 저장소를 clone하기 위한 GitHub Personal Access Token을 추가합니다. 저장하지 않고 API 요청에 직접 토큰을 전달할 수도 있습니다.",
-      "addButton": "토큰 추가",
-      "form": {
-        "namePlaceholder": "토큰 이름 (예: Personal Repos)",
-        "tokenPlaceholder": "GitHub Personal Access Token (ghp_...)",
-        "descriptionPlaceholder": "설명 (선택사항)",
-        "addButton": "토큰 추가",
-        "cancelButton": "취소",
-        "howToCreate": "GitHub Personal Access Token 생성 방법 →"
-      },
-      "empty": "추가된 GitHub 토큰이 없습니다.",
-      "added": "추가일:",
-      "confirmDelete": "이 GitHub 토큰을 삭제하시겠습니까?"
-    },
-    "apiDocsLink": "API 문서",
-    "documentation": {
-      "title": "외부 API 문서",
-      "description": "외부 API를 사용하여 애플리케이션에서 Claude/Cursor 세션을 트리거하는 방법을 알아보세요.",
-      "viewLink": "API 문서 보기 →"
-    },
-    "loading": "로딩 중...",
-    "version": {
-      "updateAvailable": "업데이트 가능: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMaster 설치 확인 중...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI가 설치되지 않았습니다",
-      "description": "작업 관리 기능을 사용하려면 TaskMaster CLI가 필요합니다. 시작하려면 설치하세요:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "GitHub에서 보기",
-      "afterInstallation": "설치 후:",
-      "steps": {
-        "restart": "이 애플리케이션을 재시작하세요",
-        "autoAvailable": "TaskMaster 기능이 자동으로 활성화됩니다",
-        "initCommand": "프로젝트 디렉토리에서 task-master init을 사용하세요"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster 통합 활성화",
-      "enableDescription": "인터페이스 전체에 TaskMaster 작업, 배너 및 사이드바 표시"
-    }
-  },
-  "agents": {
-    "authStatus": {
-      "checking": "확인 중...",
-      "connected": "연결됨",
-      "notConnected": "연결되지 않음",
-      "disconnected": "연결 끊김",
-      "checkingAuth": "인증 상태 확인 중...",
-      "loggedInAs": "{{email}}(으)로 로그인됨",
-      "authenticatedUser": "인증된 사용자"
-    },
-    "account": {
-      "claude": {
-        "description": "Anthropic Claude AI 어시스턴트"
-      },
-      "cursor": {
-        "description": "Cursor AI 기반 코드 에디터"
-      },
-      "codex": {
-        "description": "OpenAI Codex AI 어시스턴트"
-      }
-    },
-    "connectionStatus": "연결 상태",
-    "login": {
-      "title": "로그인",
-      "reAuthenticate": "재인증",
-      "description": "AI 기능을 활성화하려면 {{agent}} 계정에 로그인하세요",
-      "reAuthDescription": "다른 계정으로 로그인하거나 자격 증명을 새로고침하세요",
-      "button": "로그인",
-      "reLoginButton": "재로그인"
-    },
-    "error": "오류: {{error}}"
   },
   "permissions": {
     "title": "권한 설정",
@@ -412,74 +237,19 @@
       "add": "추가"
     }
   },
-  "mcpServers": {
-    "title": "MCP 서버",
-    "description": {
-      "claude": "Model Context Protocol 서버는 Claude에 추가 도구와 데이터 소스를 제공합니다",
-      "cursor": "Model Context Protocol 서버는 Cursor에 추가 도구와 데이터 소스를 제공합니다",
-      "codex": "Model Context Protocol 서버는 Codex에 추가 도구와 데이터 소스를 제공합니다"
-    },
-    "addButton": "MCP 서버 추가",
-    "empty": "설정된 MCP 서버 없음",
-    "serverType": "유형",
-    "scope": {
-      "local": "로컬",
-      "user": "사용자"
-    },
-    "config": {
-      "command": "명령어",
-      "url": "URL",
-      "args": "인수",
-      "environment": "환경"
-    },
-    "tools": {
-      "title": "도구",
-      "count": "({{count}}):",
-      "more": "+{{count}}개 더"
-    },
-    "actions": {
-      "edit": "서버 편집",
-      "delete": "서버 삭제"
-    },
-    "help": {
-      "title": "Codex MCP 정보",
-      "description": "Codex는 stdio 기반 MCP 서버를 지원합니다. 추가 도구와 리소스로 Codex의 기능을 확장하는 서버를 추가할 수 있습니다."
-    }
-  },
-  "pluginSettings": {
-    "title": "플러그인",
-    "description": "커스텀 플러그인으로 인터페이스를 확장하세요. git에서 설치하거나 ~/.claude-code-ui/plugins/ 폴더에 직접 추가할 수 있습니다.",
-    "installPlaceholder": "https://github.com/user/my-plugin",
-    "installButton": "설치",
-    "installing": "설치 중…",
-    "securityWarning": "소스 코드를 검토했거나 신뢰할 수 있는 작성자의 플러그인만 설치하세요.",
-    "scanningPlugins": "플러그인 스캔 중…",
-    "noPluginsInstalled": "설치된 플러그인이 없습니다",
-    "pullLatest": "git에서 최신 버전 가져오기",
-    "noGitRemote": "git 리모트가 없음 — 업데이트 불가",
-    "uninstallPlugin": "플러그인 삭제",
-    "confirmUninstall": "다시 클릭하여 확인",
-    "confirmUninstallMessage": "{{name}} 플러그인을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
-    "cancel": "취소",
-    "remove": "삭제",
-    "updateFailed": "업데이트 실패",
-    "installFailed": "설치 실패",
-    "uninstallFailed": "삭제 실패",
-    "toggleFailed": "토글 실패",
-    "buildYourOwn": "나만의 플러그인 만들기",
-    "starter": "스타터",
-    "docs": "문서",
-    "starterPlugin": {
-      "name": "프로젝트 통계",
-      "badge": "스타터",
-      "description": "프로젝트의 파일 수, 코드 라인 수, 파일 유형별 분석 및 최근 활동을 확인합니다.",
-      "install": "설치"
-    },
-    "morePlugins": "더 보기",
-    "enable": "활성화",
-    "disable": "비활성화",
-    "installAriaLabel": "플러그인 git 저장소 URL",
-    "tab": "탭",
-    "runningStatus": "실행 중"
+  "voiceSettings": {
+    "title": "Voice",
+    "description": "Speech-to-text input and read-aloud, via an OpenAI-compatible audio backend.",
+    "enable": "Enable voice",
+    "enableDescription": "Show the mic button and the read-aloud button on messages.",
+    "backendTitle": "Backend",
+    "backendDescription": "Point at OpenAI, Groq, or a local server (LocalAI, Speaches, Kokoro-FastAPI). Leave blank to use the server default.",
+    "baseUrl": "Base URL",
+    "apiKey": "API key",
+    "sttModel": "Speech-to-text model",
+    "ttsModel": "Text-to-speech model",
+    "voice": "Voice",
+    "format": "Audio format",
+    "note": "A custom base URL is called directly by your browser and must allow browser CORS requests. Leave it blank to use the server-configured backend."
   }
 }

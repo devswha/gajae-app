@@ -134,6 +134,7 @@ test('gjc synchronizer indexes sessions and derives the title from the first use
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     await writeGjcTranscript(tempRoot, 'gjc-1', workspacePath, { firstUserMessage: 'Add a gjc provider' });
@@ -148,6 +149,7 @@ test('gjc synchronizer indexes sessions and derives the title from the first use
       assert.equal(indexed?.custom_name, 'Add a gjc provider');
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -158,6 +160,7 @@ test('gjc reconciliation includes transcripts modified after the shared scan cur
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     const transcript = await writeGjcTranscript(tempRoot, 'gjc-reconciled', workspacePath);
@@ -192,6 +195,7 @@ test('gjc reconciliation includes transcripts modified after the shared scan cur
       );
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -255,6 +259,7 @@ test('gjc synchronizer falls back to Untitled when no user message exists', { co
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     await writeGjcTranscript(tempRoot, 'gjc-empty', workspacePath, {});
@@ -263,6 +268,7 @@ test('gjc synchronizer falls back to Untitled when no user message exists', { co
       assert.equal(sessionsDb.getSessionById('gjc-empty')?.custom_name, 'Untitled gjc Session');
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -273,6 +279,7 @@ test('gjc sessions provider normalizes message content parts and folds tool resu
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     await writeGjcTranscript(tempRoot, 'gjc-history', workspacePath, {
@@ -300,6 +307,7 @@ test('gjc sessions provider normalizes message content parts and folds tool resu
       assert.deepEqual(history.messages[3]?.toolResult, { content: 'file.txt', isError: false });
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -311,6 +319,7 @@ test('gjc sessions provider excludes hidden and internal-role messages from hist
   await mkdir(workspacePath, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     const lines = [
@@ -340,6 +349,7 @@ test('gjc sessions provider excludes hidden and internal-role messages from hist
       );
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -350,6 +360,7 @@ test('gjc sessions provider returns a folded tool call for the newest one-messag
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     await writeGjcTranscript(tempRoot, 'gjc-tail-history', workspacePath, {
@@ -367,6 +378,7 @@ test('gjc sessions provider returns a folded tool call for the newest one-messag
       assert.deepEqual(history.messages[0]?.toolResult, { content: 'file.txt', isError: false });
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -379,6 +391,7 @@ test('gjc sessions provider keeps only the bounded normalized history tail', { c
   await mkdir(workspacePath, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     const messageCount = 5_001;
@@ -412,6 +425,7 @@ test('gjc sessions provider keeps only the bounded normalized history tail', { c
       assert.equal(history.hasMore, true);
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -422,6 +436,7 @@ test('gjc synchronizer excludes subagent transcripts inside session sidecar dirs
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     // Top-level session (depth 2: sessions/<slug>/<file>.jsonl).
@@ -446,6 +461,7 @@ test('gjc synchronizer excludes subagent transcripts inside session sidecar dirs
       assert.ok(!sessionsDb.getSessionById('2-CriticPass1'));
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -456,6 +472,7 @@ test('gjc synchronizer streams past leading non-user lines to the first user mes
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
+  const restoreLiveSessionDir = patchLiveSessionDir(path.join(tempRoot, 'live-sessions'));
 
   try {
     const sessionsDir = path.join(tempRoot, '.gjc', 'agent', 'sessions', '-workspace');
@@ -477,6 +494,7 @@ test('gjc synchronizer streams past leading non-user lines to the first user mes
       assert.equal(sessionsDb.getSessionById('gjc-stream')?.custom_name, 'Fix the pagination bug');
     });
   } finally {
+    restoreLiveSessionDir();
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }

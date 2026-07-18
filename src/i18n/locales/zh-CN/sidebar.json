@@ -56,8 +56,7 @@
     "chat": "聊天",
     "files": "文件",
     "git": "Git",
-    "terminal": "终端",
-    "tasks": "任务"
+    "terminal": "终端"
   },
   "actions": {
     "refresh": "刷新",

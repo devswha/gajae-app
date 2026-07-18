@@ -79,14 +79,11 @@ The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
 - Update `server/shared/types.ts` `LLMProvider`.
 - Update `src/types/app.ts` `LLMProvider` if the frontend should know about it.
 - Update `server/modules/providers/provider.routes.ts`.
-- Update `server/routes/agent.js` if the provider is launchable from the agent runtime.
 - Update `server/index.js` if the provider needs runtime boot or shutdown wiring.
 - Update the `PROVIDER_ORDER` list in `public/api-docs.html` if the provider should appear in the public API docs.
 - Update `src/components/chat/hooks/useChatProviderState.ts` and
   `src/components/chat/view/subcomponents/ProviderSelectionEmptyState.tsx` if
   the provider should be selectable in chat.
-- Update `src/components/provider-auth/view/ProviderLoginModal.tsx` if the
-  provider has a login/setup flow.
 
 2. Create the wrapper class.
 
@@ -101,55 +98,6 @@ The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
 - Treat normal `not installed` / `not authenticated` states as data, not exceptions.
 - Keep provider-specific credential discovery inside the auth provider.
 - If the provider has no auth step, return a stable unauthenticated or not-installed status instead of omitting the facet.
-
-4. Implement MCP.
-
-- Extend `McpProvider`.
-- Pass the supported scopes and transports to `super(...)`.
-- Implement the four required methods:
-  - `readScopedServers(...)`
-  - `writeScopedServers(...)`
-  - `buildServerConfig(...)`
-  - `normalizeServerConfig(...)`
-- Use the shared validation and normalization behavior from `McpProvider`.
-- Keep the provider-specific config format local to the provider implementation.
-
-Current MCP formats in this repo are:
-
-| Provider | User / Project Storage | Supported Scopes | Supported Transports |
-| --- | --- | --- | --- |
-| Claude | `.mcp.json` in user / local / project locations | `user`, `local`, `project` | `stdio`, `http`, `sse` |
-| Codex | `.codex/config.toml` | `user`, `project` | `stdio`, `http` |
-| Cursor | `.cursor/mcp.json` | `user`, `project` | `stdio`, `http` |
-| OpenCode | `~/.config/opencode/opencode.json` or `<workspace>/opencode.json` (`.jsonc` is read when present) | `user`, `project` | `stdio`, `http` |
-
-5. Implement skills.
-
-- Extend `SkillsProvider`.
-- Implement `getSkillSources(workspacePath)`.
-- Return the actual discovery roots for the provider.
-- Skills are discovered from `SKILL.md` files.
-- `readProviderSkillMarkdownDefinition(...)` reads front matter `name` and `description`.
-- If `name` is missing, the parent directory name is used as a fallback.
-- Use `recursive: true` only when the provider stores skills in nested trees.
-- Keep the emitted `command` string aligned with the provider's real skill syntax.
-
-Current skill discovery roots are:
-
-| Provider | User Roots | Project / Repo Roots | Prefix | Notes |
-| --- | --- | --- | --- | --- |
-| Claude | `~/.claude/skills` | `<workspace>/.claude/skills` | `/` | Also discovers Claude plugin skills from enabled plugin installs. Command skills live under `commands/`; markdown skills live under `skills/` and are scanned recursively. |
-| Codex | `~/.agents/skills`, `~/.codex/skills/.system`, `/etc/codex/skills` | `<workspace>/.agents/skills`, `path.dirname(workspacePath)/.agents/skills`, topmost git root `.agents/skills` | `$` | Overlapping roots are deduplicated before scanning. |
-| Cursor | `~/.cursor/skills` | `<workspace>/.cursor/skills`, `<workspace>/.agents/skills` | `/` | Uses slash-style commands. |
-| OpenCode | `~/.config/opencode/skills`, `~/.claude/skills`, `~/.agents/skills` | Cwd-to-topmost-git-root `.opencode/skills`, `.claude/skills`, and `.agents/skills` | `/` | Reuses OpenCode, Claude, and Agents skill locations. Overlapping roots are deduplicated before scanning. |
-
-Command forms currently used by the providers are:
-
-- Claude user/project skills: `/skill-name`
-- Claude plugin skills: `/plugin-name:skill-name`
-- Codex skills: `$skill-name`
-- Cursor skills: `/skill-name`
-- OpenCode skills: `/skill-name`
 
 6. Implement sessions.
 
@@ -198,7 +146,6 @@ Current session sync roots are:
 
 If the provider can run live chat sessions, update the runtime entrypoints too:
 
-- `server/routes/agent.js`
 - `server/index.js`
 
 If the provider is visible in the UI, update:
@@ -206,8 +153,6 @@ If the provider is visible in the UI, update:
 - provider model fallback files under `server/modules/providers/list/<provider>/`
 - `src/components/chat/hooks/useChatProviderState.ts`
 - `src/components/chat/view/subcomponents/ProviderSelectionEmptyState.tsx`
-- `src/components/provider-auth/view/ProviderLoginModal.tsx`
-- `src/components/mcp/constants.ts`
 
 ## Minimal Wrapper Template
 
@@ -240,30 +185,6 @@ export class <Provider>Provider extends AbstractProvider {
 }
 ```
 
-## Minimal Skills Template
-
-```ts
-import path from 'node:path';
-
-import { SkillsProvider } from '@/modules/providers/shared/skills/skills.provider.js';
-import type { ProviderSkillSource } from '@/shared/types.js';
-
-export class <Provider>SkillsProvider extends SkillsProvider {
-  constructor() {
-    super('<provider>');
-  }
-
-  protected async getSkillSources(workspacePath: string): Promise<ProviderSkillSource[]> {
-    return [
-      {
-        scope: 'project',
-        rootDir: path.join(workspacePath, '.<provider>', 'skills'),
-        commandPrefix: '/',
-      },
-    ];
-  }
-}
-```
 
 ## Minimal Session Sync Template
 
@@ -281,36 +202,6 @@ export class <Provider>SessionSynchronizer implements IProviderSessionSynchroniz
 }
 ```
 
-## AI Prompt Template
-
-Use this prompt when asking an AI agent to add a provider:
-
-```text
-Add a new provider "<provider>" using the current provider module architecture.
-
-Requirements:
-1) Create:
-   - server/modules/providers/list/<provider>/<provider>.provider.ts
-   - server/modules/providers/list/<provider>/<provider>-auth.provider.ts
-   - server/modules/providers/list/<provider>/<provider>-mcp.provider.ts
-   - server/modules/providers/list/<provider>/<provider>-skills.provider.ts
-   - server/modules/providers/list/<provider>/<provider>-sessions.provider.ts
-   - server/modules/providers/list/<provider>/<provider>-session-synchronizer.provider.ts
-2) Register in:
-   - server/modules/providers/provider.registry.ts
-   - server/modules/providers/provider.routes.ts
-   - server/shared/types.ts LLMProvider
-   - src/types/app.ts LLMProvider
-3) Mirror the nearest existing provider implementation for file naming, style,
-   and error handling.
-4) Implement skills support with SkillsProvider and the current skill roots.
-5) Implement session synchronization if the provider stores transcript files.
-6) Ensure sessions use unique ids, safe path handling, and correct pagination.
-7) Keep `sessions` and `sessionSynchronizer` separate.
-8) Run:
-   - npx eslint <touched files>
-   - npx tsc --noEmit -p server/tsconfig.json
-```
 
 ## Validation
 
@@ -322,10 +213,6 @@ npx tsc --noEmit -p server/tsconfig.json
 ```
 
 Useful tests in this repo:
-
-- `server/modules/providers/tests/mcp.test.ts`
-- `server/modules/providers/tests/skills.test.ts`
-- `server/modules/providers/tests/opencode-sessions.test.ts`
 
 If you touch sessions or session synchronization, add or update focused tests
 alongside the implementation.

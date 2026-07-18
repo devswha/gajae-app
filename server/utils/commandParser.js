@@ -23,8 +23,7 @@ const BASH_COMMAND_ALLOWLIST = [
   'node',
   'cat',
   'grep',
-  'find',
-  'task-master'
+  'find'
 ];
 
 /**

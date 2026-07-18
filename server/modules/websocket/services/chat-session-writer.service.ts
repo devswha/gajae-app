@@ -33,8 +33,8 @@ type ChatSessionWriterOptions = {
  *
  * It exposes the exact same surface as `WebSocketWriter` (`send`,
  * `setSessionId`, `getSessionId`, `updateWebSocket`, `userId`,
- * `isWebSocketWriter`) so the provider runtimes (`claude-sdk.js`,
- * `cursor-cli.js`, ...) need zero changes — but everything that flows through
+ * `isWebSocketWriter`) so the GJC worker runtime needs no transport-specific
+ * changes — but everything that flows through
  * it is translated from the provider's world into the app's protocol:
  *
  * - `session_created` events are swallowed and turned into a provider-id

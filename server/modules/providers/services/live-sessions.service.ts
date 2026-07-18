@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import { open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 
-import { parsePsTree } from './external-cli-sessions.service.js';
-
 /**
  * Live gjc session detection + tmux-session naming.
  *
@@ -301,6 +299,25 @@ export function computeLiveSessions(args: {
   }
 
   return [...result].map(([id, entry]) => ({ id, tmuxName: entry.tmuxName, tmuxId: entry.tmuxId, claim: entry.claim, kind: entry.kind }));
+}
+
+// Minimal `ps -eo pid,ppid,comm` parser. Kept local after the non-GJC
+// external-CLI lane (Wave 2) was removed; gjc lineage detection only needs
+// the pid/ppid/comm triple, not the claude/codex classifier that lived there.
+function parsePsTree(output: string): Array<{ pid: number; ppid: number; comm: string }> {
+  const rows: Array<{ pid: number; ppid: number; comm: string }> = [];
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) {
+      continue;
+    }
+    const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (!match) {
+      continue; // header or malformed line
+    }
+    rows.push({ pid: Number.parseInt(match[1], 10), ppid: Number.parseInt(match[2], 10), comm: match[3].trim() });
+  }
+  return rows;
 }
 
 // Detection subprocess output is small (pane lists / lsof field lines); a multi-

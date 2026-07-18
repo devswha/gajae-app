@@ -1,5 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+  isJobProjectionInboundFrame,
+  isJobProjectionOutboundFrame,
+  type JobProjectionErrorCode,
+  type JobProjectionEvent,
+  type JobProjectionInboundFrame,
+  type JobSnapshot,
+} from '../../shared/gjc-job-projection-protocol';
 import { useAuth } from '../components/auth/context/AuthContext';
 
 /**
@@ -17,15 +26,6 @@ export type ServerEvent = {
   [key: string]: unknown;
 };
 
-import {
-  GJC_JOB_PROJECTION_PROTOCOL_VERSION,
-  isJobProjectionInboundFrame,
-  isJobProjectionOutboundFrame,
-  type JobProjectionErrorCode,
-  type JobProjectionEvent,
-  type JobProjectionInboundFrame,
-  type JobSnapshot,
-} from '../../shared/gjc-job-projection-protocol';
 
 type JobSubscription = {
   jobId: string;
@@ -200,7 +200,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         console.error('Error creating WebSocket connection:', error);
       }
     }
-  }, [clearReconnect, dispatch, subscribeJobsForGeneration]);
+  }, [clearReconnect, dispatch, sendJobFrame, subscribeJobsForGeneration]);
 
   useEffect(() => {
     if (authenticatedUserRef.current !== user) {

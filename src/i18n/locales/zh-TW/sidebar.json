@@ -55,8 +55,7 @@
     "chat": "聊天",
     "files": "檔案",
     "git": "Git",
-    "terminal": "終端機",
-    "tasks": "任務"
+    "terminal": "終端機"
   },
   "actions": {
     "refresh": "重新整理",

@@ -2,8 +2,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 
-import chokidar, { type FSWatcher } from 'chokidar';
-
 import { GjcSessionWatcher } from '@/modules/providers/services/gjc-session-watcher.service.js';
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionSynchronizerService } from '@/modules/providers/services/session-synchronizer.service.js';
@@ -13,44 +11,14 @@ import { generateDisplayName } from '@/modules/projects/index.js';
 
 type WatcherEventType = 'add' | 'change';
 
-const PROVIDER_WATCH_PATHS: Array<{ provider: LLMProvider; rootPath: string }> = [
-  {
-    provider: 'claude',
-    rootPath: path.join(os.homedir(), '.claude', 'projects'),
-  },
-  {
-    provider: 'cursor',
-    rootPath: path.join(os.homedir(), '.cursor', 'projects'),
-  },
-  {
-    provider: 'codex',
-    rootPath: path.join(os.homedir(), '.codex', 'sessions'),
-  },
-  {
-    provider: 'opencode',
-    rootPath: path.join(os.homedir(), '.local', 'share', 'opencode'),
-  },
-];
-
 const GJC_WATCH_PATHS = [...new Set([
   path.join(os.homedir(), '.gjc', 'agent', 'sessions'),
   path.resolve(process.env.GJC_LIVE_SESSION_DIR || path.join(os.tmpdir(), 'gjc-live-sessions')),
 ])];
 
-const WATCHER_IGNORED_PATTERNS = [
-  '**/node_modules/**',
-  '**/.git/**',
-  '**/dist/**',
-  '**/build/**',
-  '**/*.tmp',
-  '**/*.swp',
-  '**/.DS_Store',
-];
-
 const PROJECTS_UPDATE_DEBOUNCE_MS = 500;
 const PROJECTS_UPDATE_MAX_WAIT_MS = 2_000;
 
-const watchers: FSWatcher[] = [];
 let gjcWatcher: GjcSessionWatcher | null = null;
 let gjcWatcherStarting: GjcSessionWatcher | null = null;
 const gjcWatcherStartTasks = new Set<Promise<void>>();
@@ -80,11 +48,7 @@ let watcherRescheduleAfterRefresh = false;
 /**
  * Filters watcher events to provider-specific session artifact file types.
  */
-function isWatcherTargetFile(provider: LLMProvider, filePath: string): boolean {
-  if (provider === 'opencode') {
-    return path.basename(filePath) === 'opencode.db';
-  }
-
+function isWatcherTargetFile(filePath: string): boolean {
   return filePath.endsWith('.jsonl');
 }
 
@@ -254,7 +218,7 @@ async function onUpdate(
   if (signal?.aborted) {
     return;
   }
-  if (!isWatcherTargetFile(provider, filePath)) {
+  if (!isWatcherTargetFile(filePath)) {
     return;
   }
 
@@ -426,42 +390,6 @@ export async function initializeSessionsWatcher(): Promise<void> {
     failures: initialSync.failures,
   });
 
-  for (const { provider, rootPath } of PROVIDER_WATCH_PATHS) {
-    try {
-      await fsPromises.mkdir(rootPath, { recursive: true });
-
-      const watcher = chokidar.watch(rootPath, {
-        ignored: WATCHER_IGNORED_PATTERNS,
-        persistent: true,
-        ignoreInitial: true,
-        followSymlinks: false,
-        depth: 6,
-        usePolling: true,
-        interval: 6_000,
-        binaryInterval: 6_000,
-      });
-
-      watcher
-        .on('add', (filePath: string) => {
-          void onUpdate('add', filePath, provider);
-        })
-        .on('change', (filePath: string) => {
-          void onUpdate('change', filePath, provider);
-        })
-        .on('error', (error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Session watcher error for provider "${provider}"`, { error: message });
-        });
-
-      watchers.push(watcher);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to initialize session watcher for provider "${provider}"`, {
-        rootPath,
-        error: message,
-      });
-    }
-  }
 }
 
 /**
@@ -485,14 +413,6 @@ export async function closeSessionsWatcher(): Promise<void> {
   gjcWatcher = null;
   gjcWatcherStarting = null;
   await Promise.all([
-    ...watchers.map(async (watcher) => {
-      try {
-        await watcher.close();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('Failed to close session watcher', { error: message });
-      }
-    }),
     ...nativeWatchers.map((watcher) => watcher.close().catch(() => {
       console.error('Failed to close GJC native session watcher.');
     })),
@@ -500,7 +420,6 @@ export async function closeSessionsWatcher(): Promise<void> {
       console.error('Failed to stop GJC native session watcher startup.');
     })),
   ]);
-  watchers.length = 0;
   gjcWatcherRestartDelayMs = 1_000;
   pendingWatcherUpdate = null;
   pendingWatcherUpdateStartedAt = null;

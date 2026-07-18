@@ -4,7 +4,6 @@ import { WebSocketServer, type VerifyClientCallbackSync } from 'ws';
 
 import { handleChatConnection } from '@/modules/websocket/services/chat-websocket.service.js';
 import { verifyWebSocketClient } from '@/modules/websocket/services/websocket-auth.service.js';
-import { handlePluginWsProxy } from '@/modules/websocket/services/plugin-websocket-proxy.service.js';
 import { handleShellConnection } from '@/modules/websocket/services/shell-websocket.service.js';
 import { handleDesktopNotificationsConnection } from '@/modules/notifications/index.js';
 import type { AuthenticatedWebSocketRequest } from '@/shared/types.js';
@@ -13,12 +12,11 @@ type WebSocketServerDependencies = {
   verifyClient: Parameters<typeof verifyWebSocketClient>[1];
   chat: Parameters<typeof handleChatConnection>[2];
   shell: Parameters<typeof handleShellConnection>[1];
-  getPluginPort: Parameters<typeof handlePluginWsProxy>[2];
 };
 
 /**
- * Creates and wires the server-wide websocket gateway used for chat, shell, and
- * plugin proxy routes.
+ * Creates and wires the server-wide websocket gateway used for chat, shell,
+ * desktop notification routes.
  */
 export function createWebSocketServer(
   server: HttpServer,
@@ -66,11 +64,6 @@ export function createWebSocketServer(
 
     if (pathname === '/desktop-notifications') {
       handleDesktopNotificationsConnection(ws, incomingRequest);
-      return;
-    }
-
-    if (pathname.startsWith('/plugin-ws/')) {
-      handlePluginWsProxy(ws, pathname, dependencies.getPluginPort);
       return;
     }
 

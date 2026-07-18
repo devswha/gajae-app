@@ -1,49 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useTheme } from '../../../contexts/ThemeContext';
 import { authenticatedFetch } from '../../../utils/api';
 import { setNotificationSoundEnabled } from '../../../utils/notificationSound';
-import { useProviderAuthStatus } from '../../provider-auth/hooks/useProviderAuthStatus';
-import {
-  DEFAULT_CODE_EDITOR_SETTINGS,
-  DEFAULT_CURSOR_PERMISSIONS,
-} from '../constants/constants';
+import { DEFAULT_CODE_EDITOR_SETTINGS } from '../constants/constants';
 import type {
-  AgentProvider,
-  ClaudePermissionsState,
   CodeEditorSettingsState,
-  CodexPermissionMode,
-  CursorPermissionsState,
   NotificationPreferencesState,
   ProjectSortOrder,
   SettingsMainTab,
 } from '../types/types';
-
-type ThemeContextValue = {
-  isDarkMode: boolean;
-  toggleDarkMode: () => void;
-};
 
 type UseSettingsControllerArgs = {
   isOpen: boolean;
   initialTab: string;
 };
 
-type ClaudeSettingsStorage = {
-  allowedTools?: string[];
-  disallowedTools?: string[];
-  skipPermissions?: boolean;
+type ProjectSettingsStorage = {
   projectSortOrder?: ProjectSortOrder;
-};
-
-type CursorSettingsStorage = {
-  allowedCommands?: string[];
-  disallowedCommands?: string[];
-  skipPermissions?: boolean;
-};
-
-type CodexSettingsStorage = {
-  permissionMode?: CodexPermissionMode;
 };
 
 type NotificationPreferencesResponse = {
@@ -51,18 +24,11 @@ type NotificationPreferencesResponse = {
   preferences?: NotificationPreferencesState;
 };
 
-type ActiveLoginProvider = AgentProvider | '';
+const KNOWN_MAIN_TABS: SettingsMainTab[] = ['appearance', 'git', 'voice', 'notifications', 'about'];
 
-const KNOWN_MAIN_TABS: SettingsMainTab[] = ['agents', 'appearance', 'git', 'api', 'tasks', 'browser', 'notifications', 'plugins', 'about'];
-
-const normalizeMainTab = (tab: string): SettingsMainTab => {
-  // Keep backwards compatibility with older callers that still pass "tools".
-  if (tab === 'tools') {
-    return 'agents';
-  }
-
-  return KNOWN_MAIN_TABS.includes(tab as SettingsMainTab) ? (tab as SettingsMainTab) : 'agents';
-};
+const normalizeMainTab = (tab: string): SettingsMainTab => (
+  KNOWN_MAIN_TABS.includes(tab as SettingsMainTab) ? (tab as SettingsMainTab) : 'appearance'
+);
 
 const parseJson = <T>(value: string | null, fallback: T): T => {
   if (!value) {
@@ -76,13 +42,6 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
   }
 };
 
-const toCodexPermissionMode = (value: unknown): CodexPermissionMode => {
-  if (value === 'acceptEdits' || value === 'bypassPermissions') {
-    return value;
-  }
-
-  return 'default';
-};
 
 const readCodeEditorSettings = (): CodeEditorSettingsState => ({
   wordWrap: localStorage.getItem('codeEditorWordWrap') === 'true',
@@ -93,15 +52,6 @@ const readCodeEditorSettings = (): CodeEditorSettingsState => ({
 
 const toResponseJson = async <T>(response: Response): Promise<T> => response.json() as Promise<T>;
 
-const createEmptyClaudePermissions = (): ClaudePermissionsState => ({
-  allowedTools: [],
-  disallowedTools: [],
-  skipPermissions: false,
-});
-
-const createEmptyCursorPermissions = (): CursorPermissionsState => ({
-  ...DEFAULT_CURSOR_PERMISSIONS,
-});
 
 const createDefaultNotificationPreferences = (): NotificationPreferencesState => ({
   channels: {
@@ -140,8 +90,6 @@ const normalizeNotificationPreferences = (
 };
 
 export function useSettingsController({ isOpen, initialTab }: UseSettingsControllerArgs) {
-  const { isDarkMode, toggleDarkMode } = useTheme() as ThemeContextValue;
-  const closeTimerRef = useRef<number | null>(null);
 
   const [activeTab, setActiveTab] = useState<SettingsMainTab>(() => normalizeMainTab(initialTab));
   const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
@@ -149,54 +97,18 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   const [codeEditorSettings, setCodeEditorSettings] = useState<CodeEditorSettingsState>(() => (
     readCodeEditorSettings()
   ));
-
-  const [claudePermissions, setClaudePermissions] = useState<ClaudePermissionsState>(() => (
-    createEmptyClaudePermissions()
-  ));
-  const [cursorPermissions, setCursorPermissions] = useState<CursorPermissionsState>(() => (
-    createEmptyCursorPermissions()
-  ));
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferencesState>(() => (
     createDefaultNotificationPreferences()
   ));
-  const [codexPermissionMode, setCodexPermissionMode] = useState<CodexPermissionMode>('default');
 
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginProvider, setLoginProvider] = useState<ActiveLoginProvider>('');
-  const {
-    providerAuthStatus,
-    checkProviderAuthStatus,
-    refreshProviderAuthStatuses,
-  } = useProviderAuthStatus();
 
   const loadSettings = useCallback(async () => {
     try {
-      const savedClaudeSettings = parseJson<ClaudeSettingsStorage>(
+      const savedProjectSettings = parseJson<ProjectSettingsStorage>(
         localStorage.getItem('claude-settings'),
         {},
       );
-      setClaudePermissions({
-        allowedTools: savedClaudeSettings.allowedTools || [],
-        disallowedTools: savedClaudeSettings.disallowedTools || [],
-        skipPermissions: Boolean(savedClaudeSettings.skipPermissions),
-      });
-      setProjectSortOrder(savedClaudeSettings.projectSortOrder === 'date' ? 'date' : 'name');
-
-      const savedCursorSettings = parseJson<CursorSettingsStorage>(
-        localStorage.getItem('cursor-tools-settings'),
-        {},
-      );
-      setCursorPermissions({
-        allowedCommands: savedCursorSettings.allowedCommands || [],
-        disallowedCommands: savedCursorSettings.disallowedCommands || [],
-        skipPermissions: Boolean(savedCursorSettings.skipPermissions),
-      });
-
-      const savedCodexSettings = parseJson<CodexSettingsStorage>(
-        localStorage.getItem('codex-settings'),
-        {},
-      );
-      setCodexPermissionMode(toCodexPermissionMode(savedCodexSettings.permissionMode));
+      setProjectSortOrder(savedProjectSettings.projectSortOrder === 'date' ? 'date' : 'name');
 
       try {
         const notificationResponse = await authenticatedFetch('/api/settings/notification-preferences');
@@ -216,58 +128,18 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
 
     } catch (error) {
       console.error('Error loading settings:', error);
-      setClaudePermissions(createEmptyClaudePermissions());
-      setCursorPermissions(createEmptyCursorPermissions());
       setNotificationPreferences(createDefaultNotificationPreferences());
-      setCodexPermissionMode('default');
       setProjectSortOrder('name');
     }
   }, []);
 
-  const openLoginForProvider = useCallback((provider: AgentProvider) => {
-    setLoginProvider(provider);
-    setShowLoginModal(true);
-  }, []);
-
-  const handleLoginComplete = useCallback((exitCode: number) => {
-    if (!loginProvider) {
-      return;
-    }
-
-    void (async () => {
-      const authStatus = await checkProviderAuthStatus(loginProvider);
-
-      if (exitCode !== 0) {
-        console.warn(`Login process exited with code ${exitCode}; refreshing auth status before setting save status.`);
-      }
-
-      setSaveStatus(authStatus.authenticated ? 'success' : 'error');
-    })();
-  }, [checkProviderAuthStatus, loginProvider]);
 
   const saveSettings = useCallback(async () => {
     setSaveStatus(null);
 
     try {
-      const now = new Date().toISOString();
       localStorage.setItem('claude-settings', JSON.stringify({
-        allowedTools: claudePermissions.allowedTools,
-        disallowedTools: claudePermissions.disallowedTools,
-        skipPermissions: claudePermissions.skipPermissions,
         projectSortOrder,
-        lastUpdated: now,
-      }));
-
-      localStorage.setItem('cursor-tools-settings', JSON.stringify({
-        allowedCommands: cursorPermissions.allowedCommands,
-        disallowedCommands: cursorPermissions.disallowedCommands,
-        skipPermissions: cursorPermissions.skipPermissions,
-        lastUpdated: now,
-      }));
-
-      localStorage.setItem('codex-settings', JSON.stringify({
-        permissionMode: codexPermissionMode,
-        lastUpdated: now,
       }));
 
       const notificationResponse = await authenticatedFetch('/api/settings/notification-preferences', {
@@ -283,17 +155,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
       console.error('Error saving settings:', error);
       setSaveStatus('error');
     }
-  }, [
-    claudePermissions.allowedTools,
-    claudePermissions.disallowedTools,
-    claudePermissions.skipPermissions,
-    codexPermissionMode,
-    cursorPermissions.allowedCommands,
-    cursorPermissions.disallowedCommands,
-    cursorPermissions.skipPermissions,
-    notificationPreferences,
-    projectSortOrder,
-  ]);
+  }, [notificationPreferences, projectSortOrder]);
 
   const updateCodeEditorSetting = useCallback(
     <K extends keyof CodeEditorSettingsState>(key: K, value: CodeEditorSettingsState[K]) => {
@@ -309,8 +171,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
 
     setActiveTab(normalizeMainTab(initialTab));
     void loadSettings();
-    void refreshProviderAuthStatuses();
-  }, [initialTab, isOpen, loadSettings, refreshProviderAuthStatuses]);
+  }, [initialTab, isOpen, loadSettings]);
 
   useEffect(() => {
     setNotificationSoundEnabled(notificationPreferences.channels.sound);
@@ -324,7 +185,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     window.dispatchEvent(new Event('codeEditorSettingsChanged'));
   }, [codeEditorSettings]);
 
-  // Auto-save permissions and sort order with debounce
+  // Auto-save notification preferences and project sort order with debounce
   const autoSaveTimerRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
 
@@ -368,10 +229,6 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   }, [isOpen]);
 
   useEffect(() => () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
     if (autoSaveTimerRef.current !== null) {
       window.clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
@@ -381,26 +238,12 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   return {
     activeTab,
     setActiveTab,
-    isDarkMode,
-    toggleDarkMode,
     saveStatus,
     projectSortOrder,
     setProjectSortOrder,
     codeEditorSettings,
     updateCodeEditorSetting,
-    claudePermissions,
-    setClaudePermissions,
-    cursorPermissions,
-    setCursorPermissions,
     notificationPreferences,
     setNotificationPreferences,
-    codexPermissionMode,
-    setCodexPermissionMode,
-    providerAuthStatus,
-    openLoginForProvider,
-    showLoginModal,
-    setShowLoginModal,
-    loginProvider,
-    handleLoginComplete,
   };
 }

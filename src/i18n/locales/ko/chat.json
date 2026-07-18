@@ -212,8 +212,5 @@
   },
   "projectSelection": {
     "startChatWithProvider": "{{provider}}와 채팅을 시작하려면 프로젝트를 선택하세요"
-  },
-  "tasks": {
-    "nextTaskPrompt": "다음 작업 시작"
   }
 }

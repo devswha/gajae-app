@@ -3,11 +3,9 @@ import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } f
 import type { TFunction } from 'i18next';
 
 import { ScrollArea } from '../../../../shared/view/ui';
-import type { ExternalTerminalTarget, Project } from '../../../../types/app';
-import type { ReleaseInfo } from '../../../../types/sharedTypes';
+import type { Project } from '../../../../types/app';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMode } from '../../types/types';
-import { useExternalCliSessions } from '../../hooks/useExternalCliSessions';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { getAllSessions } from '../../utils/utils';
 import { JobSidebarSection } from '../../../jobs';
@@ -16,7 +14,6 @@ import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
 import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProjectList';
 import SidebarLiveSection from './SidebarLiveSection';
-import SidebarExternalSection from './SidebarExternalSection';
 import SidebarSpawnSession from './SidebarSpawnSession';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
@@ -145,12 +142,7 @@ type SidebarContentProps = {
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
-  updateAvailable: boolean;
-  restartRequired: boolean;
-  releaseInfo: ReleaseInfo | null;
-  latestVersion: string | null;
   currentVersion: string;
-  onShowVersionModal: () => void;
   onShowSettings: () => void;
   projectListProps: SidebarProjectListProps;
   liveSessionNames: ReadonlyMap<string, string>;
@@ -158,7 +150,6 @@ type SidebarContentProps = {
   liveSessionTmuxIds: ReadonlyMap<string, string>;
   liveSessionKinds: ReadonlyMap<string, string>;
   liveSessionRunning: ReadonlySet<string>;
-  onExternalTerminalOpen: (target: ExternalTerminalTarget) => void;
   t: TFunction;
 };
 
@@ -189,12 +180,7 @@ export default function SidebarContent({
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
-  updateAvailable,
-  restartRequired,
-  releaseInfo,
-  latestVersion,
   currentVersion,
-  onShowVersionModal,
   onShowSettings,
   projectListProps,
   liveSessionNames,
@@ -202,11 +188,9 @@ export default function SidebarContent({
   liveSessionTmuxIds,
   liveSessionKinds,
   liveSessionRunning,
-  onExternalTerminalOpen,
   t,
 }: SidebarContentProps) {
-  const [topTab, setTopTab] = useState<'live' | 'external' | 'archive'>('live');
-  const externalSessions = useExternalCliSessions();
+  const [topTab, setTopTab] = useState<'live' | 'archive'>('live');
   const showConversationSearch = searchMode === 'conversations' && searchFilter.trim().length >= 2;
   const hasPartialResults = conversationResults && conversationResults.results.length > 0;
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
@@ -252,20 +236,6 @@ export default function SidebarContent({
             GJC{projectListProps.liveSessionIds.size > 0 ? ` (${projectListProps.liveSessionIds.size})` : ''}
           </button>
         )}
-        {topTab === 'external' ? (
-          <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-foreground">
-            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-            외부 CLI{externalSessions.length > 0 ? ` (${externalSessions.length})` : ''}
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setTopTab('external')}
-            className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-          >
-            외부 CLI{externalSessions.length > 0 ? ` (${externalSessions.length})` : ''}
-          </button>
-        )}
         <span className="flex-1" />
         {topTab === 'archive' ? (
           <span className="px-1 text-xs font-semibold text-foreground">기록</span>
@@ -301,10 +271,6 @@ export default function SidebarContent({
             />
           )}
         </ScrollArea>
-      ) : topTab === 'external' ? (
-        <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
-          <SidebarExternalSection sessions={externalSessions} projects={projects} onOpen={onExternalTerminalOpen} />
-        </ScrollArea>
       ) : (
       <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
         {showConversationSearch ? (
@@ -314,10 +280,10 @@ export default function SidebarContent({
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
               </div>
               <p className="text-sm text-muted-foreground">{t('search.searching')}</p>
-              {searchProgress && (
-                <p className="mt-1 text-xs text-muted-foreground/60">
-                  {t('search.projectsScanned', { count: searchProgress.scannedProjects })}/{searchProgress.totalProjects}
-                </p>
+                {searchProgress && (
+                  <p className="mt-1 text-xs text-muted-foreground/60">
+                    {t('search.projectsScanned', { count: searchProgress.scannedProjects })}/{searchProgress.totalProjects}
+                  </p>
               )}
             </div>
           ) : !isSearching && conversationResults && conversationResults.results.length === 0 ? (
@@ -647,12 +613,7 @@ export default function SidebarContent({
       )}
 
       <SidebarFooter
-        updateAvailable={updateAvailable}
-        restartRequired={restartRequired}
-        releaseInfo={releaseInfo}
-        latestVersion={latestVersion}
         currentVersion={currentVersion}
-        onShowVersionModal={onShowVersionModal}
         onShowSettings={onShowSettings}
         t={t}
       />

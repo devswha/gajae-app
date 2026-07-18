@@ -2,24 +2,16 @@ import express, { type Request, type Response } from 'express';
 
 import { providerAuthService } from '@/modules/providers/services/provider-auth.service.js';
 import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
-import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
-import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getLiveGjcSessions, IDLE_GJC_ID_PREFIX } from '@/modules/providers/services/live-sessions.service.js';
-import { getExternalCliSessions } from '@/modules/providers/services/external-cli-sessions.service.js';
 import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
 import { isValidTmuxName, sendToLiveSession, isValidSpawnName, spawnLiveSession, killLiveSession } from '@/modules/providers/services/live-send.service.js';
 import { listLiveGjcCommands } from '@/modules/providers/services/live-commands.service.js';
 import type {
   LLMProvider,
-  McpScope,
-  McpTransport,
   ProviderChangeActiveModelInput,
-  ProviderSkillCreateFile,
-  ProviderSkillCreateInput,
-  UpsertProviderMcpServerInput,
 } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 
@@ -89,210 +81,9 @@ const parseOptionalBooleanQuery = (value: unknown, name: string): boolean | unde
   });
 };
 
-const parseMcpScope = (value: unknown): McpScope | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const normalized = readOptionalQueryString(value);
-  if (!normalized) {
-    return undefined;
-  }
-
-  if (normalized === 'user' || normalized === 'local' || normalized === 'project') {
-    return normalized;
-  }
-
-  throw new AppError(`Unsupported MCP scope "${normalized}".`, {
-    code: 'INVALID_MCP_SCOPE',
-    statusCode: 400,
-  });
-};
-
-const parseMcpTransport = (value: unknown): McpTransport => {
-  const normalized = readOptionalQueryString(value);
-  if (!normalized) {
-    throw new AppError('transport is required.', {
-      code: 'MCP_TRANSPORT_REQUIRED',
-      statusCode: 400,
-    });
-  }
-
-  if (normalized === 'stdio' || normalized === 'http' || normalized === 'sse') {
-    return normalized;
-  }
-
-  throw new AppError(`Unsupported MCP transport "${normalized}".`, {
-    code: 'INVALID_MCP_TRANSPORT',
-    statusCode: 400,
-  });
-};
-
-const parseMcpUpsertPayload = (payload: unknown): UpsertProviderMcpServerInput => {
-  if (!payload || typeof payload !== 'object') {
-    throw new AppError('Request body must be an object.', {
-      code: 'INVALID_REQUEST_BODY',
-      statusCode: 400,
-    });
-  }
-
-  const body = payload as Record<string, unknown>;
-  const name = readOptionalQueryString(body.name);
-  if (!name) {
-    throw new AppError('name is required.', {
-      code: 'MCP_NAME_REQUIRED',
-      statusCode: 400,
-    });
-  }
-
-  const transport = parseMcpTransport(body.transport);
-  const scope = parseMcpScope(body.scope);
-  const workspacePath = readOptionalQueryString(body.workspacePath);
-
-  return {
-    name,
-    transport,
-    scope,
-    workspacePath,
-    command: readOptionalQueryString(body.command),
-    args: Array.isArray(body.args) ? body.args.filter((entry): entry is string => typeof entry === 'string') : undefined,
-    env: typeof body.env === 'object' && body.env !== null
-      ? Object.fromEntries(
-        Object.entries(body.env as Record<string, unknown>).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-      )
-      : undefined,
-    cwd: readOptionalQueryString(body.cwd),
-    url: readOptionalQueryString(body.url),
-    headers: typeof body.headers === 'object' && body.headers !== null
-      ? Object.fromEntries(
-        Object.entries(body.headers as Record<string, unknown>).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-      )
-      : undefined,
-    envVars: Array.isArray(body.envVars)
-      ? body.envVars.filter((entry): entry is string => typeof entry === 'string')
-      : undefined,
-    bearerTokenEnvVar: readOptionalQueryString(body.bearerTokenEnvVar),
-    envHttpHeaders: typeof body.envHttpHeaders === 'object' && body.envHttpHeaders !== null
-      ? Object.fromEntries(
-        Object.entries(body.envHttpHeaders as Record<string, unknown>).filter(
-          (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-      )
-      : undefined,
-  };
-};
-
-const parseProviderSkillCreatePayload = (payload: unknown): ProviderSkillCreateInput => {
-  if (!payload || typeof payload !== 'object') {
-    throw new AppError('Request body must be an object.', {
-      code: 'INVALID_REQUEST_BODY',
-      statusCode: 400,
-    });
-  }
-
-  const body = payload as Record<string, unknown>;
-  const rawEntries = Array.isArray(body.entries)
-    ? body.entries
-    : typeof body.content === 'string'
-      ? [{
-          content: body.content,
-          directoryName: body.directoryName,
-          fileName: body.fileName,
-          files: body.files,
-        }]
-      : null;
-
-  if (!rawEntries || rawEntries.length === 0) {
-    throw new AppError('At least one skill entry is required.', {
-      code: 'PROVIDER_SKILLS_REQUIRED',
-      statusCode: 400,
-    });
-  }
-
-  const entries = rawEntries.map((entry, index) => {
-    if (!entry || typeof entry !== 'object') {
-      throw new AppError(`Skill entry ${index + 1} must be an object.`, {
-        code: 'INVALID_REQUEST_BODY',
-        statusCode: 400,
-      });
-    }
-
-    const record = entry as Record<string, unknown>;
-    const content = typeof record.content === 'string' ? record.content : '';
-    const directoryName = readOptionalQueryString(record.directoryName);
-    const fileName = readOptionalQueryString(record.fileName);
-    const rawFiles = record.files;
-
-    if (!content.trim()) {
-      throw new AppError(`Skill entry ${index + 1} must include markdown content.`, {
-        code: 'PROVIDER_SKILL_CONTENT_REQUIRED',
-        statusCode: 400,
-      });
-    }
-
-    if (rawFiles !== undefined && !Array.isArray(rawFiles)) {
-      throw new AppError(`Skill entry ${index + 1} files must be an array.`, {
-        code: 'INVALID_REQUEST_BODY',
-        statusCode: 400,
-      });
-    }
-
-    const files: ProviderSkillCreateFile[] | undefined = rawFiles?.map((file, fileIndex) => {
-      if (!file || typeof file !== 'object') {
-        throw new AppError(`Skill entry ${index + 1} file ${fileIndex + 1} must be an object.`, {
-          code: 'INVALID_REQUEST_BODY',
-          statusCode: 400,
-        });
-      }
-
-      const fileRecord = file as Record<string, unknown>;
-      const relativePath = readOptionalQueryString(fileRecord.relativePath);
-      const fileContent = typeof fileRecord.content === 'string' ? fileRecord.content : null;
-      const encoding = fileRecord.encoding === 'utf8' || fileRecord.encoding === 'base64'
-        ? fileRecord.encoding
-        : null;
-
-      if (!relativePath || fileContent === null || !encoding) {
-        throw new AppError(
-          `Skill entry ${index + 1} file ${fileIndex + 1} requires relativePath, content, and encoding.`,
-          {
-            code: 'INVALID_REQUEST_BODY',
-            statusCode: 400,
-          },
-        );
-      }
-
-      return {
-        relativePath,
-        content: fileContent,
-        encoding,
-      };
-    });
-
-    return {
-      content,
-      directoryName,
-      fileName,
-      files,
-    };
-  });
-
-  return { entries };
-};
-
 const parseProvider = (value: unknown): LLMProvider => {
   const normalized = normalizeProviderParam(value);
-  if (
-    normalized === 'claude'
-    || normalized === 'codex'
-    || normalized === 'cursor'
-    || normalized === 'opencode'
-    || normalized === 'gjc'
-  ) {
+  if (normalized === 'gjc') {
     return normalized;
   }
 
@@ -414,101 +205,6 @@ router.post(
   }),
 );
 
-// ----------------- Skills routes -----------------
-router.get(
-  '/:provider/skills',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const workspacePath = readOptionalQueryString(req.query.workspacePath);
-    const skills = await providerSkillsService.listProviderSkills(provider, { workspacePath });
-    res.json(createApiSuccessResponse({ provider, skills }));
-  }),
-);
-
-router.post(
-  '/:provider/skills',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const input = parseProviderSkillCreatePayload(req.body);
-    const skills = await providerSkillsService.addProviderSkills(provider, input);
-    res.json(createApiSuccessResponse({ provider, skills }));
-  }),
-);
-
-router.delete(
-  '/:provider/skills/:directoryName',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const result = await providerSkillsService.removeProviderSkill(provider, {
-      directoryName: readPathParam(req.params.directoryName, 'directoryName'),
-    });
-    res.json(createApiSuccessResponse(result));
-  }),
-);
-
-// ----------------- MCP routes -----------------
-router.get(
-  '/:provider/mcp/servers',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const workspacePath = readOptionalQueryString(req.query.workspacePath);
-    const scope = parseMcpScope(req.query.scope);
-
-    if (scope) {
-      const servers = await providerMcpService.listProviderMcpServersForScope(provider, scope, { workspacePath });
-      res.json(createApiSuccessResponse({ provider, scope, servers }));
-      return;
-    }
-
-    const groupedServers = await providerMcpService.listProviderMcpServers(provider, { workspacePath });
-    res.json(createApiSuccessResponse({ provider, scopes: groupedServers }));
-  }),
-);
-
-router.post(
-  '/:provider/mcp/servers',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const payload = parseMcpUpsertPayload(req.body);
-    const server = await providerMcpService.upsertProviderMcpServer(provider, payload);
-    res.status(201).json(createApiSuccessResponse({ server }));
-  }),
-);
-
-router.delete(
-  '/:provider/mcp/servers/:name',
-  asyncHandler(async (req: Request, res: Response) => {
-    const provider = parseProvider(req.params.provider);
-    const scope = parseMcpScope(req.query.scope);
-    const workspacePath = readOptionalQueryString(req.query.workspacePath);
-    const result = await providerMcpService.removeProviderMcpServer(provider, {
-      name: readPathParam(req.params.name, 'name'),
-      scope,
-      workspacePath,
-    });
-    res.json(createApiSuccessResponse(result));
-  }),
-);
-
-router.post(
-  '/mcp/servers/global',
-  asyncHandler(async (req: Request, res: Response) => {
-    const payload = parseMcpUpsertPayload(req.body);
-    if (payload.scope === 'local') {
-      throw new AppError('Global MCP add supports only "user" or "project" scopes.', {
-        code: 'INVALID_GLOBAL_MCP_SCOPE',
-        statusCode: 400,
-      });
-    }
-
-    const results = await providerMcpService.addMcpServerToAllProviders({
-      ...payload,
-      scope: payload.scope === 'user' ? 'user' : 'project',
-    });
-    res.status(201).json(createApiSuccessResponse({ results }));
-  }),
-);
-
 router.get(
   '/capabilities',
   asyncHandler(async (_req: Request, res: Response) => {
@@ -581,22 +277,7 @@ router.get(
   }),
 );
 
-router.get(
-  '/sessions/external',
-  asyncHandler(async (_req: Request, res: Response) => {
-    // External CLI (claude/codex) tmux sessions for the Termius-style terminal
-    // lane. A tmux session is excluded only when a gjc process actually runs
-    // INSIDE one of its panes (service-level subtree check). We deliberately do
-    // NOT subtract tmux names the gjc live lane claimed via its cwd fallback:
-    // a background gjc merely sharing the cwd (실측: patina — pane runs claude,
-    // a detached gjc from days ago shares the directory) must not hide the
-    // pane's real claude/codex session from this lane. Such a name may then
-    // legitimately appear in BOTH tabs — a gjc conversation row and an
-    // attachable terminal row are different, both-true views.
-    const externalSessions = await getExternalCliSessions();
-    res.json(createApiSuccessResponse({ externalSessions }));
-  }),
-);
+
 
 router.get(
   '/fs/dir-suggestions',

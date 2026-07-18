@@ -8,7 +8,6 @@
  *   (no args)     - Start the server (default)
  *   start         - Start the server
  *   sandbox       - Manage Docker sandbox environments
- *   browser-use-mcp - Run Browser MCP stdio server
  *   status        - Show configuration and data locations
  *   help          - Show help information
  *   version       - Show version information
@@ -157,7 +156,6 @@ Usage:
 Commands:
   start            Start the Gajae App server (default)
   sandbox          Manage Docker sandbox environments
-  browser-use-mcp  Run the Browser MCP stdio server
   status           Show configuration and data locations
   help             Show this help information
   version          Show version information
@@ -547,9 +545,6 @@ async function startServer() {
     await import('./index.js');
 }
 
-async function startBrowserUseMcp() {
-    await import('./browser-use-mcp.js');
-}
 
 // Parse CLI arguments
 function parseArgs(args) {
@@ -608,9 +603,6 @@ async function main() {
             break;
         case 'sandbox':
             await sandboxCommand(remainingArgs || []);
-            break;
-        case 'browser-use-mcp':
-            await startBrowserUseMcp();
             break;
         case 'status':
         case 'info':

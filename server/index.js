@@ -25,24 +25,6 @@ import { GjcJobProjectionService } from './modules/websocket/services/gjc-job-pr
 import { createGjcTerminalNotificationAdapter } from './modules/notifications/services/gjc-terminal-notification-adapter.service.js';
 import { findAppRoot, getModuleDir } from './utils/runtime-paths.js';
 import {
-    queryClaudeSDK,
-    abortClaudeSDKSession,
-    resolveToolApproval,
-    getPendingApprovalsForSession,
-} from './claude-sdk.js';
-import {
-    spawnCursor,
-    abortCursorSession,
-} from './cursor-cli.js';
-import {
-    queryCodex,
-    abortCodexSession,
-} from './openai-codex.js';
-import {
-    spawnOpenCode,
-    abortOpenCodeSession,
-} from './opencode-cli.js';
-import {
     getPendingGjcApprovalsForSession,
     resolveGjcToolApproval,
     shutdownGjcWorker,
@@ -57,24 +39,14 @@ import {
 } from './utils/url-detection.js';
 import gitRoutes from './routes/git.js';
 import authRoutes from './routes/auth.js';
-import cursorRoutes from './routes/cursor.js';
-import taskmasterRoutes from './routes/taskmaster.js';
-import mcpUtilsRoutes from './routes/mcp-utils.js';
-import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
-import agentRoutes from './routes/agent.js';
 import { createGjcAppFactory } from './app-factory.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import userRoutes from './routes/user.js';
-import pluginsRoutes from './routes/plugins.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import voiceRoutes from './voice-proxy.js';
-import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
 import { assetsRoutes } from './modules/assets/index.js';
-import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
-import { browserUseService } from './modules/browser-use/browser-use.service.js';
-import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
 import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
 import { startLiveTurnMonitor } from './modules/notifications/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
@@ -106,16 +78,11 @@ function readUsageNumber(value) {
 }
 
 function resolveProviderToolApproval(requestId, decision) {
-    if (!resolveGjcToolApproval(requestId, decision)) {
-        resolveToolApproval(requestId, decision);
-    }
+    resolveGjcToolApproval(requestId, decision);
 }
 
 function getPendingProviderApprovalsForSession(sessionId) {
-    return [
-        ...getPendingApprovalsForSession(sessionId),
-        ...getPendingGjcApprovalsForSession(sessionId),
-    ];
+    return getPendingGjcApprovalsForSession(sessionId);
 }
 
 
@@ -201,17 +168,9 @@ const { app, server, wss } = createGjcAppFactory({
     validateApiKey,
     chat: {
         spawnFns: {
-            claude: queryClaudeSDK,
-            cursor: spawnCursor,
-            codex: queryCodex,
-            opencode: spawnOpenCode,
             gjc: gjcSpawn,
         },
         abortFns: {
-            claude: abortClaudeSDKSession,
-            cursor: abortCursorSession,
-            codex: abortCodexSession,
-            opencode: abortOpenCodeSession,
             gjc: abortGjcJob,
         },
         resolveToolApproval: resolveProviderToolApproval,
@@ -232,7 +191,6 @@ const { app, server, wss } = createGjcAppFactory({
         extractUrlsFromText,
         shouldAutoOpenUrlFromOutput,
     },
-    getPluginPort,
 });
 
 // Public health check endpoint (no authentication required)
@@ -258,18 +216,6 @@ app.use('/api/assets', authenticateToken, assetsRoutes);
 // Git API Routes (protected)
 app.use('/api/git', authenticateToken, gitRoutes);
 
-// Cursor API Routes (protected)
-app.use('/api/cursor', authenticateToken, cursorRoutes);
-
-// TaskMaster API Routes (protected)
-app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
-
-// MCP utilities
-app.use('/api/mcp-utils', authenticateToken, mcpUtilsRoutes);
-
-// Commands API Routes (protected)
-app.use('/api/commands', authenticateToken, commandsRoutes);
-
 // Settings API Routes (protected)
 app.use('/api/settings', authenticateToken, settingsRoutes);
 
@@ -278,20 +224,10 @@ app.use('/api/notifications', authenticateToken, notificationRoutes);
 // User API Routes (protected)
 app.use('/api/user', authenticateToken, userRoutes);
 
-// Plugins API Routes (protected)
-app.use('/api/plugins', authenticateToken, pluginsRoutes);
-
-// Browser MCP bridge API (local token protected)
-app.use('/api/browser-use-mcp', browserUseMcpRoutes);
-
-// Browser API Routes (protected)
-app.use('/api/browser-use', authenticateToken, browserUseRoutes);
-
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
 
 // Agent API Routes (uses API key authentication)
-app.use('/api/agent', agentRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 
@@ -1719,10 +1655,6 @@ async function startServer() {
             // tab closed. Kill switch: GAJAE_APP_LIVE_NOTIFY=0.
             startLiveTurnMonitor();
 
-            // Start server-side plugin processes for enabled plugins
-            startEnabledPluginServers().catch(err => {
-                console.error('[Plugins] Error during startup:', err.message);
-            });
         });
 
         await closeSessionsWatcher();
@@ -1764,16 +1696,6 @@ async function startServer() {
                 } catch (err) {
                     console.error('[GJC Jobs] Error closing authority clients during shutdown:', err?.message || err);
                 }
-            }
-            try {
-                await browserUseService.stopAllSessions();
-            } catch (err) {
-                console.error('[Browser] Error stopping sessions during shutdown:', err?.message || err);
-            }
-            try {
-                await stopAllPlugins();
-            } catch (err) {
-                console.error('[Plugins] Error stopping plugins during shutdown:', err?.message || err);
             }
             try {
                 await removeLocalServerMarker();

@@ -8,7 +8,6 @@ import {
   createNotificationEvent,
   notifyUserIfEnabled,
 } from '@/modules/notifications/services/notification-orchestrator.service.js';
-import type { JobAuthority } from '@/services/gjc-job-orchestrator.js';
 
 import type { JobProjectionEvent, JobTerminalOutcome } from '../../../../shared/gjc-job-projection-protocol.js';
 
@@ -21,6 +20,10 @@ type TerminalPayload = {
   reason: string;
 };
 
+type JobAuthority = {
+  list?(params: Record<string, unknown>): Promise<unknown>;
+  replayEvents(params: Record<string, unknown>): Promise<unknown>;
+};
 type JobSnapshot = { jobId: string; lastSequence?: number };
 type Replay = { events?: unknown[]; nextCursor?: number };
 type NotificationFacade = {

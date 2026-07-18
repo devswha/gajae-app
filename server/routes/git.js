@@ -6,8 +6,6 @@ import express from 'express';
 import spawn from 'cross-spawn';
 
 import { projectsDb } from '../modules/database/index.js';
-import { queryClaudeSDK } from '../claude-sdk.js';
-import { spawnCursor } from '../cursor-cli.js';
 
 const router = express.Router();
 const COMMIT_DIFF_CHARACTER_LIMIT = 500_000;
@@ -986,65 +984,28 @@ router.get('/commit-diff', async (req, res) => {
   }
 });
 
-// Generate commit message based on staged changes using AI
+// Generate a commit message based on staged changes.
+//
+// Previously this endpoint invoked a non-GJC provider runtime (claude-sdk or
+// cursor-cli) to draft the message. Those lanes were removed in Wave 2 of the
+// fork-legacy-removal plan (v2 = GJC-only). The endpoint now returns a stable
+// heuristic message derived from the changed file list so the git panel keeps
+// a working "generate" button without reintroducing an external CLI dependency.
 router.post('/generate-commit-message', async (req, res) => {
-  const { project, files, provider = 'claude' } = req.body;
+  const { project, files } = req.body;
 
   if (!project || !files || files.length === 0) {
     return res.status(400).json({ error: 'Project id and files are required' });
   }
 
-  // Validate provider
-  if (!['claude', 'cursor'].includes(provider)) {
-    return res.status(400).json({ error: 'provider must be "claude" or "cursor"' });
-  }
-
   try {
-    const projectPath = await getActualProjectPath(project);
-    await validateGitRepository(projectPath);
-    const repositoryRootPath = await getRepositoryRootPath(projectPath);
-
-    // Get diff for selected files
-    let diffContext = '';
-    for (const file of files) {
-      try {
-        const { repositoryRelativeFilePath } = await resolveRepositoryFilePath(projectPath, file);
-        const { stdout } = await spawnAsync(
-          'git', ['diff', 'HEAD', '--', repositoryRelativeFilePath],
-          { cwd: repositoryRootPath }
-        );
-        if (stdout) {
-          diffContext += `\n--- ${repositoryRelativeFilePath} ---\n${stdout}`;
-        }
-      } catch (error) {
-        console.error(`Error getting diff for ${file}:`, error);
-      }
-    }
-
-    // If no diff found, might be untracked files
-    if (!diffContext.trim()) {
-      // Try to get content of untracked files
-      for (const file of files) {
-        try {
-          const { repositoryRelativeFilePath } = await resolveRepositoryFilePath(projectPath, file);
-          const filePath = path.join(repositoryRootPath, repositoryRelativeFilePath);
-          const stats = await fs.stat(filePath);
-
-          if (!stats.isDirectory()) {
-            const content = await fs.readFile(filePath, 'utf-8');
-            diffContext += `\n--- ${repositoryRelativeFilePath} (new file) ---\n${content.substring(0, 1000)}\n`;
-          } else {
-            diffContext += `\n--- ${repositoryRelativeFilePath} (new directory) ---\n`;
-          }
-        } catch (error) {
-          console.error(`Error reading file ${file}:`, error);
-        }
-      }
-    }
-
-    // Generate commit message using AI
-    const message = await generateCommitMessageWithAI(files, diffContext, provider, projectPath);
-
+    await getActualProjectPath(project);
+    const summary = files
+      .map((file) => path.basename(file))
+      .slice(0, 3)
+      .join(', ');
+    const suffix = files.length > 3 ? ` (+${files.length - 3} more)` : '';
+    const message = `chore: update ${summary}${suffix}`;
     res.json({ message });
   } catch (error) {
     console.error('Generate commit message error:', error);
@@ -1052,114 +1013,6 @@ router.post('/generate-commit-message', async (req, res) => {
   }
 });
 
-/**
- * Generates a commit message using AI (Claude SDK or Cursor CLI)
- * @param {Array<string>} files - List of changed files
- * @param {string} diffContext - Git diff content
- * @param {string} provider - 'claude' or 'cursor'
- * @param {string} projectPath - Project directory path
- * @returns {Promise<string>} Generated commit message
- */
-async function generateCommitMessageWithAI(files, diffContext, provider, projectPath) {
-  // Create the prompt
-  const prompt = `Generate a conventional commit message for these changes.
-
-REQUIREMENTS:
-- Format: type(scope): subject
-- Include body explaining what changed and why
-- Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore
-- Subject under 50 chars, body wrapped at 72 chars
-- Focus on user-facing changes, not implementation details
-- Consider what's being added AND removed
-- Return ONLY the commit message (no markdown, explanations, or code blocks)
-
-FILES CHANGED:
-${files.map(f => `- ${f}`).join('\n')}
-
-DIFFS:
-${diffContext.substring(0, 4000)}
-
-Generate the commit message:`;
-
-  try {
-    // Create a simple writer that collects the response
-    let responseText = '';
-    const writer = {
-      send: (data) => {
-        try {
-          const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-          console.log('🔍 Writer received message type:', parsed.type);
-
-          // Handle different message formats from Claude SDK and Cursor CLI
-          // Claude SDK sends: {type: 'claude-response', data: {message: {content: [...]}}}
-          if (parsed.type === 'claude-response' && parsed.data) {
-            const message = parsed.data.message || parsed.data;
-            console.log('📦 Claude response message:', JSON.stringify(message, null, 2).substring(0, 500));
-            if (message.content && Array.isArray(message.content)) {
-              // Extract text from content array
-              for (const item of message.content) {
-                if (item.type === 'text' && item.text) {
-                  console.log('✅ Extracted text chunk:', item.text.substring(0, 100));
-                  responseText += item.text;
-                }
-              }
-            }
-          }
-          // Cursor CLI sends: {type: 'cursor-output', output: '...'}
-          else if (parsed.type === 'cursor-output' && parsed.output) {
-            console.log('✅ Cursor output:', parsed.output.substring(0, 100));
-            responseText += parsed.output;
-          }
-          // Also handle direct text messages
-          else if (parsed.type === 'text' && parsed.text) {
-            console.log('✅ Direct text:', parsed.text.substring(0, 100));
-            responseText += parsed.text;
-          }
-        } catch (e) {
-          // Ignore parse errors
-          console.error('Error parsing writer data:', e);
-        }
-      },
-      setSessionId: () => {}, // No-op for this use case
-    };
-
-    console.log('🚀 Calling AI agent with provider:', provider);
-    console.log('📝 Prompt length:', prompt.length);
-
-    // Call the appropriate agent
-    if (provider === 'claude') {
-      await queryClaudeSDK(prompt, {
-        cwd: projectPath,
-        permissionMode: 'bypassPermissions',
-        model: 'sonnet'
-      }, writer);
-    } else if (provider === 'cursor') {
-      await spawnCursor(prompt, {
-        cwd: projectPath,
-        skipPermissions: true
-      }, writer);
-    }
-
-    console.log('📊 Total response text collected:', responseText.length, 'characters');
-    console.log('📄 Response preview:', responseText.substring(0, 200));
-
-    // Clean up the response
-    const cleanedMessage = cleanCommitMessage(responseText);
-    console.log('🧹 Cleaned message:', cleanedMessage.substring(0, 200));
-
-    return cleanedMessage || 'chore: update files';
-  } catch (error) {
-    console.error('Error generating commit message with AI:', error);
-    // Fallback to simple message
-    return `chore: update ${files.length} file${files.length !== 1 ? 's' : ''}`;
-  }
-}
-
-/**
- * Cleans the AI-generated commit message by removing markdown, code blocks, and extra formatting
- * @param {string} text - Raw AI response
- * @returns {string} Clean commit message
- */
 function cleanCommitMessage(text) {
   if (!text || !text.trim()) {
     return '';

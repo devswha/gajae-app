@@ -188,7 +188,11 @@ export class GjcNativeClient {
     for (const [id] of this.pending) this.rejectPending(id, new Error(FAILURE));
     if (failedChild && this.child === failedChild) this.child = undefined;
     this.input = Buffer.alloc(0);
-    try { failedChild?.kill('SIGKILL'); } catch {}
+    try {
+      failedChild?.kill('SIGKILL');
+    } catch {
+      // best-effort cleanup
+    }
     const delay = this.backoff;
     this.backoff = Math.min(this.backoff * 2, this.options.maxRestartDelayMs);
     const restarting = new Promise<void>((resolve) => {
@@ -208,8 +212,16 @@ export class GjcNativeClient {
     for (const [id] of this.pending) this.rejectPending(id, new Error(FAILURE));
     const child = this.child;
     this.child = undefined;
-    try { child?.stdin.end(); } catch {}
-    try { child?.kill('SIGKILL'); } catch {}
+    try {
+      child?.stdin.end();
+    } catch {
+      // best-effort cleanup
+    }
+    try {
+      child?.kill('SIGKILL');
+    } catch {
+      // best-effort cleanup
+    }
   }
 }
 

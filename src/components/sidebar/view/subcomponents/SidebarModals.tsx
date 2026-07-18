@@ -5,10 +5,7 @@ import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
 import Settings from '../../../settings/view/Settings';
-import VersionUpgradeModal from '../../../version-upgrade/view';
 import type { Project } from '../../../../types/app';
-import type { ReleaseInfo } from '../../../../types/sharedTypes';
-import type { InstallMode } from '../../../../hooks/useVersionCheck';
 import { normalizeProjectForSettings } from '../../utils/utils';
 import type { DeleteProjectConfirmation, SessionDeleteConfirmation, SettingsProject } from '../../types/types';
 import ProjectCreationWizard from '../../../project-creation-wizard';
@@ -27,12 +24,6 @@ type SidebarModalsProps = {
   sessionDeleteConfirmation: SessionDeleteConfirmation | null;
   onCancelDeleteSession: () => void;
   onConfirmDeleteSession: (hardDelete?: boolean) => void;
-  showVersionModal: boolean;
-  onCloseVersionModal: () => void;
-  releaseInfo: ReleaseInfo | null;
-  currentVersion: string;
-  latestVersion: string | null;
-  installMode: InstallMode;
   t: TFunction;
 };
 
@@ -63,12 +54,6 @@ export default function SidebarModals({
   sessionDeleteConfirmation,
   onCancelDeleteSession,
   onConfirmDeleteSession,
-  showVersionModal,
-  onCloseVersionModal,
-  releaseInfo,
-  currentVersion,
-  latestVersion,
-  installMode,
   t,
 }: SidebarModalsProps) {
   // Settings expects project identity/path fields to be present for dropdown labels and local-scope MCP config.
@@ -209,14 +194,6 @@ export default function SidebarModals({
           document.body,
         )}
 
-      <VersionUpgradeModal
-        isOpen={showVersionModal}
-        onClose={onCloseVersionModal}
-        releaseInfo={releaseInfo}
-        currentVersion={currentVersion}
-        latestVersion={latestVersion}
-        installMode={installMode}
-      />
     </>
   );
 }

@@ -3,7 +3,6 @@
   "tabs": {
     "account": "Account",
     "permissions": "Permissions",
-    "mcpServers": "MCP Servers",
     "skills": "Skills",
     "appearance": "Appearance"
   },
@@ -16,24 +15,6 @@
     "email": "Email",
     "profile": "Profile",
     "changePassword": "Change Password"
-  },
-  "mcp": {
-    "title": "MCP Servers",
-    "addServer": "Add Server",
-    "editServer": "Edit Server",
-    "deleteServer": "Delete Server",
-    "serverName": "Server Name",
-    "serverType": "Server Type",
-    "config": "Configuration",
-    "testConnection": "Test Connection",
-    "status": "Status",
-    "connected": "Connected",
-    "disconnected": "Disconnected",
-    "scope": {
-      "label": "Scope",
-      "user": "User",
-      "project": "Project"
-    }
   },
   "appearance": {
     "title": "Appearance",
@@ -103,15 +84,10 @@
   },
   "mainTabs": {
     "label": "Settings",
-    "agents": "Agents",
     "appearance": "Appearance",
     "git": "Git",
-    "apiTokens": "API & Tokens",
     "voice": "Voice",
-    "tasks": "Tasks",
-    "browser": "Browser",
     "notifications": "Notifications",
-    "plugins": "Plugins",
     "about": "About"
   },
   "notifications": {
@@ -182,55 +158,6 @@
       }
     }
   },
-  "mcpForm": {
-    "title": {
-      "add": "Add MCP Server",
-      "edit": "Edit MCP Server"
-    },
-    "importMode": {
-      "form": "Form Input",
-      "json": "JSON Import"
-    },
-    "scope": {
-      "label": "Scope",
-      "userGlobal": "User (Global)",
-      "projectLocal": "Project (Local)",
-      "userDescription": "User scope: Available across all projects on your machine",
-      "projectDescription": "Local scope: Only available in the selected project",
-      "cannotChange": "Scope cannot be changed when editing an existing server"
-    },
-    "fields": {
-      "serverName": "Server Name",
-      "transportType": "Transport Type",
-      "command": "Command",
-      "arguments": "Arguments (one per line)",
-      "jsonConfig": "JSON Configuration",
-      "url": "URL",
-      "envVars": "Environment Variables (KEY=value, one per line)",
-      "headers": "Headers (KEY=value, one per line)",
-      "selectProject": "Select a project..."
-    },
-    "placeholders": {
-      "serverName": "my-server"
-    },
-    "validation": {
-      "missingType": "Missing required field: type",
-      "stdioRequiresCommand": "stdio type requires a command field",
-      "httpRequiresUrl": "{{type}} type requires a url field",
-      "invalidJson": "Invalid JSON format",
-      "jsonHelp": "Paste your MCP server configuration in JSON format. Example formats:",
-      "jsonExampleStdio": "• stdio: {\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"@upstash/context7-mcp\"]}",
-      "jsonExampleHttp": "• http/sse: {\"type\":\"http\",\"url\":\"https://api.example.com/mcp\"}"
-    },
-    "configDetails": "Configuration Details (from {{configFile}})",
-    "projectPath": "Path: {{path}}",
-    "actions": {
-      "cancel": "Cancel",
-      "saving": "Saving...",
-      "addServer": "Add Server",
-      "updateServer": "Update Server"
-    }
-  },
   "saveStatus": {
     "success": "Settings saved successfully!",
     "error": "Failed to save settings",
@@ -258,112 +185,6 @@
     "status": {
       "success": "Saved successfully"
     }
-  },
-  "apiKeys": {
-    "title": "API Keys",
-    "description": "Generate API keys to access the external API from other applications.",
-    "newKey": {
-      "alertTitle": "⚠️ Save Your API Key",
-      "alertMessage": "This is the only time you'll see this key. Store it securely.",
-      "iveSavedIt": "I've saved it"
-    },
-    "form": {
-      "placeholder": "API Key Name (e.g., Production Server)",
-      "createButton": "Create",
-      "cancelButton": "Cancel"
-    },
-    "newButton": "New API Key",
-    "empty": "No API keys created yet.",
-    "list": {
-      "created": "Created:",
-      "lastUsed": "Last used:"
-    },
-    "confirmDelete": "Are you sure you want to delete this API key?",
-    "status": {
-      "active": "Active",
-      "inactive": "Inactive"
-    },
-    "github": {
-      "title": "GitHub Tokens",
-      "description": "Add GitHub Personal Access Tokens to clone private repositories via the external API.",
-      "descriptionAlt": "Add GitHub Personal Access Tokens to clone private repositories. You can also pass tokens directly in API requests without storing them.",
-      "addButton": "Add Token",
-      "form": {
-        "namePlaceholder": "Token Name (e.g., Personal Repos)",
-        "tokenPlaceholder": "GitHub Personal Access Token (ghp_...)",
-        "descriptionPlaceholder": "Description (optional)",
-        "addButton": "Add Token",
-        "cancelButton": "Cancel",
-        "howToCreate": "How to create a GitHub Personal Access Token →"
-      },
-      "empty": "No GitHub tokens added yet.",
-      "added": "Added:",
-      "confirmDelete": "Are you sure you want to delete this GitHub token?"
-    },
-    "apiDocsLink": "API Documentation",
-    "documentation": {
-      "title": "External API Documentation",
-      "description": "Learn how to use the external API to trigger Claude/Cursor sessions from your applications.",
-      "viewLink": "View API Documentation →"
-    },
-    "loading": "Loading...",
-    "version": {
-      "updateAvailable": "Update available: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "Checking TaskMaster installation...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI Not Installed",
-      "description": "TaskMaster CLI is required to use task management features. Install it to get started:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "View on GitHub",
-      "afterInstallation": "After installation:",
-      "steps": {
-        "restart": "Restart this application",
-        "autoAvailable": "TaskMaster features will automatically become available",
-        "initCommand": "Use task-master init in your project directory"
-      }
-    },
-    "settings": {
-      "enableLabel": "Enable TaskMaster Integration",
-      "enableDescription": "Show TaskMaster tasks, banners, and sidebar indicators across the interface"
-    }
-  },
-  "agents": {
-    "authStatus": {
-      "checking": "Checking...",
-      "connected": "Connected",
-      "notConnected": "Not connected",
-      "disconnected": "Disconnected",
-      "checkingAuth": "Checking authentication status...",
-      "loggedInAs": "Logged in as {{email}}",
-      "authenticatedUser": "authenticated user"
-    },
-    "account": {
-      "claude": {
-        "description": "Anthropic Claude AI assistant"
-      },
-      "cursor": {
-        "description": "Cursor AI-powered code editor"
-      },
-      "codex": {
-        "description": "OpenAI Codex AI assistant"
-      },
-      "opencode": {
-        "description": "OpenCode CLI assistant"
-      }
-    },
-    "connectionStatus": "Connection Status",
-    "login": {
-      "title": "Login",
-      "reAuthenticate": "Re-authenticate",
-      "description": "Sign in to your {{agent}} account to enable AI features",
-      "reAuthDescription": "Sign in with a different account or refresh credentials",
-      "button": "Login",
-      "reLoginButton": "Re-login"
-    },
-    "error": "Error: {{error}}"
   },
   "permissions": {
     "title": "Permission Settings",
@@ -440,128 +261,5 @@
     "actions": {
       "add": "Add"
     }
-  },
-  "mcpServers": {
-    "title": "MCP Servers",
-    "description": {
-      "claude": "Model Context Protocol servers provide additional tools and data sources to Claude",
-      "cursor": "Model Context Protocol servers provide additional tools and data sources to Cursor",
-      "codex": "Model Context Protocol servers provide additional tools and data sources to Codex",
-      "opencode": "Model Context Protocol servers provide additional tools and data sources to OpenCode"
-    },
-    "addButton": "Add MCP Server",
-    "empty": "No MCP servers configured",
-    "serverType": "Type",
-    "scope": {
-      "local": "local",
-      "user": "user"
-    },
-    "config": {
-      "command": "Command",
-      "url": "URL",
-      "args": "Args",
-      "environment": "Environment"
-    },
-    "tools": {
-      "title": "Tools",
-      "count": "({{count}}):",
-      "more": "+{{count}} more"
-    },
-    "actions": {
-      "edit": "Edit server",
-      "delete": "Delete server"
-    },
-    "managed": {
-      "badge": "Managed",
-      "hint": "Managed by 가재코드."
-    },
-    "help": {
-      "title": "About Codex MCP",
-      "description": "Codex supports stdio-based MCP servers. You can add servers that extend Codex's capabilities with additional tools and resources."
-    }
-  },
-  "pluginSettings": {
-    "title": "Plugins",
-    "description": "Extend the interface with custom plugins. Install from git or drop a folder in ~/.claude-code-ui/plugins/",
-    "installPlaceholder": "https://github.com/user/my-plugin",
-    "installButton": "Install",
-    "installing": "Installing…",
-    "securityWarning": "Only install plugins whose source code you have reviewed or from authors you trust.",
-    "scanningPlugins": "Scanning plugins…",
-    "noPluginsInstalled": "No plugins installed",
-    "pullLatest": "Pull latest from git",
-    "noGitRemote": "No git remote — update not available",
-    "uninstallPlugin": "Uninstall plugin",
-    "confirmUninstall": "Click again to confirm",
-    "confirmUninstallMessage": "Remove {{name}}? This cannot be undone.",
-    "cancel": "Cancel",
-    "remove": "Remove",
-    "updateFailed": "Update failed",
-    "installFailed": "Installation failed",
-    "uninstallFailed": "Uninstall failed",
-    "toggleFailed": "Toggle failed",
-    "starterPluginLabel": "Starter Plugin",
-    "starter": "Starter",
-    "docs": "Docs",
-    "sections": {
-      "officialTitle": "Official Plugins",
-      "officialDescription": "Maintained by the 가재코드 team and ready for direct install.",
-      "unofficialTitle": "Other Plugins",
-      "unofficialDescription": "Unofficial plugins and integrations from other users. Review the source before installing."
-    },
-    "starterPlugin": {
-      "name": "Project Stats",
-      "badge": "starter",
-      "description": "File counts, lines of code, file-type breakdown, and recent activity for your project.",
-      "install": "Install"
-    },
-    "terminalPlugin": {
-      "name": "Terminal",
-      "badge": "official",
-      "description": "Integrated terminal with full shell access directly within the interface.",
-      "install": "Install"
-    },
-    "scheduledPromptPlugin": {
-      "name": "Scheduled Prompts",
-      "badge": "unofficial",
-      "description": "Schedule workspace prompts, review run history, and manage recurring local tasks.",
-      "install": "Install"
-    },
-    "claudeWatchPlugin": {
-      "name": "Claude Watch",
-      "badge": "unofficial",
-      "description": "Watch long-running Claude Code sessions for hangs and expose process controls.",
-      "install": "Install"
-    },
-    "sessionManagerPlugin": {
-      "name": "Sessions",
-      "badge": "unofficial",
-      "description": "View, manage, and kill active Claude Code sessions.",
-      "install": "Install"
-    },
-    "tokenCostCalculatorPlugin": {
-      "name": "Token Cost Calculator",
-      "badge": "unofficial",
-      "description": "Calculate API costs from model prices and token usage, with preset model pricing support.",
-      "install": "Install"
-    },
-    "taskQueuePlugin": {
-      "name": "Task Queue",
-      "badge": "unofficial",
-      "description": "Task queue dashboard to view, filter, and launch agent tasks.",
-      "install": "Install"
-    },
-    "githubIssuesBoardPlugin": {
-      "name": "GitHub Issues Board",
-      "badge": "unofficial",
-      "description": "Kanban board for GitHub Issues with bidirectional TaskMaster sync and /github-task CLI skill auto-install",
-      "install": "Install"
-    },
-    "morePlugins": "More",
-    "enable": "Enable",
-    "disable": "Disable",
-    "installAriaLabel": "Plugin git repository URL",
-    "tab": "tab",
-    "runningStatus": "running"
   }
 }

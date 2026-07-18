@@ -196,27 +196,32 @@ export class GjcBunSdkAdapter implements GjcWorkerRuntime {
 
   async #run(runId: string, message: string, options: Record<string, unknown>, config: SdkRunConfig, writer: GjcWorkerWriter): Promise<void> {
     let active: ActiveRun | undefined;
+    let runError: unknown;
+    let didRunFail = false;
+    let disposalError: Error | undefined;
     try {
-      return await this.#runInner(runId, options, config, writer, message, (value) => { active = value; });
+      await this.#runInner(runId, options, config, writer, message, (value) => { active = value; });
     } catch (error) {
       // Diagnostics stay opt-in and never reach Protocol frames.
       if (process.env.GJC_BUN_ADAPTER_DEBUG === '1') {
         console.error('[gjc-bun-adapter]', error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ''}` : String(error));
       }
-      throw error;
-    } finally {
-      if (active) {
-        active.unsubscribe();
-        active.askController.dispose();
-        this.#runs.delete(runId);
-        try {
-          await active.session.dispose();
-        } catch {
-          console.error('GJC SDK session disposal failed.');
-          throw new Error(FAILURE);
-        }
+      runError = error;
+      didRunFail = true;
+    }
+    if (active) {
+      active.unsubscribe();
+      active.askController.dispose();
+      this.#runs.delete(runId);
+      try {
+        await active.session.dispose();
+      } catch {
+        console.error('GJC SDK session disposal failed.');
+        disposalError = new Error(FAILURE);
       }
     }
+    if (disposalError) throw disposalError;
+    if (didRunFail) throw runError;
   }
 
   async #runInner(runId: string, options: Record<string, unknown>, config: SdkRunConfig, writer: GjcWorkerWriter, message: string, setActive: (run: ActiveRun) => void): Promise<void> {

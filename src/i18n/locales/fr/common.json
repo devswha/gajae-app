@@ -22,8 +22,6 @@
     "shell": "Terminal",
     "files": "Fichiers",
     "git": "Contrôle de source",
-    "tasks": "Tâches",
-    "browser": "Navigateur",
     "computer": "Ordinateur"
   },
   "status": {

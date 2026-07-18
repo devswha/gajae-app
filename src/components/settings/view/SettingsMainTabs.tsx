@@ -1,4 +1,4 @@
-import { GitBranch, Info, Key, Puzzle } from 'lucide-react';
+import { Bell, GitBranch, Info, Mic } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import type { SettingsMainTab } from '../types/types';
@@ -16,13 +16,10 @@ type MainTabConfig = {
 };
 
 const TAB_CONFIG: MainTabConfig[] = [
-  { id: 'agents', labelKey: 'mainTabs.agents' },
   { id: 'appearance', labelKey: 'mainTabs.appearance' },
   { id: 'git', labelKey: 'mainTabs.git', icon: GitBranch },
-  { id: 'api', labelKey: 'mainTabs.apiTokens', icon: Key },
-  { id: 'tasks', labelKey: 'mainTabs.tasks' },
-  { id: 'notifications', labelKey: 'mainTabs.notifications' },
-  { id: 'plugins', labelKey: 'mainTabs.plugins', icon: Puzzle },
+  { id: 'voice', labelKey: 'mainTabs.voice', icon: Mic },
+  { id: 'notifications', labelKey: 'mainTabs.notifications', icon: Bell },
   { id: 'about', labelKey: 'mainTabs.about', icon: Info },
 ];
 

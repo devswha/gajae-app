@@ -1,42 +1,20 @@
-import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import type { MainContentProps } from '../types/types';
-import { useTaskMaster } from '../../../contexts/TaskMasterContext';
 import { usePaletteOpsRegister } from '../../../contexts/PaletteOpsContext';
-import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useFileOpenResolver } from '../../../hooks/useFileOpenResolver';
-import { authenticatedFetch } from '../../../utils/api';
 import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
-import type { Project } from '../../../types/app';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
 
-const PluginTabContent = lazy(() => import('../../plugins/view/PluginTabContent'));
 const ChatInterface = lazy(() => import('../../chat/view/ChatInterface'));
 const StandaloneShell = lazy(() => import('../../standalone-shell/view/StandaloneShell'));
 const EditorSidebar = lazy(() => import('../../code-editor/view/EditorSidebar'));
 const FilesPanel = lazy(() => import('./subcomponents/FilesPanel'));
-const BrowserUsePanel = lazy(() => import('../../browser-use').then((module) => ({
-  default: module.BrowserUsePanel,
-})));
-const TaskMasterPanel = lazy(() => import('../../task-master').then((module) => ({
-  default: module.TaskMasterPanel,
-})));
-
-type TaskMasterContextValue = {
-  currentProject?: Project | null;
-  setCurrentProject?: ((project: Project) => void) | null;
-};
-
-type TasksSettingsContextValue = {
-  tasksEnabled: boolean;
-  isTaskMasterInstalled: boolean | null;
-  isTaskMasterReady: boolean | null;
-};
 
 function MainContent({
   selectedProject,
@@ -67,9 +45,6 @@ function MainContent({
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
 
-  const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
-  const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
-  const [browserUseEnabled, setBrowserUseEnabled] = useState(false);
   const [filesPanelOpen, setFilesPanelOpen] = useState(() => {
     try {
       return localStorage.getItem('files-panel-open') === 'true';
@@ -86,8 +61,6 @@ function MainContent({
     }
   }, [filesPanelOpen]);
 
-  const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
-  const shouldShowBrowserTab = browserUseEnabled;
 
   const {
     editingFile,
@@ -109,51 +82,12 @@ function MainContent({
   const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen);
 
   useEffect(() => {
-    // Identify projects by DB `projectId`; the TaskMaster context uses the
-    // same identifier to key its internal maps.
-    const selectedProjectId = selectedProject?.projectId;
-    const currentProjectId = currentProject?.projectId;
-
-    if (selectedProject && selectedProjectId !== currentProjectId) {
-      setCurrentProject?.(selectedProject);
-    }
-  }, [selectedProject, currentProject?.projectId, setCurrentProject]);
-
-  useEffect(() => {
-    if (!shouldShowTasksTab && activeTab === 'tasks') {
-      setActiveTab('chat');
-    }
-  }, [shouldShowTasksTab, activeTab, setActiveTab]);
-
-  useEffect(() => {
     // Shell/Git/Files tabs were removed; a persisted selection would render a
     // blank main area, so bounce it back to chat (Files lives in FilesPanel).
     if (activeTab === 'shell' || activeTab === 'git' || activeTab === 'files') {
       setActiveTab('chat');
     }
   }, [activeTab, setActiveTab]);
-
-  const loadBrowserUseSettings = useCallback(async () => {
-    try {
-      const response = await authenticatedFetch('/api/browser-use/settings');
-      const data = await response.json();
-      setBrowserUseEnabled(Boolean(response.ok && data?.success !== false && data?.data?.settings?.enabled));
-    } catch {
-      setBrowserUseEnabled(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadBrowserUseSettings();
-    window.addEventListener('browserUseSettingsChanged', loadBrowserUseSettings);
-    return () => window.removeEventListener('browserUseSettingsChanged', loadBrowserUseSettings);
-  }, [loadBrowserUseSettings]);
-
-  useEffect(() => {
-    if (!shouldShowBrowserTab && activeTab === 'browser') {
-      setActiveTab('chat');
-    }
-  }, [shouldShowBrowserTab, activeTab, setActiveTab]);
 
   usePaletteOpsRegister({
     openFile: (filePath: string) => {
@@ -239,8 +173,6 @@ function MainContent({
         setActiveTab={setActiveTab}
         selectedProject={selectedProject}
         selectedSession={selectedSession}
-        shouldShowTasksTab={shouldShowTasksTab}
-        shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
         filesPanelOpen={filesPanelOpen}
@@ -274,38 +206,12 @@ function MainContent({
                   sendByCtrlEnter={sendByCtrlEnter}
                   externalMessageUpdate={externalMessageUpdate}
                   newSessionTrigger={newSessionTrigger}
-                  onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
                 />
               </Suspense>
             </ErrorBoundary>
           </div>
 
 
-          {shouldShowTasksTab && (
-            <Suspense fallback={null}>
-              <TaskMasterPanel isVisible={activeTab === 'tasks'} />
-            </Suspense>
-          )}
-
-          {shouldShowBrowserTab && activeTab === 'browser' && (
-            <div className="h-full overflow-hidden">
-              <Suspense fallback={null}>
-                <BrowserUsePanel isVisible onShowSettings={onShowSettings} />
-              </Suspense>
-            </div>
-          )}
-
-          {activeTab.startsWith('plugin:') && (
-            <div className="h-full overflow-hidden">
-              <Suspense fallback={null}>
-                <PluginTabContent
-                  pluginName={activeTab.replace('plugin:', '')}
-                  selectedProject={selectedProject}
-                  selectedSession={selectedSession}
-                />
-              </Suspense>
-            </div>
-          )}
         </div>
 
         {filesPanelOpen && (

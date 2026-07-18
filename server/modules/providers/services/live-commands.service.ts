@@ -2,7 +2,6 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { parseFrontMatter } from '@/shared/frontmatter.js';
 
 export type LiveGjcCommandNamespace = 'user' | 'project' | 'skill';
@@ -100,9 +99,9 @@ export function dedupeCommandsByName(commands: LiveGjcCommand[]): LiveGjcCommand
 /**
  * Enumerates the slash commands a live tmux gjc session can execute:
  * user-global native commands (`~/.gjc/agent/commands`), project commands
- * (`<workspace>/.gjc/commands`), and installed skills (native + plugin, via
- * the gjc skills provider). Read-only; a failure in any source degrades to a
- * partial list rather than failing the whole request.
+ * (`<workspace>/.gjc/commands`), and installed skills from the native GJC
+ * user and project skill directories. Read-only; a failure in any source
+ * degrades to a partial list rather than failing the whole request.
  */
 export async function listLiveGjcCommands(workspacePath?: string): Promise<LiveGjcCommand[]> {
   const commands: LiveGjcCommand[] = [];
@@ -116,19 +115,36 @@ export async function listLiveGjcCommands(workspacePath?: string): Promise<LiveG
   }
 
   try {
-    const skills = await providerSkillsService.listProviderSkills('gjc', { workspacePath });
-    for (const skill of skills) {
-      commands.push({
-        name: skill.command,
-        description: skill.description ?? '',
-        namespace: 'skill',
-        scope: skill.scope,
-        sourcePath: skill.sourcePath,
+    const skillRoots: { scope: 'user' | 'project'; rootDir: string }[] = [
+      { scope: 'user', rootDir: path.join(os.homedir(), '.gjc', 'agent', 'skills') },
+    ];
+    if (workspacePath) {
+      skillRoots.push({
+        scope: 'project',
+        rootDir: path.join(workspacePath, '.gjc', 'skills'),
       });
+    }
+    for (const { scope, rootDir } of skillRoots) {
+      const scanned = await scanGjcSkillRoot(rootDir, scope);
+      commands.push(...scanned);
     }
   } catch {
     // Skills enumeration failure must not hide the file-based commands.
   }
 
   return dedupeCommandsByName(commands);
+}
+
+/**
+ * Scans a GJC skill root for markdown skill files and surfaces them as
+ * slash-command rows tagged with the `skill` namespace. Skills use the `/`
+ * invocation prefix.
+ */
+async function scanGjcSkillRoot(
+  rootDir: string,
+  scope: 'user' | 'project',
+): Promise<LiveGjcCommand[]> {
+  const out: LiveGjcCommand[] = [];
+  await scanInto(rootDir, rootDir, scope, out);
+  return out.slice(0, MAX_COMMANDS).map((command) => ({ ...command, namespace: 'skill' }));
 }

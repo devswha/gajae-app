@@ -1,35 +1,16 @@
-import type {
-  FetchHistoryOptions,
-  FetchHistoryResult,
-  LLMProvider,
-  McpScope,
-  NormalizedMessage,
-  ProviderSkill,
-  ProviderSkillListOptions,
-  ProviderAuthStatus,
-  ProviderChangeActiveModelInput,
-  ProviderCurrentActiveModel,
-  ProviderModelsDefinition,
-  ProviderMcpServer,
-  ProviderSessionActiveModelChange,
-  ProviderSkillCreateInput,
-  ProviderSkillRemoveInput,
-  UpsertProviderMcpServerInput,
-} from '@/shared/types.js';
+import type { FetchHistoryOptions, FetchHistoryResult, LLMProvider, NormalizedMessage, ProviderAuthStatus, ProviderChangeActiveModelInput, ProviderCurrentActiveModel, ProviderModelsDefinition, ProviderSessionActiveModelChange } from '@/shared/types.js';
 
 //----------------- PROVIDER CONTRACT INTERFACES ------------
 /**
  * Main provider contract for CLI and SDK integrations.
  *
- * Each concrete provider owns its MCP/auth handlers plus the provider-specific
+ * Each concrete provider owns auth and session handlers plus provider-specific
  * logic for converting native events/history into the app's normalized shape.
  */
 export interface IProvider {
   readonly id: LLMProvider;
   readonly models: IProviderModels;
-  readonly mcp: IProviderMcp;
   readonly auth: IProviderAuth;
-  readonly skills: IProviderSkills;
   readonly sessions: IProviderSessions;
   readonly sessionSynchronizer: IProviderSessionSynchronizer;
 }
@@ -87,52 +68,6 @@ export interface IProviderAuth {
    * Checks whether the provider is installed and has usable credentials.
    */
   getStatus(): Promise<ProviderAuthStatus>;
-}
-
-// ---------------------------
-//----------------- PROVIDER SKILLS INTERFACE ------------
-/**
- * Skills contract for one provider.
- *
- * Implementations discover provider-native skill markdown locations and return
- * normalized skill records with the exact command syntax expected by that
- * provider. Each skill is read from a `SKILL.md` file under its skill directory.
- */
-export interface IProviderSkills {
-  /**
-   * Lists all skills visible to this provider for the optional workspace.
-   */
-  listSkills(options?: ProviderSkillListOptions): Promise<ProviderSkill[]>;
-
-  /**
-   * Writes one or more global user-scoped skills for this provider.
-   *
-   * Implementations should install the supplied markdown entries into the
-   * provider's writable user skill folder and return the normalized skill
-   * records that were written.
-   */
-  addSkills(input: ProviderSkillCreateInput): Promise<ProviderSkill[]>;
-
-  removeSkill(
-    input: ProviderSkillRemoveInput,
-  ): Promise<{ removed: boolean; provider: LLMProvider; directoryName: string }>;
-}
-
-// ---------------------------
-//----------------- PROVIDER MCP INTERFACE ------------
-/**
- * MCP contract for one provider.
- *
- * Implementations must map provider-native MCP config formats to shared
- * `ProviderMcpServer` records used by routes and frontend state.
- */
-export interface IProviderMcp {
-  listServers(options?: { workspacePath?: string }): Promise<Record<McpScope, ProviderMcpServer[]>>;
-  listServersForScope(scope: McpScope, options?: { workspacePath?: string }): Promise<ProviderMcpServer[]>;
-  upsertServer(input: UpsertProviderMcpServerInput): Promise<ProviderMcpServer>;
-  removeServer(
-    input: { name: string; scope?: McpScope; workspacePath?: string },
-  ): Promise<{ removed: boolean; provider: LLMProvider; name: string; scope: McpScope }>;
 }
 
 // ---------------------------

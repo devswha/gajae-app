@@ -1,29 +1,8 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { LLMProvider } from '../../../types/app';
-import type { ProviderAuthStatus } from '../../provider-auth/types';
-
-export type SettingsMainTab = 'agents' | 'appearance' | 'git' | 'api' | 'voice' | 'tasks' | 'browser' | 'notifications' | 'plugins' | 'about';
-export type AgentProvider = LLMProvider;
-export type AgentCategory = 'account' | 'permissions' | 'mcp' | 'skills';
+export type SettingsMainTab = 'appearance' | 'git' | 'voice' | 'notifications' | 'about';
 export type ProjectSortOrder = 'name' | 'date';
-export type SaveStatus = 'success' | 'error' | null;
-export type CodexPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions';
 
-export type SettingsProject = {
-  name: string;
-  displayName?: string;
-  fullPath?: string;
-  path?: string;
-};
-
-export type AuthStatus = ProviderAuthStatus;
-
-export type ClaudePermissionsState = {
-  allowedTools: string[];
-  disallowedTools: string[];
-  skipPermissions: boolean;
-};
 
 export type NotificationPreferencesState = {
   channels: {
@@ -41,11 +20,6 @@ export type NotificationPreferencesState = {
   };
 };
 
-export type CursorPermissionsState = {
-  allowedCommands: string[];
-  disallowedCommands: string[];
-  skipPermissions: boolean;
-};
 
 export type CodeEditorSettingsState = {
   wordWrap: boolean;
@@ -54,16 +28,10 @@ export type CodeEditorSettingsState = {
   fontSize: string;
 };
 
-export type SettingsStoragePayload = {
-  claude: ClaudePermissionsState & { projectSortOrder: ProjectSortOrder; lastUpdated: string };
-  cursor: CursorPermissionsState & { lastUpdated: string };
-  codex: { permissionMode: CodexPermissionMode; lastUpdated: string };
-};
 
 export type SettingsProps = {
   isOpen: boolean;
   onClose: () => void;
-  projects?: SettingsProject[];
   initialTab?: string;
 };
 

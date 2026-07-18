@@ -56,8 +56,7 @@
     "chat": "Sohbet",
     "files": "Dosyalar",
     "git": "Git",
-    "terminal": "Terminal",
-    "tasks": "Görevler"
+    "terminal": "Terminal"
   },
   "actions": {
     "refresh": "Yenile",

@@ -60,7 +60,6 @@ type CommandPaletteProps = {
 // destination tab.
 const NAV_TABS: Array<{ id: AppTab; label: string; keywords: string }> = [
   { id: 'chat', label: 'Go to Chat', keywords: 'chat messages conversation' },
-  { id: 'tasks', label: 'Go to Tasks', keywords: 'tasks taskmaster' },
 ];
 
 export default function CommandPalette({

@@ -3,7 +3,6 @@
   "tabs": {
     "account": "Аккаунт",
     "permissions": "Разрешения",
-    "mcpServers": "MCP серверы",
     "appearance": "Внешний вид"
   },
   "account": {
@@ -15,24 +14,6 @@
     "email": "Email",
     "profile": "Профиль",
     "changePassword": "Изменить пароль"
-  },
-  "mcp": {
-    "title": "MCP серверы",
-    "addServer": "Добавить сервер",
-    "editServer": "Редактировать сервер",
-    "deleteServer": "Удалить сервер",
-    "serverName": "Имя сервера",
-    "serverType": "Тип сервера",
-    "config": "Конфигурация",
-    "testConnection": "Проверить подключение",
-    "status": "Статус",
-    "connected": "Подключен",
-    "disconnected": "Отключен",
-    "scope": {
-      "label": "Область",
-      "user": "Пользователь",
-      "project": "Проект"
-    }
   },
   "appearance": {
     "title": "Внешний вид",
@@ -86,13 +67,9 @@
   },
   "mainTabs": {
     "label": "Настройки",
-    "agents": "Агенты",
     "appearance": "Внешний вид",
     "git": "Git",
-    "apiTokens": "API и токены",
-    "tasks": "Задачи",
     "notifications": "Уведомления",
-    "plugins": "Плагины",
     "about": "О программе"
   },
   "notifications": {
@@ -155,55 +132,6 @@
       }
     }
   },
-  "mcpForm": {
-    "title": {
-      "add": "Добавить MCP сервер",
-      "edit": "Редактировать MCP сервер"
-    },
-    "importMode": {
-      "form": "Ввод формы",
-      "json": "Импорт JSON"
-    },
-    "scope": {
-      "label": "Область",
-      "userGlobal": "Пользователь (глобально)",
-      "projectLocal": "Проект (локально)",
-      "userDescription": "Область пользователя: доступно во всех проектах на вашей машине",
-      "projectDescription": "Локальная область: доступно только в выбранном проекте",
-      "cannotChange": "Область не может быть изменена при редактировании существующего сервера"
-    },
-    "fields": {
-      "serverName": "Имя сервера",
-      "transportType": "Тип транспорта",
-      "command": "Команда",
-      "arguments": "Аргументы (по одному на строку)",
-      "jsonConfig": "JSON конфигурация",
-      "url": "URL",
-      "envVars": "Переменные окружения (КЛЮЧ=значение, по одной на строку)",
-      "headers": "Заголовки (КЛЮЧ=значение, по одному на строку)",
-      "selectProject": "Выберите проект..."
-    },
-    "placeholders": {
-      "serverName": "мой-сервер"
-    },
-    "validation": {
-      "missingType": "Отсутствует обязательное поле: type",
-      "stdioRequiresCommand": "тип stdio требует поле command",
-      "httpRequiresUrl": "тип {{type}} требует поле url",
-      "invalidJson": "Неверный формат JSON",
-      "jsonHelp": "Вставьте конфигурацию вашего MCP сервера в формате JSON. Примеры форматов:",
-      "jsonExampleStdio": "• stdio: {\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"@upstash/context7-mcp\"]}",
-      "jsonExampleHttp": "• http/sse: {\"type\":\"http\",\"url\":\"https://api.example.com/mcp\"}"
-    },
-    "configDetails": "Детали конфигурации (из {{configFile}})",
-    "projectPath": "Путь: {{path}}",
-    "actions": {
-      "cancel": "Отмена",
-      "saving": "Сохранение...",
-      "addServer": "Добавить сервер",
-      "updateServer": "Обновить сервер"
-    }
-  },
   "saveStatus": {
     "success": "Настройки успешно сохранены!",
     "error": "Не удалось сохранить настройки",
@@ -231,109 +159,6 @@
     "status": {
       "success": "Успешно сохранено"
     }
-  },
-  "apiKeys": {
-    "title": "API ключи",
-    "description": "Генерируйте API ключи для доступа к внешнему API из других приложений.",
-    "newKey": {
-      "alertTitle": "⚠️ Сохраните ваш API ключ",
-      "alertMessage": "Это единственный раз, когда вы увидите этот ключ. Сохраните его в безопасном месте.",
-      "iveSavedIt": "Я сохранил его"
-    },
-    "form": {
-      "placeholder": "Имя API ключа (например, Продакшн сервер)",
-      "createButton": "Создать",
-      "cancelButton": "Отмена"
-    },
-    "newButton": "Новый API ключ",
-    "empty": "API ключи еще не созданы.",
-    "list": {
-      "created": "Создан:",
-      "lastUsed": "Последнее использование:"
-    },
-    "confirmDelete": "Вы уверены, что хотите удалить этот API ключ?",
-    "status": {
-      "active": "Активен",
-      "inactive": "Неактивен"
-    },
-    "github": {
-      "title": "GitHub токены",
-      "description": "Добавьте персональные токены доступа GitHub для клонирования приватных репозиториев через внешний API.",
-      "descriptionAlt": "Добавьте персональные токены доступа GitHub для клонирования приватных репозиториев. Вы также можете передавать токены напрямую в API запросах без их сохранения.",
-      "addButton": "Добавить токен",
-      "form": {
-        "namePlaceholder": "Имя токена (например, Личные репозитории)",
-        "tokenPlaceholder": "Персональный токен доступа GitHub (ghp_...)",
-        "descriptionPlaceholder": "Описание (необязательно)",
-        "addButton": "Добавить токен",
-        "cancelButton": "Отмена",
-        "howToCreate": "Как создать персональный токен доступа GitHub →"
-      },
-      "empty": "GitHub токены еще не добавлены.",
-      "added": "Добавлен:",
-      "confirmDelete": "Вы уверены, что хотите удалить этот GitHub токен?"
-    },
-    "apiDocsLink": "Документация API",
-    "documentation": {
-      "title": "Документация внешнего API",
-      "description": "Узнайте, как использовать внешний API для запуска сеансов Claude/Cursor из ваших приложений.",
-      "viewLink": "Просмотр документации API →"
-    },
-    "loading": "Загрузка...",
-    "version": {
-      "updateAvailable": "Доступно обновление: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "Проверка установки TaskMaster...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI не установлен",
-      "description": "TaskMaster CLI требуется для использования функций управления задачами. Установите его для начала работы:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "Посмотреть на GitHub",
-      "afterInstallation": "После установки:",
-      "steps": {
-        "restart": "Перезапустите это приложение",
-        "autoAvailable": "Функции TaskMaster станут автоматически доступны",
-        "initCommand": "Используйте task-master init в каталоге вашего проекта"
-      }
-    },
-    "settings": {
-      "enableLabel": "Включить интеграцию TaskMaster",
-      "enableDescription": "Показывать задачи TaskMaster, баннеры и индикаторы боковой панели в интерфейсе"
-    }
-  },
-  "agents": {
-    "authStatus": {
-      "checking": "Проверка...",
-      "connected": "Подключен",
-      "notConnected": "Не подключен",
-      "disconnected": "Отключен",
-      "checkingAuth": "Проверка статуса аутентификации...",
-      "loggedInAs": "Вошли как {{email}}",
-      "authenticatedUser": "аутентифицированный пользователь"
-    },
-    "account": {
-      "claude": {
-        "description": "AI-ассистент Anthropic Claude"
-      },
-      "cursor": {
-        "description": "Редактор кода с AI Cursor"
-      },
-      "codex": {
-        "description": "AI-ассистент OpenAI Codex"
-      }
-    },
-    "connectionStatus": "Статус подключения",
-    "login": {
-      "title": "Вход",
-      "reAuthenticate": "Повторная аутентификация",
-      "description": "Войдите в ваш аккаунт {{agent}} для включения AI функций",
-      "reAuthDescription": "Войдите с другим аккаунтом или обновите учетные данные",
-      "button": "Войти",
-      "reLoginButton": "Войти снова"
-    },
-    "error": "Ошибка: {{error}}"
   },
   "permissions": {
     "title": "Настройки разрешений",
@@ -411,74 +236,19 @@
       "add": "Добавить"
     }
   },
-  "mcpServers": {
-    "title": "MCP серверы",
-    "description": {
-      "claude": "Серверы Model Context Protocol предоставляют дополнительные инструменты и источники данных для Claude",
-      "cursor": "Серверы Model Context Protocol предоставляют дополнительные инструменты и источники данных для Cursor",
-      "codex": "Серверы Model Context Protocol предоставляют дополнительные инструменты и источники данных для Codex"
-    },
-    "addButton": "Добавить MCP сервер",
-    "empty": "MCP серверы не настроены",
-    "serverType": "Тип",
-    "scope": {
-      "local": "локальный",
-      "user": "пользователь"
-    },
-    "config": {
-      "command": "Команда",
-      "url": "URL",
-      "args": "Аргументы",
-      "environment": "Окружение"
-    },
-    "tools": {
-      "title": "Инструменты",
-      "count": "({{count}}):",
-      "more": "+{{count}} еще"
-    },
-    "actions": {
-      "edit": "Редактировать сервер",
-      "delete": "Удалить сервер"
-    },
-    "help": {
-      "title": "О Codex MCP",
-      "description": "Codex поддерживает MCP серверы на основе stdio. Вы можете добавлять серверы, которые расширяют возможности Codex дополнительными инструментами и ресурсами."
-    }
-  },
-  "pluginSettings": {
-    "title": "Плагины",
-    "description": "Расширяйте интерфейс с помощью кастомных плагинов. Установите из git или добавьте папку в ~/.claude-code-ui/plugins/",
-    "installPlaceholder": "https://github.com/user/my-plugin",
-    "installButton": "Установить",
-    "installing": "Установка…",
-    "securityWarning": "Устанавливайте только те плагины, исходный код которых вы проверили или от авторов, которым вы доверяете.",
-    "scanningPlugins": "Сканирование плагинов…",
-    "noPluginsInstalled": "Плагины не установлены",
-    "pullLatest": "Получить обновления из git",
-    "noGitRemote": "Нет удаленного git-репозитория — обновление недоступно",
-    "uninstallPlugin": "Удалить плагин",
-    "confirmUninstall": "Нажмите еще раз для подтверждения",
-    "confirmUninstallMessage": "Удалить {{name}}? Это действие нельзя отменить.",
-    "cancel": "Отмена",
-    "remove": "Удалить",
-    "updateFailed": "Ошибка обновления",
-    "installFailed": "Ошибка установки",
-    "uninstallFailed": "Ошибка удаления",
-    "toggleFailed": "Ошибка переключения",
-    "buildYourOwn": "Создайте свой плагин",
-    "starter": "Шаблон",
-    "docs": "Документация",
-    "starterPlugin": {
-      "name": "Статистика проекта",
-      "badge": "шаблон",
-      "description": "Количество файлов, строк кода, разбивка по типам файлов и недавняя активность в вашем проекте.",
-      "install": "Установить"
-    },
-    "morePlugins": "Ещё",
-    "enable": "Включить",
-    "disable": "Выключить",
-    "installAriaLabel": "URL git-репозитория плагина",
-    "tab": "вкладка",
-    "runningStatus": "запущен"
+  "voiceSettings": {
+    "title": "Voice",
+    "description": "Speech-to-text input and read-aloud, via an OpenAI-compatible audio backend.",
+    "enable": "Enable voice",
+    "enableDescription": "Show the mic button and the read-aloud button on messages.",
+    "backendTitle": "Backend",
+    "backendDescription": "Point at OpenAI, Groq, or a local server (LocalAI, Speaches, Kokoro-FastAPI). Leave blank to use the server default.",
+    "baseUrl": "Base URL",
+    "apiKey": "API key",
+    "sttModel": "Speech-to-text model",
+    "ttsModel": "Text-to-speech model",
+    "voice": "Voice",
+    "format": "Audio format",
+    "note": "A custom base URL is called directly by your browser and must allow browser CORS requests. Leave it blank to use the server-configured backend."
   }
 }

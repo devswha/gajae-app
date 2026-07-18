@@ -47,11 +47,11 @@ async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promis
 
 test('live events are remapped to the app session id and sequenced', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-1', 'claude', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-1', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
     const run = chatRunRegistry.startRun({
       appSessionId: 'app-run-1',
-      provider: 'claude',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: 'user-1',
@@ -59,8 +59,8 @@ test('live events are remapped to the app session id and sequenced', async () =>
     assert.ok(run);
     assert.equal(run.writer.getAppSessionId(), 'app-run-1');
 
-    run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'provider-id-9', content: 'hello' });
-    run.writer.send({ kind: 'text', provider: 'claude', sessionId: 'provider-id-9', content: 'hello world' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'provider-id-9', content: 'hello' });
+    run.writer.send({ kind: 'text', provider: 'gjc', sessionId: 'provider-id-9', content: 'hello world' });
 
     assert.equal(connection.frames.length, 2);
     assert.equal(connection.frames[0]?.sessionId, 'app-run-1');
@@ -72,12 +72,12 @@ test('live events are remapped to the app session id and sequenced', async () =>
 
 test('session_created is swallowed and persisted as the provider-id mapping', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-2', 'cursor', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-2', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
     connectedClients.add(connection as never);
     const run = chatRunRegistry.startRun({
       appSessionId: 'app-run-2',
-      provider: 'cursor',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -86,7 +86,7 @@ test('session_created is swallowed and persisted as the provider-id mapping', as
 
     run.writer.send({
       kind: 'session_created',
-      provider: 'cursor',
+      provider: 'gjc',
       sessionId: 'cursor-native-7',
       newSessionId: 'cursor-native-7',
     });
@@ -104,20 +104,20 @@ test('session_created is swallowed and persisted as the provider-id mapping', as
 
 test('complete marks the run finished and duplicate completes are dropped', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-3', 'codex', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-3', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
     const run = chatRunRegistry.startRun({
       appSessionId: 'app-run-3',
-      provider: 'codex',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
     });
     assert.ok(run);
 
-    run.writer.send({ kind: 'complete', provider: 'codex', sessionId: 'native-3', exitCode: 0 });
+    run.writer.send({ kind: 'complete', provider: 'gjc', sessionId: 'native-3', exitCode: 0 });
     // Late duplicate from a killed runtime's exit handler.
-    run.writer.send({ kind: 'complete', provider: 'codex', sessionId: 'native-3', exitCode: 1 });
+    run.writer.send({ kind: 'complete', provider: 'gjc', sessionId: 'native-3', exitCode: 1 });
 
     const completes = connection.frames.filter((frame) => frame.kind === 'complete');
     assert.equal(completes.length, 1);
@@ -132,24 +132,24 @@ test('complete marks the run finished and duplicate completes are dropped', asyn
 
 test('a finished run\'s safety net cannot complete the session\'s next run', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-9', 'codex', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-9', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
 
     const firstRun = chatRunRegistry.startRun({
       appSessionId: 'app-run-9',
-      provider: 'codex',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
     });
     assert.ok(firstRun);
-    firstRun.writer.send({ kind: 'complete', provider: 'codex', sessionId: 'native-9', exitCode: 0 });
+    firstRun.writer.send({ kind: 'complete', provider: 'gjc', sessionId: 'native-9', exitCode: 0 });
 
     // A queued message starts the next run before the first run's runtime
     // promise settles (the chat handler's `finally` hasn't executed yet).
     const secondRun = chatRunRegistry.startRun({
       appSessionId: 'app-run-9',
-      provider: 'codex',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -170,13 +170,13 @@ test('a finished run\'s safety net cannot complete the session\'s next run', asy
 
 test('listRunningRuns returns only currently running app sessions', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-7', 'claude', '/workspace/demo');
-    sessionsDb.createAppSession('app-run-8', 'codex', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-7', 'gjc', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-8', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
 
     const completedRun = chatRunRegistry.startRun({
       appSessionId: 'app-run-7',
-      provider: 'claude',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -185,7 +185,7 @@ test('listRunningRuns returns only currently running app sessions', async () => 
 
     const runningRun = chatRunRegistry.startRun({
       appSessionId: 'app-run-8',
-      provider: 'codex',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -196,26 +196,26 @@ test('listRunningRuns returns only currently running app sessions', async () => 
 
     const runningSessions = chatRunRegistry.listRunningRuns();
     assert.deepEqual(runningSessions.map((session) => session.sessionId), ['app-run-8']);
-    assert.equal(runningSessions[0]?.provider, 'codex');
+    assert.equal(runningSessions[0]?.provider, 'gjc');
   });
 });
 
 test('replayEvents returns only events after the requested seq', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-4', 'claude', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-4', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
     const run = chatRunRegistry.startRun({
       appSessionId: 'app-run-4',
-      provider: 'claude',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
     });
     assert.ok(run);
 
-    run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'x', content: 'a' });
-    run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'x', content: 'b' });
-    run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'x', content: 'c' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'x', content: 'a' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'x', content: 'b' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'x', content: 'c' });
 
     const replayed = chatRunRegistry.replayEvents('app-run-4', 1);
     assert.deepEqual(replayed.map((event) => event.content), ['b', 'c']);
@@ -225,22 +225,22 @@ test('replayEvents returns only events after the requested seq', async () => {
 
 test('attachConnection reroutes the live stream to a new socket', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-5', 'opencode', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-5', 'gjc', '/workspace/demo');
     const firstConnection = new FakeConnection();
     const run = chatRunRegistry.startRun({
       appSessionId: 'app-run-5',
-      provider: 'opencode',
+      provider: 'gjc',
       providerSessionId: null,
       connection: firstConnection,
       userId: null,
     });
     assert.ok(run);
 
-    run.writer.send({ kind: 'stream_delta', provider: 'opencode', sessionId: 'o', content: 'before' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'o', content: 'before' });
 
     const secondConnection = new FakeConnection();
     assert.equal(chatRunRegistry.attachConnection('app-run-5', secondConnection), true);
-    run.writer.send({ kind: 'stream_delta', provider: 'opencode', sessionId: 'o', content: 'after' });
+    run.writer.send({ kind: 'stream_delta', provider: 'gjc', sessionId: 'o', content: 'after' });
 
     assert.deepEqual(firstConnection.frames.map((frame) => frame.content), ['before']);
     assert.deepEqual(secondConnection.frames.map((frame) => frame.content), ['after']);
@@ -249,11 +249,11 @@ test('attachConnection reroutes the live stream to a new socket', async () => {
 
 test('startRun rejects a second concurrent run for the same session', async () => {
   await withIsolatedDatabase(() => {
-    sessionsDb.createAppSession('app-run-6', 'opencode', '/workspace/demo');
+    sessionsDb.createAppSession('app-run-6', 'gjc', '/workspace/demo');
     const connection = new FakeConnection();
     const first = chatRunRegistry.startRun({
       appSessionId: 'app-run-6',
-      provider: 'opencode',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -262,7 +262,7 @@ test('startRun rejects a second concurrent run for the same session', async () =
 
     const second = chatRunRegistry.startRun({
       appSessionId: 'app-run-6',
-      provider: 'opencode',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,
@@ -273,7 +273,7 @@ test('startRun rejects a second concurrent run for the same session', async () =
     chatRunRegistry.completeRun('app-run-6', { exitCode: 0 });
     const third = chatRunRegistry.startRun({
       appSessionId: 'app-run-6',
-      provider: 'opencode',
+      provider: 'gjc',
       providerSessionId: null,
       connection,
       userId: null,

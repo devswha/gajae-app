@@ -122,7 +122,6 @@ test('wire e2e: HTTP jobs endpoints and full websocket projection matrix', { tim
       gjcProjection: projection,
     },
     shell: {},
-    getPluginPort: () => undefined,
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); const port = (server.address() as any).port;
   t.after(async () => { for (const ws of wss.clients) ws.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve())); jobs.close(); client.close(); await rm(database, { force: true }); await rm(root, { recursive: true, force: true }); if (originalApiKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = originalApiKey; });

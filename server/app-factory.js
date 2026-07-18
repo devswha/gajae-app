@@ -22,7 +22,6 @@ export function createGjcAppFactory({
   validateApiKey,
   chat,
   shell,
-  getPluginPort,
 }) {
   orchestrator.deps.broadcast = (jobId, event) => {
     try { projection.publish(jobId, event); } catch { /* Durable replay recovers isolated websocket fan-out failures. */ }
@@ -38,7 +37,6 @@ export function createGjcAppFactory({
     verifyClient: { authenticateWebSocket, desktopAuth },
     chat,
     shell,
-    getPluginPort,
   });
   app.locals.wss = wss;
   app.use(cors(desktopAuth.corsOptions ?? undefined));

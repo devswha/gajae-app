@@ -36,7 +36,6 @@ test('arms before watermark read and flushes a live event that arrives during it
 });
 
 test('replay watermark excludes concurrent appends and emits every sequence once in order', async () => {
-  let service!: GjcJobProjectionService;
   const calls: any[] = [];
   const authority: Authority = {
     get: async () => ({ lastSequence: 3 }),
@@ -46,7 +45,7 @@ test('replay watermark excludes concurrent appends and emits every sequence once
       return { events: [event(2), event(3)], nextCursor: 999 };
     },
   };
-  service = new GjcJobProjectionService(authority);
+  const service = new GjcJobProjectionService(authority);
   const socket = new FakeSocket();
   const id = await subscribe(service, socket);
   await replay(service, socket, id, 0, 1);

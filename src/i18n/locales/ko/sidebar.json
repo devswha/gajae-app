@@ -55,8 +55,7 @@
     "chat": "채팅",
     "files": "파일",
     "git": "Git",
-    "terminal": "터미널",
-    "tasks": "작업"
+    "terminal": "터미널"
   },
   "actions": {
     "refresh": "새로고침",

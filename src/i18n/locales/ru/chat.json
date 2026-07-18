@@ -212,8 +212,5 @@
   },
   "projectSelection": {
     "startChatWithProvider": "Выберите проект для начала чата с {{provider}}"
-  },
-  "tasks": {
-    "nextTaskPrompt": "Начать следующую задачу"
   }
 }

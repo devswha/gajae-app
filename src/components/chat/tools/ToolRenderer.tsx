@@ -46,7 +46,7 @@ function getToolCategory(toolName: string): string {
   return 'default';
 }
 
-// Exact denial messages from server/claude-sdk.js — other providers can't reliably signal denial
+// Exact denial messages retained because they match persisted transcript strings.
 const CLAUDE_DENIAL_MESSAGES = [
   'user denied tool use',
   'tool disallowed by settings',

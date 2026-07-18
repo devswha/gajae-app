@@ -10,7 +10,24 @@ import express from 'express';
 
 import { getProductionJobOrchestrator } from '../services/gjc-job-orchestrator.js';
 
-import router, { decodeListQuery, decodeReplayQuery, statusForGjcError } from './gjc-jobs.js';
+const moduleDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), 'gjc-jobs-router-'));
+const moduleDatabasePath = path.join(moduleDatabaseDirectory, 'auth.db');
+const originalModuleDatabasePath = process.env.DATABASE_PATH;
+process.env.DATABASE_PATH = moduleDatabasePath;
+
+const {
+  default: router,
+  decodeListQuery,
+  decodeReplayQuery,
+  statusForGjcError,
+} = await import('./gjc-jobs.js');
+
+test.after(async () => {
+  getProductionJobOrchestrator().close();
+  if (originalModuleDatabasePath === undefined) delete process.env.DATABASE_PATH;
+  else process.env.DATABASE_PATH = originalModuleDatabasePath;
+  await rm(moduleDatabaseDirectory, { recursive: true, force: true });
+});
 
 const serve = async () => {
   const app = express();

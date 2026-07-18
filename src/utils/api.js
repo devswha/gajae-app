@@ -154,8 +154,6 @@ export const api = {
     const qs = params.toString();
     return authenticatedFetch(`/api/providers/sessions/live/commands${qs ? `?${qs}` : ''}`);
   },
-  // External CLI (claude/codex) tmux sessions for the terminal-attach lane.
-  externalSessions: () => authenticatedFetch('/api/providers/sessions/external'),
   // Home-relative directory autocomplete ({ home, suggestions }).
   dirSuggestions: (prefix) =>
     authenticatedFetch(`/api/providers/fs/dir-suggestions?prefix=${encodeURIComponent(prefix)}`),
@@ -165,8 +163,6 @@ export const api = {
     params.set('offset', String(offset));
     return authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/sessions?${params.toString()}`);
   },
-  projectTaskmaster: (projectId) =>
-    authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/taskmaster`),
   // Unified endpoint for persisted session messages.
   // Provider/project metadata are resolved by the backend from sessionId.
   unifiedSessionMessages: (sessionId, _provider = 'claude', { limit = null, offset = 0 } = {}) => {
@@ -278,46 +274,6 @@ export const api = {
       headers: {}, // Let browser set Content-Type for FormData
     }),
 
-  // TaskMaster endpoints — all addressed by DB projectId post-migration.
-  taskmaster: {
-    // Initialize TaskMaster in a project
-    init: (projectId) =>
-      authenticatedFetch(`/api/taskmaster/init/${projectId}`, {
-        method: 'POST',
-      }),
-
-    // Add a new task
-    addTask: (projectId, { prompt, title, description, priority, dependencies }) =>
-      authenticatedFetch(`/api/taskmaster/add-task/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ prompt, title, description, priority, dependencies }),
-      }),
-
-    // Parse PRD to generate tasks
-    parsePRD: (projectId, { fileName, numTasks, append }) =>
-      authenticatedFetch(`/api/taskmaster/parse-prd/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ fileName, numTasks, append }),
-      }),
-
-    // Get available PRD templates
-    getTemplates: () =>
-      authenticatedFetch('/api/taskmaster/prd-templates'),
-
-    // Apply a PRD template
-    applyTemplate: (projectId, { templateId, fileName, customizations }) =>
-      authenticatedFetch(`/api/taskmaster/apply-template/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ templateId, fileName, customizations }),
-      }),
-
-    // Update a task
-    updateTask: (projectId, taskId, updates) =>
-      authenticatedFetch(`/api/taskmaster/update-task/${projectId}/${taskId}`, {
-        method: 'PUT',
-        body: JSON.stringify(updates),
-      }),
-  },
 
   // Browse filesystem for project suggestions
   browseFilesystem: (dirPath = null) => {

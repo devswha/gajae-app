@@ -22,7 +22,7 @@ const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_REPORTED_ERRORS = 100;
 const GENERATED_DIRECTORIES = ['dist', 'dist-server', 'release'];
-const SKIPPED_DIRECTORIES = new Set(['.desktop-build', '.git', '.gjc', 'node_modules']);
+const SKIPPED_DIRECTORIES = new Set(['.desktop-build', '.git', '.gjc', '.gjc-worktrees', 'node_modules']);
 const ARCHIVE_FILE_PATTERN = /\.(?:tar|tgz|gz|zip|bz2|xz|deb|appimage)$/i;
 const LOCALIZED_READMES = new Set([
   'README.de.md',
@@ -263,6 +263,16 @@ async function walkDirectory(directoryPath, category) {
         continue;
       }
       if (relativePath === 'release/desktop') {
+        continue;
+      }
+      // Per-OS platform artifacts (gitignored; built locally on macOS): the
+      // Tauri cargo target dir, staged sidecar binaries, and the embedded
+      // server payload are not project-authored content.
+      if (
+        relativePath === 'src-tauri/target' ||
+        relativePath === 'src-tauri/binaries' ||
+        relativePath === 'src-tauri/resources/server-payload'
+      ) {
         continue;
       }
 

@@ -3,7 +3,6 @@
   "tabs": {
     "account": "Hesap",
     "permissions": "İzinler",
-    "mcpServers": "MCP Sunucuları",
     "appearance": "Görünüm"
   },
   "account": {
@@ -15,24 +14,6 @@
     "email": "E-posta",
     "profile": "Profil",
     "changePassword": "Şifreyi Değiştir"
-  },
-  "mcp": {
-    "title": "MCP Sunucuları",
-    "addServer": "Sunucu Ekle",
-    "editServer": "Sunucuyu Düzenle",
-    "deleteServer": "Sunucuyu Sil",
-    "serverName": "Sunucu Adı",
-    "serverType": "Sunucu Türü",
-    "config": "Yapılandırma",
-    "testConnection": "Bağlantıyı Test Et",
-    "status": "Durum",
-    "connected": "Bağlı",
-    "disconnected": "Bağlantı kesildi",
-    "scope": {
-      "label": "Kapsam",
-      "user": "Kullanıcı",
-      "project": "Proje"
-    }
   },
   "appearance": {
     "title": "Görünüm",
@@ -86,14 +67,10 @@
   },
   "mainTabs": {
     "label": "Ayarlar",
-    "agents": "Ajanlar",
     "appearance": "Görünüm",
     "git": "Git",
-    "apiTokens": "API ve Token'lar",
-    "tasks": "Görevler",
     "computer": "Bilgisayar Kullanımı",
     "notifications": "Bildirimler",
-    "plugins": "Eklentiler",
     "about": "Hakkında"
   },
   "notifications": {
@@ -156,55 +133,6 @@
       }
     }
   },
-  "mcpForm": {
-    "title": {
-      "add": "MCP Sunucusu Ekle",
-      "edit": "MCP Sunucusunu Düzenle"
-    },
-    "importMode": {
-      "form": "Form Girdisi",
-      "json": "JSON İçe Aktar"
-    },
-    "scope": {
-      "label": "Kapsam",
-      "userGlobal": "Kullanıcı (Genel)",
-      "projectLocal": "Proje (Yerel)",
-      "userDescription": "Kullanıcı kapsamı: Makinendeki tüm projelerde kullanılabilir",
-      "projectDescription": "Yerel kapsam: Yalnızca seçili projede kullanılabilir",
-      "cannotChange": "Mevcut bir sunucu düzenlenirken kapsam değiştirilemez"
-    },
-    "fields": {
-      "serverName": "Sunucu Adı",
-      "transportType": "Taşıma Türü",
-      "command": "Komut",
-      "arguments": "Argümanlar (satır başına bir tane)",
-      "jsonConfig": "JSON Yapılandırması",
-      "url": "URL",
-      "envVars": "Ortam Değişkenleri (KEY=değer, satır başına bir tane)",
-      "headers": "Başlıklar (KEY=değer, satır başına bir tane)",
-      "selectProject": "Bir proje seç..."
-    },
-    "placeholders": {
-      "serverName": "benim-sunucum"
-    },
-    "validation": {
-      "missingType": "Zorunlu alan eksik: type",
-      "stdioRequiresCommand": "stdio türü command alanı gerektirir",
-      "httpRequiresUrl": "{{type}} türü url alanı gerektirir",
-      "invalidJson": "Geçersiz JSON formatı",
-      "jsonHelp": "MCP sunucu yapılandırmanı JSON formatında yapıştır. Örnek formatlar:",
-      "jsonExampleStdio": "• stdio: {\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"@upstash/context7-mcp\"]}",
-      "jsonExampleHttp": "• http/sse: {\"type\":\"http\",\"url\":\"https://api.example.com/mcp\"}"
-    },
-    "configDetails": "Yapılandırma Detayları ({{configFile}} dosyasından)",
-    "projectPath": "Yol: {{path}}",
-    "actions": {
-      "cancel": "İptal",
-      "saving": "Kaydediliyor...",
-      "addServer": "Sunucu Ekle",
-      "updateServer": "Sunucuyu Güncelle"
-    }
-  },
   "saveStatus": {
     "success": "Ayarlar başarıyla kaydedildi!",
     "error": "Ayarlar kaydedilemedi",
@@ -232,109 +160,6 @@
     "status": {
       "success": "Başarıyla kaydedildi"
     }
-  },
-  "apiKeys": {
-    "title": "API Anahtarları",
-    "description": "Diğer uygulamalardan harici API'ye erişmek için API anahtarları üret.",
-    "newKey": {
-      "alertTitle": "⚠️ API Anahtarını Kaydet",
-      "alertMessage": "Bu anahtarı yalnızca bu sefer göreceksin. Güvenli bir yerde sakla.",
-      "iveSavedIt": "Kaydettim"
-    },
-    "form": {
-      "placeholder": "API Anahtar Adı (ör. Production Sunucu)",
-      "createButton": "Oluştur",
-      "cancelButton": "İptal"
-    },
-    "newButton": "Yeni API Anahtarı",
-    "empty": "Henüz API anahtarı oluşturulmamış.",
-    "list": {
-      "created": "Oluşturuldu:",
-      "lastUsed": "Son kullanım:"
-    },
-    "confirmDelete": "Bu API anahtarını silmek istediğinden emin misin?",
-    "status": {
-      "active": "Aktif",
-      "inactive": "Pasif"
-    },
-    "github": {
-      "title": "GitHub Token'ları",
-      "description": "Harici API üzerinden özel depoları klonlamak için GitHub Kişisel Erişim Token'ları ekle.",
-      "descriptionAlt": "Özel depoları klonlamak için GitHub Kişisel Erişim Token'ları ekle. Token'ları saklamadan API isteklerinde doğrudan da geçebilirsin.",
-      "addButton": "Token Ekle",
-      "form": {
-        "namePlaceholder": "Token Adı (ör. Kişisel Depolar)",
-        "tokenPlaceholder": "GitHub Kişisel Erişim Token'ı (ghp_...)",
-        "descriptionPlaceholder": "Açıklama (isteğe bağlı)",
-        "addButton": "Token Ekle",
-        "cancelButton": "İptal",
-        "howToCreate": "GitHub Kişisel Erişim Token'ı nasıl oluşturulur →"
-      },
-      "empty": "Henüz GitHub token'ı eklenmemiş.",
-      "added": "Eklendi:",
-      "confirmDelete": "Bu GitHub token'ını silmek istediğinden emin misin?"
-    },
-    "apiDocsLink": "API Dokümantasyonu",
-    "documentation": {
-      "title": "Harici API Dokümantasyonu",
-      "description": "Uygulamalarından Claude/Cursor oturumları tetiklemek için harici API'nin nasıl kullanılacağını öğren.",
-      "viewLink": "API Dokümantasyonunu Görüntüle →"
-    },
-    "loading": "Yükleniyor...",
-    "version": {
-      "updateAvailable": "Güncelleme mevcut: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMaster kurulumu kontrol ediliyor...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI Kurulu Değil",
-      "description": "Görev yönetim özelliklerini kullanmak için TaskMaster CLI gereklidir. Başlamak için kur:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "GitHub'da Görüntüle",
-      "afterInstallation": "Kurulumdan sonra:",
-      "steps": {
-        "restart": "Bu uygulamayı yeniden başlat",
-        "autoAvailable": "TaskMaster özellikleri otomatik olarak kullanılabilir hale gelecek",
-        "initCommand": "Proje dizininde task-master init komutunu kullan"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster Entegrasyonunu Etkinleştir",
-      "enableDescription": "TaskMaster görevlerini, banner'larını ve kenar çubuğu göstergelerini arayüz genelinde göster"
-    }
-  },
-  "agents": {
-    "authStatus": {
-      "checking": "Kontrol ediliyor...",
-      "connected": "Bağlı",
-      "notConnected": "Bağlı değil",
-      "disconnected": "Bağlantı kesildi",
-      "checkingAuth": "Kimlik doğrulama durumu kontrol ediliyor...",
-      "loggedInAs": "{{email}} olarak giriş yapıldı",
-      "authenticatedUser": "kimliği doğrulanmış kullanıcı"
-    },
-    "account": {
-      "claude": {
-        "description": "Anthropic Claude AI asistanı"
-      },
-      "cursor": {
-        "description": "Cursor AI destekli kod editörü"
-      },
-      "codex": {
-        "description": "OpenAI Codex AI asistanı"
-      }
-    },
-    "connectionStatus": "Bağlantı Durumu",
-    "login": {
-      "title": "Giriş Yap",
-      "reAuthenticate": "Yeniden Kimlik Doğrula",
-      "description": "AI özelliklerini etkinleştirmek için {{agent}} hesabına giriş yap",
-      "reAuthDescription": "Farklı bir hesapla giriş yap veya kimlik bilgilerini yenile",
-      "button": "Giriş Yap",
-      "reLoginButton": "Tekrar Giriş Yap"
-    },
-    "error": "Hata: {{error}}"
   },
   "permissions": {
     "title": "İzin Ayarları",
@@ -412,80 +237,19 @@
       "add": "Ekle"
     }
   },
-  "mcpServers": {
-    "title": "MCP Sunucuları",
-    "description": {
-      "claude": "Model Context Protocol sunucuları Claude'a ek araçlar ve veri kaynakları sağlar",
-      "cursor": "Model Context Protocol sunucuları Cursor'a ek araçlar ve veri kaynakları sağlar",
-      "codex": "Model Context Protocol sunucuları Codex'e ek araçlar ve veri kaynakları sağlar"
-    },
-    "addButton": "MCP Sunucusu Ekle",
-    "empty": "Yapılandırılmış MCP sunucusu yok",
-    "serverType": "Tür",
-    "scope": {
-      "local": "yerel",
-      "user": "kullanıcı"
-    },
-    "config": {
-      "command": "Komut",
-      "url": "URL",
-      "args": "Argümanlar",
-      "environment": "Ortam"
-    },
-    "tools": {
-      "title": "Araçlar",
-      "count": "({{count}}):",
-      "more": "+{{count}} tane daha"
-    },
-    "actions": {
-      "edit": "Sunucuyu düzenle",
-      "delete": "Sunucuyu sil"
-    },
-    "help": {
-      "title": "Codex MCP Hakkında",
-      "description": "Codex stdio tabanlı MCP sunucularını destekler. Codex'in yeteneklerini ek araçlar ve kaynaklarla genişleten sunucular ekleyebilirsin."
-    }
-  },
-  "pluginSettings": {
-    "title": "Eklentiler",
-    "description": "Arayüzü özel eklentilerle genişlet. Git'ten yükle veya ~/.claude-code-ui/plugins/ klasörüne bir dizin bırak.",
-    "installPlaceholder": "https://github.com/kullanici/benim-eklentim",
-    "installButton": "Yükle",
-    "installing": "Yükleniyor…",
-    "securityWarning": "Yalnızca kaynak kodunu incelediğin veya güvendiğin geliştiricilerin eklentilerini yükle.",
-    "scanningPlugins": "Eklentiler taranıyor…",
-    "noPluginsInstalled": "Yüklü eklenti yok",
-    "pullLatest": "Git'ten en güncelini çek",
-    "noGitRemote": "Git uzak sunucusu yok — güncelleme kullanılamıyor",
-    "uninstallPlugin": "Eklentiyi kaldır",
-    "confirmUninstall": "Onaylamak için tekrar tıkla",
-    "confirmUninstallMessage": "{{name}} kaldırılsın mı? Bu işlem geri alınamaz.",
-    "cancel": "İptal",
-    "remove": "Kaldır",
-    "updateFailed": "Güncelleme başarısız",
-    "installFailed": "Yükleme başarısız",
-    "uninstallFailed": "Kaldırma başarısız",
-    "toggleFailed": "Açıp kapama başarısız",
-    "starterPluginLabel": "Başlangıç Eklentisi",
-    "starter": "Başlangıç",
-    "docs": "Dokümanlar",
-    "starterPlugin": {
-      "name": "Proje İstatistikleri",
-      "badge": "başlangıç",
-      "description": "Projen için dosya sayıları, kod satırları, dosya türü dağılımı ve son etkinlik.",
-      "install": "Yükle"
-    },
-    "terminalPlugin": {
-      "name": "Terminal",
-      "badge": "resmi",
-      "description": "Arayüzün içinde tam shell erişimiyle entegre terminal.",
-      "install": "Yükle"
-    },
-    "morePlugins": "Daha Fazla",
-    "enable": "Etkinleştir",
-    "disable": "Devre Dışı Bırak",
-    "installAriaLabel": "Eklenti git deposu URL'si",
-    "tab": "sekme",
-    "runningStatus": "çalışıyor"
+  "voiceSettings": {
+    "title": "Voice",
+    "description": "Speech-to-text input and read-aloud, via an OpenAI-compatible audio backend.",
+    "enable": "Enable voice",
+    "enableDescription": "Show the mic button and the read-aloud button on messages.",
+    "backendTitle": "Backend",
+    "backendDescription": "Point at OpenAI, Groq, or a local server (LocalAI, Speaches, Kokoro-FastAPI). Leave blank to use the server default.",
+    "baseUrl": "Base URL",
+    "apiKey": "API key",
+    "sttModel": "Speech-to-text model",
+    "ttsModel": "Text-to-speech model",
+    "voice": "Voice",
+    "format": "Audio format",
+    "note": "A custom base URL is called directly by your browser and must allow browser CORS requests. Leave it blank to use the server-configured backend."
   }
 }
