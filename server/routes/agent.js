@@ -1014,7 +1014,7 @@ router.post('/', validateExternalApiKey, async (req, res) => {
         const binding = appSessionId && await getProductionJobOrchestrator().resolveBinding('gjc', appSessionId);
         if (!binding) throw new Error('GJC job binding is unavailable for publish or pull request creation.');
 
-        const jobGit = getProductionGjcJobGitService(getProductionJobAuthority());
+        const jobGit = getProductionGjcJobGitService(getProductionJobAuthority(), (jobId, eventId, payload) => getProductionJobOrchestrator().appendAdminEvent(jobId, eventId, payload));
         if (createBranch) {
           const published = await jobGit.publish(binding.jobId);
           branchInfo = { name: published.branch };

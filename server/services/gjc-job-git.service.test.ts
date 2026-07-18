@@ -48,7 +48,7 @@ test('job git diff uses the bounded native base diff including untracked files',
     }),
   );
 
-  assert.deepEqual(await service.diff('job-a'), { patch: Buffer.from('diff') });
+  assert.deepEqual(await service.diff('job-a'), { patch: 'diff', paths: [] });
   assert.deepEqual(calls, [{ jobId: 'job-a', branch: 'job/job-a', path: '/repo/.gjc-worktrees/job-a', mode: 'base', baseCommit: 'abc1234', includeUntracked: true }]);
 });
 
@@ -61,6 +61,8 @@ test('job git commit resolves its managed worktree, commits changed relative pat
     await commands('config', 'user.email', 'test@example.com');
     await commands('config', 'user.name', 'GJC test');
     await writeFile(path.join(directory, 'changed.txt'), 'changed\n');
+    await writeFile(path.join(directory, 'unrelated.txt'), 'unrelated\n');
+    await commands('add', 'unrelated.txt');
     const service = new GjcJobGitService(
       {
         get: async () => ({ jobId: 'job-a', repositoryRoot: '/repository-root', worktreeId: 'worktree-a', branch: 'job/job-a', baseCommit: 'base' }),
@@ -78,6 +80,7 @@ test('job git commit resolves its managed worktree, commits changed relative pat
     assert.match(result.eventId, /^commit\./u);
     assert.deepEqual((await commands('show', '--format=%s', '--no-patch')).stdout.trim(), 'Commit changed file');
     assert.deepEqual((await commands('show', '--format=', '--name-only', 'HEAD')).stdout.trim(), 'changed.txt');
+    assert.deepEqual((await commands('diff', '--cached', '--name-only')).stdout.trim(), 'unrelated.txt');
     assert.deepEqual(events, [{ jobId: 'job-a', eventId: result.eventId, payload: { kind: 'git_commit', commit: result.commit, paths: ['changed.txt'] } }]);
 
     for (const [message, paths] of [

@@ -17,10 +17,14 @@ export type ServerEvent = {
   [key: string]: unknown;
 };
 
-import type {
-  JobProjectionErrorCode,
-  JobProjectionEvent,
-  JobSnapshot,
+import {
+  GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+  isJobProjectionInboundFrame,
+  isJobProjectionOutboundFrame,
+  type JobProjectionErrorCode,
+  type JobProjectionEvent,
+  type JobProjectionInboundFrame,
+  type JobSnapshot,
 } from '../../shared/gjc-job-projection-protocol';
 
 type JobSubscription = {
@@ -29,10 +33,10 @@ type JobSubscription = {
   onSubscribed: (snapshot: JobSnapshot) => void;
   applyReplayChunk: (events: JobProjectionEvent[]) => boolean;
   applyLiveEvent: (event: JobProjectionEvent) => boolean;
-  onError: (code: JobProjectionErrorCode) => void;
+  onError: (code: JobProjectionErrorCode | 'protocol_violation') => void;
 };
 
-type JobSubscriptionIntent = JobSubscription & { owners: number; subscriptionId: number; generation: number };
+type JobSubscriptionIntent = JobSubscription & { owners: number; subscriptionId: string | null; watermark: number | null; generation: number };
 type ServerEventListener = (event: ServerEvent) => void;
 
 type WebSocketContextType = {
@@ -65,7 +69,6 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const hasConnectedRef = useRef(false);
   const listenersRef = useRef(new Set<ServerEventListener>());
   const jobIntentsRef = useRef(new Map<string, JobSubscriptionIntent>());
-  const nextJobSubscriptionIdRef = useRef(0);
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [latestMessage, setLatestMessage] = useState<ServerEvent | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -90,21 +93,21 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     }
   }, []);
 
-  const sendJobFrame = useCallback((frame: unknown) => {
+  const sendJobFrame = useCallback((frame: JobProjectionInboundFrame) => {
+    if (!isJobProjectionInboundFrame(frame)) return;
     const activeSocket = wsRef.current;
     if (activeSocket?.readyState === WebSocket.OPEN) activeSocket.send(JSON.stringify(frame));
   }, []);
-
   const subscribeJobsForGeneration = useCallback((generation: number) => {
     for (const intent of jobIntentsRef.current.values()) {
       intent.generation = generation;
-      intent.subscriptionId = ++nextJobSubscriptionIdRef.current;
+      intent.subscriptionId = null;
+      intent.watermark = null;
       sendJobFrame({
-        protocolVersion: 1,
-        kind: 'gjc.job.subscribe',
+        protocolVersion: GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+        type: 'gjc.job.subscribe',
         jobId: intent.jobId,
         after: intent.getCursor(),
-        subscriptionId: intent.subscriptionId,
       });
     }
   }, [sendJobFrame]);
@@ -133,24 +136,44 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       websocket.onmessage = (event) => {
         if (!isCurrentSocket()) return;
         try {
-          const message = JSON.parse(event.data) as ServerEvent & { jobId?: string; subscriptionId?: number; event?: JobProjectionEvent; events?: JobProjectionEvent[]; snapshot?: JobSnapshot; code?: JobProjectionErrorCode };
-          const intent = typeof message.jobId === 'string' ? jobIntentsRef.current.get(message.jobId) : undefined;
-          const isCurrentJobFrame = intent
-            && intent.generation === generation
-            && message.subscriptionId === intent.subscriptionId;
-          if (isCurrentJobFrame && message.kind === 'gjc_job_subscribed' && message.snapshot) {
-            intent.onSubscribed(message.snapshot);
-          } else if (isCurrentJobFrame && message.kind === 'gjc_job_replay_chunk' && Array.isArray(message.events)) {
-            const applied = intent.applyReplayChunk(message.events);
-            if (applied) {
-              sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.replay', jobId: intent.jobId, after: intent.getCursor(), subscriptionId: intent.subscriptionId });
+          const message: unknown = JSON.parse(event.data);
+          if (isJobProjectionOutboundFrame(message)) {
+            const intent = typeof message.jobId === 'string' ? jobIntentsRef.current.get(message.jobId) : undefined;
+            if (message.kind === 'gjc_job_subscribed' && intent && intent.generation === generation && intent.subscriptionId === null) {
+              intent.subscriptionId = message.subscriptionId;
+              intent.watermark = message.watermark;
+              intent.onSubscribed(message.snapshot);
+              sendJobFrame({
+                protocolVersion: GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+                type: 'gjc.job.replay',
+                jobId: intent.jobId,
+                subscriptionId: message.subscriptionId,
+                after: intent.getCursor(),
+              });
+            } else if (intent && intent.generation === generation && intent.subscriptionId === message.subscriptionId) {
+              if (message.kind === 'gjc_job_replay_chunk') {
+                if (intent.watermark !== message.watermark) {
+                  intent.onError('protocol_violation');
+                } else {
+                  const applied = intent.applyReplayChunk(message.events);
+                  if (applied && !message.done && message.nextCursor !== null) {
+                    sendJobFrame({
+                      protocolVersion: GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+                      type: 'gjc.job.replay',
+                      jobId: intent.jobId,
+                      subscriptionId: message.subscriptionId,
+                      after: message.nextCursor,
+                    });
+                  }
+                }
+              } else if (message.kind === 'gjc_job_event') {
+                intent.applyLiveEvent(message.event);
+              } else if (message.kind === 'gjc_job_error') {
+                intent.onError(message.code);
+              }
             }
-          } else if (isCurrentJobFrame && message.kind === 'gjc_job_event' && message.event) {
-            intent.applyLiveEvent(message.event);
-          } else if (isCurrentJobFrame && message.kind === 'gjc_job_error' && message.code) {
-            intent.onError(message.code);
           }
-          dispatch(message);
+          dispatch(message as ServerEvent);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
@@ -233,21 +256,35 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       jobIntentsRef.current.set(subscription.jobId, {
         ...subscription,
         owners: 1,
-        subscriptionId: 0,
+        subscriptionId: null,
+        watermark: null,
         generation: socketGenerationRef.current,
       });
     }
     const intent = jobIntentsRef.current.get(subscription.jobId)!;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      intent.subscriptionId = ++nextJobSubscriptionIdRef.current;
-      sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.subscribe', jobId: intent.jobId, after: intent.getCursor(), subscriptionId: intent.subscriptionId });
+      intent.subscriptionId = null;
+      intent.watermark = null;
+      sendJobFrame({
+        protocolVersion: GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+        type: 'gjc.job.subscribe',
+        jobId: intent.jobId,
+        after: intent.getCursor(),
+      });
     }
     return () => {
       const current = jobIntentsRef.current.get(subscription.jobId);
       if (!current) return;
       current.owners -= 1;
       if (current.owners === 0) {
-        sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.unsubscribe', jobId: current.jobId, subscriptionId: current.subscriptionId });
+        if (current.subscriptionId) {
+          sendJobFrame({
+            protocolVersion: GJC_JOB_PROJECTION_PROTOCOL_VERSION,
+            type: 'gjc.job.unsubscribe',
+            jobId: current.jobId,
+            subscriptionId: current.subscriptionId,
+          });
+        }
         jobIntentsRef.current.delete(subscription.jobId);
       }
     };

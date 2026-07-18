@@ -17,6 +17,8 @@ import type {
   JobProjectionErrorCode,
   JobProjectionEvent,
   JobSnapshot,
+  JobState,
+  JobTerminalPayload,
 } from '../../shared/gjc-job-projection-protocol';
 
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
@@ -607,6 +609,18 @@ export function useSessionStore() {
       notifyJob(jobId);
       return false;
     }
+    const payload = event.payload as Partial<JobTerminalPayload> | null;
+    const isTerminal = payload !== null
+      && typeof payload === 'object'
+      && payload.schemaVersion === 1
+      && payload.kind === 'job_terminal'
+      && (payload.jobState === 'succeeded' || payload.jobState === 'failed' || payload.jobState === 'aborted' || payload.jobState === 'interrupted');
+    if (isTerminal && slot.snapshot) {
+      slot.snapshot = {
+        ...slot.snapshot,
+        state: payload.jobState as JobState,
+      };
+    }
     slot.eventsBySequence.set(event.sequence, event);
     slot.orderedTail = [...slot.orderedTail, event];
     slot.lastAppliedSequence = event.sequence;
@@ -629,7 +643,7 @@ export function useSessionStore() {
   const getJobCursor = useCallback((jobId: string) =>
     jobSlotsRef.current.get(jobId)?.lastAppliedSequence ?? 0, []);
 
-  const setJobError = useCallback((jobId: string, error: JobProjectionErrorCode) => {
+  const setJobError = useCallback((jobId: string, error: JobProjectionErrorCode | 'protocol_violation') => {
     const slot = getJobSlot(jobId);
     slot.status = 'error';
     slot.error = error;

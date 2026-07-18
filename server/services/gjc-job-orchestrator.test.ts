@@ -131,6 +131,8 @@ test('a never-dispatched start failure cancels admission instead of leaving a qu
   await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
   assert.equal(jobs.state.state, 'failed');
   assert.equal(jobs.calls.some(([name]) => name === 'cancelAdmission'), true);
+  const terminal = jobs.calls.find(([name]) => name === 'appendAdminEvent')?.[1];
+  assert.deepEqual(terminal?.payload, { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'failed', jobState: 'failed', reason: 'start failed' });
 });
 test('forced worker generation termination permits failed finalization after abort refusal', async () => {
   const jobs = new Jobs(); const git = new Git();

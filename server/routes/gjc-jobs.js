@@ -56,6 +56,17 @@ export const statusForGjcError = error => {
 const fail = (res, error) => res.status(statusForGjcError(error)).json({ error: error instanceof Error ? error.message : 'GJC job request failed.', code: error?.code });
 const appSession = body => text(body.appSessionId) ?? `gjc-${crypto.randomUUID()}`;
 const jobResponse = (res, handle, appSessionId) => res.status(202).json({ provider: 'gjc', appSessionId, jobId: handle.jobId, runId: handle.runId });
+const listResponse = value => {
+  const source = Array.isArray(value) ? { items: value } : value && typeof value === 'object' ? value : {};
+  return {
+    items: Array.isArray(source.items) ? source.items : [],
+    nextCursor: typeof source.nextCursor === 'string' ? source.nextCursor : null,
+  };
+};
+const jobGit = () => getProductionGjcJobGitService(
+  getProductionJobAuthority(),
+  (jobId, eventId, payload) => getProductionJobOrchestrator().appendAdminEvent(jobId, eventId, payload),
+);
 
 router.post('/jobs', async (req, res) => {
   const message = text(req.body?.message); const projectPath = text(req.body?.projectPath);
@@ -81,7 +92,7 @@ router.post('/jobs/:jobId/resume', async (req, res) => {
 router.post('/jobs/:jobId/abort', async (req, res) => { try { return res.status(202).json({ provider: 'gjc', jobId: req.params.jobId, aborted: await getProductionJobOrchestrator().abort(req.params.jobId) }); } catch (error) { return fail(res, error); } });
 router.get('/jobs', async (req, res) => {
   try {
-    return res.json(await getProductionJobAuthority().list(decodeListQuery(req.query)));
+    return res.json(listResponse(await getProductionJobAuthority().list(decodeListQuery(req.query))));
   } catch (error) {
     return fail(res, error);
   }
@@ -94,13 +105,13 @@ router.get('/jobs/:jobId/events', async (req, res) => {
     return fail(res, error);
   }
 });
-router.get('/jobs/:jobId/git/status', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).status(req.params.jobId)); } catch (error) { return fail(res, error); } });
-router.get('/jobs/:jobId/git/diff', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).diff(req.params.jobId)); } catch (error) { return fail(res, error); } });
-router.post('/jobs/:jobId/git/publish', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).publish(req.params.jobId)); } catch (error) { return fail(res, error); } });
-router.post('/jobs/:jobId/git/commit', async (req, res) => { try { return res.status(201).json(await getProductionGjcJobGitService(getProductionJobAuthority()).commit(req.params.jobId, req.body?.message, req.body?.paths)); } catch (error) { return fail(res, error); } });
+router.get('/jobs/:jobId/git/status', async (req, res) => { try { return res.json(await jobGit().status(req.params.jobId)); } catch (error) { return fail(res, error); } });
+router.get('/jobs/:jobId/git/diff', async (req, res) => { try { return res.json(await jobGit().diff(req.params.jobId)); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/git/publish', async (req, res) => { try { return res.json(await jobGit().publish(req.params.jobId)); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/git/commit', async (req, res) => { try { return res.status(201).json(await jobGit().commit(req.params.jobId, req.body?.message, req.body?.paths)); } catch (error) { return fail(res, error); } });
 router.post('/jobs/:jobId/git/pr', async (req, res) => {
   try {
-    const result = await getProductionGjcJobGitService(getProductionJobAuthority()).createPullRequest(req.params.jobId, async context => {
+    const result = await jobGit().createPullRequest(req.params.jobId, async context => {
       const match = context.remoteUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/u);
       if (!match) throw new Error('The job remote is not a GitHub repository.');
       const token = githubTokensDb.getActiveGithubToken(req.user?.id);

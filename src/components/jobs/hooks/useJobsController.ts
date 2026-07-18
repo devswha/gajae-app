@@ -9,7 +9,7 @@ export function useJobsController() {
       const response = await api.gjcJobs.list();
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error?.code || 'Unable to load jobs');
-      setJobs(body?.data?.jobs ?? body?.jobs ?? []);
+      setJobs(Array.isArray(body?.items) ? body.items : []);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load jobs');

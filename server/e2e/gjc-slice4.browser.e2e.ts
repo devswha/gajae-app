@@ -143,16 +143,16 @@ test('F13 driver-level e2e: create, run, abort, resume, diff, commit, replay, an
   const cursor = (await f.jobs.get({ jobId: active.jobId }) as any).lastSequence;
   await replacement.appendAdminEvent(active.jobId, 'replay-1', { kind: 'offline', step: 1 });
   await replacement.appendAdminEvent(active.jobId, 'replay-2', { kind: 'offline', step: 2 });
-  await projection.handle(socket as any, { type: 'gjc.job.subscribe', jobId: active.jobId, cursor });
+  await projection.handle(socket as any, { protocolVersion: 1, type: 'gjc.job.subscribe', jobId: active.jobId, after: cursor });
   const subscriptionId = socket.frames.at(-1).subscriptionId;
   const live = await f.jobs.appendAdminEvent({ jobId: active.jobId, eventId: 'live-3', payload: { kind: 'live', step: 3 } }) as any;
   projection.publish(active.jobId, live);
-  await projection.handle(socket as any, { type: 'gjc.job.replay', jobId: active.jobId, subscriptionId, after: cursor });
+  await projection.handle(socket as any, { protocolVersion: 1, type: 'gjc.job.replay', jobId: active.jobId, subscriptionId, after: cursor, byteBudget: 4096 });
   const replay = socket.frames.find(frame => frame.kind === 'gjc_job_replay_chunk');
   assert.deepEqual(replay.events.map((event: any) => event.eventId), ['replay-1', 'replay-2']);
   const liveFrame = socket.frames.find(frame => frame.kind === 'gjc_job_event');
-  assert.equal(liveFrame.eventId, 'live-3');
-  assert.deepEqual([...replay.events, liveFrame].map((event: any) => event.sequence), [cursor + 1, cursor + 2, cursor + 3]);
+  assert.equal(liveFrame.event.eventId, 'live-3');
+  assert.deepEqual([...replay.events, liveFrame.event].map((event: any) => event.sequence), [cursor + 1, cursor + 2, cursor + 3]);
 
   // 8. App-auth ledger claims before delivery and dedupes live, replay, and restart inputs.
   process.env.DATABASE_PATH = join(f.root, 'auth.db');

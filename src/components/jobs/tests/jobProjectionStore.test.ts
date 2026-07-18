@@ -16,6 +16,25 @@ test('job projection applies a contiguous replay once and does not jump to an ac
   assert.equal(value.applyJobReplayChunk('job-1', [event(1), event(2)]), true);
   assert.equal(value.getJobSlot('job-1').orderedTail.length, 2);
 });
+test('job terminal events atomically update the snapshot state and cursor without ack jumps', () => {
+  const value = store();
+  value.applyJobSubscribed('job-1', { jobId: 'job-1', provider: 'gjc', state: 'running', lastSequence: 9 });
+  assert.equal(value.applyJobReplayChunk('job-1', [{
+    sequence: 1,
+    eventId: 'run-terminal:run-1',
+    payload: { schemaVersion: 1, kind: 'job_terminal', runId: 'run-1', outcome: 'succeeded', jobState: 'succeeded', reason: 'completed' },
+  }]), true);
+  const slot = value.getJobSlot('job-1');
+  assert.equal(slot.snapshot?.state, 'succeeded');
+  assert.equal(slot.snapshot?.lastSequence, 9);
+  assert.equal(slot.lastAppliedSequence, 1);
+  assert.equal(value.applyJobReplayChunk('job-1', [{
+    sequence: 1,
+    eventId: 'run-terminal:run-1',
+    payload: { schemaVersion: 1, kind: 'job_terminal', runId: 'run-1', outcome: 'succeeded', jobState: 'succeeded', reason: 'completed' },
+  }]), true);
+  assert.equal(slot.orderedTail.length, 1);
+});
 
 test('job projection refuses gaps and conflicting sequence ids', () => {
   const value = store();

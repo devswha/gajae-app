@@ -29,7 +29,7 @@ function items(value: unknown): Worktree[] { const item = record(value); return 
 /** Resolves git operations from an immutable job binding, never a client-supplied path. */
 function execute(cwd: string, args: string[]): Promise<string> { return new Promise((resolve, reject) => { const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = ''; let stderr = ''; child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; }); child.on('error', reject); child.on('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `git ${args[0]} failed`))); }); }
 export class GjcJobGitService {
-  constructor(private readonly jobs: Jobs, private readonly gitForRoot: (root: string) => Git) {}
+  constructor(private readonly jobs: Jobs, private readonly gitForRoot: (root: string) => Git, private readonly publishAdminEvent?: (jobId: string, eventId: string, payload: Record<string, unknown>) => Promise<void>) {}
 
   async resolve(jobId: string): Promise<{ job: JobSnapshot; path: string; git: Git }> {
     const job = snapshot(await this.jobs.get({ jobId }));
@@ -41,7 +41,8 @@ export class GjcJobGitService {
     return { job, path: worktree.path, git };
   }
   private async recordAdminEvent(jobId: string, eventId: string, payload: Record<string, unknown>): Promise<void> {
-    await this.jobs.appendAdminEvent({ jobId, eventId, payload });
+    if (this.publishAdminEvent) await this.publishAdminEvent(jobId, eventId, payload);
+    else await this.jobs.appendAdminEvent({ jobId, eventId, payload });
   }
 
   private async lifecycle<T>(jobId: string, operation: 'publish' | 'pr', action: () => Promise<T>): Promise<T> {
@@ -59,9 +60,14 @@ export class GjcJobGitService {
   }
 
   async status(jobId: string): Promise<unknown> { const binding = await this.resolve(jobId); return binding.git.status({ jobId, branch: binding.job.branch, path: binding.path }); }
-  async diff(jobId: string): Promise<unknown> {
+  async diff(jobId: string): Promise<{ patch: string; paths: string[] }> {
     const binding = await this.resolve(jobId);
-    return binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true });
+    const value = await binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true });
+    const response = record(value);
+    const patch = Buffer.isBuffer(response.patch) ? response.patch.toString('utf8') : typeof response.patch === 'string' ? response.patch : '';
+    const source = Array.isArray(response.paths) ? response.paths : Array.isArray(response.changedPaths) ? response.changedPaths : [];
+    const paths = [...new Set(source.filter((path): path is string => typeof path === 'string' && path.length > 0 && !path.startsWith('/') && !path.split('/').includes('..')))];
+    return { patch, paths };
   }
   async publish(jobId: string): Promise<{ branch: string }> {
     return this.lifecycle(jobId, 'publish', async () => {
@@ -77,7 +83,7 @@ export class GjcJobGitService {
     const changed = new Set((await execute(binding.path, ['status', '--porcelain', '--untracked-files=all'])).split('\n').filter(Boolean).map(line => line.slice(3).replace(/^"|"$/gu, '')));
     if (input.paths.some(path => !changed.has(path))) throw Object.assign(new Error('Commit paths must be currently changed relative paths.'), { code: 'invalid_request' });
     await execute(binding.path, ['add', '--', ...input.paths]);
-    await execute(binding.path, ['commit', '-m', input.message]);
+    await execute(binding.path, ['commit', '--only', '-m', input.message, '--', ...input.paths]);
     const commit = (await execute(binding.path, ['rev-parse', 'HEAD'])).trim();
     const eventId = `commit.${randomUUID()}`;
     await this.recordAdminEvent(jobId, eventId, { kind: 'git_commit', commit, paths: input.paths });
@@ -99,13 +105,13 @@ export class GjcJobGitService {
 }
 
 let production: GjcJobGitService | undefined;
-export function getProductionGjcJobGitService(jobs: Jobs): GjcJobGitService {
+export function getProductionGjcJobGitService(jobs: Jobs, publishAdminEvent?: (jobId: string, eventId: string, payload: Record<string, unknown>) => Promise<void>): GjcJobGitService {
   if (production) return production;
   const clients = new Map<string, GjcGitClient>();
   production = new GjcJobGitService(jobs, root => {
     let client = clients.get(root);
     if (!client) { client = new GjcGitClient({ workdir: root }); clients.set(root, client); }
     return client;
-  });
+  }, publishAdminEvent);
   return production;
 }

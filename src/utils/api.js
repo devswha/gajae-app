@@ -99,7 +99,10 @@ export const api = {
       body: JSON.stringify(input),
     }),
     abort: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/abort`, { method: 'POST' }),
-    resume: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }),
+    resume: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
     replay: (jobId, after = 0) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/replay?after=${encodeURIComponent(after)}`),
     diff: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/diff`),
     commit: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/commit`, {

@@ -38,7 +38,7 @@ test('GJC jobs routes keep the authority alive across invalid and valid paginati
     const response = await server.request('/jobs?limit=10');
     assert.equal(response.status, 200);
     assert.equal((await server.request('/jobs?cursor=MIGRATED_Job.1%3Aorigin')).status, 200);
-    assert.deepEqual(await response.json(), []);
+    assert.deepEqual(await response.json(), { items: [], nextCursor: null });
   } finally {
     await server.close();
     getProductionJobOrchestrator().close();
