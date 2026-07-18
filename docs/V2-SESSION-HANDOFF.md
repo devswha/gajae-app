@@ -54,6 +54,15 @@ Every completed goal passed: ai-slop-cleaner PASS → architect CLEAR/APPROVE �
 
 **Verified**: mac cargo build/clippy/test (supervisor+lifecycle+navigation), ad-hoc `.app` codesign valid (arm64, `desktopVersion` 0.2.0, `gajae-app` scheme, payload embedded), headless DMG verify+sha256, packaged-server smoke + data-survival PASS, desktop-auth 11 tests, `npm test` both OS = 0, v1 diff 0.
 
+**C7 진행 상황 (2026-07-19, 원격 VNC+osascript 드라이브로 착수):**
+- 첫 실기 GUI 실행에서 **버그 2개 발견·수정 → `e8ac1e7` 커밋**:
+  1. 사이드카 SIGTRAP — Tauri 번들러가 Node 사이드카를 hardened runtime으로 재서명하면서 JIT 엔타이틀먼트가 빠져 V8이 spawn ~20ms 만에 사망. `src-tauri/entitlements.plist` 추가 + `tauri.conf.json` `bundle.macOS.entitlements` 배선. (기존 .app은 수동 `codesign --entitlements` 재서명으로 응급 복구됨)
+  2. 전 API 401 — WKWebView가 303 리다이렉트 체인에서 SameSite=Strict 쿠키를 드롭 + 브라우저 same-origin GET fetch는 Origin 헤더를 별내지 않음. `desktop-auth.js`: 쿠키 `lax` + HTTP는 absent-Origin 허용(불일치는 여전히 거부), WS는 exact-match 유지. 테스트 3/3 통과.
+- **완료**: 앱 실행→React UI 렌더(recovery 아님) 확인, 프로젝트 마법사로 `/Users/devswha/gjc-c7-test` 생성(API 검증), 인증 상태 `isAuthenticated:true`.
+- **남은 C7**: 새 세션/잡 생성→스트림→abort→resume→diff→commit, 터미널, 에디터, 윈도우 닫기 잡 유지, Cmd-Q interrupted, 딥링크, Recovery/Retry, DMG 설치/Gatekeeper.
+- **맥 접근성**: sshd-keygen-wrapper에 손쉬운 사용+PostEvent 허용됨(사용자 Touch ID 승인) — SSH 세션에서 osascript 키스트로크/UI스크립팅 가능. VNC(화면공유 :5900)는 레거시 암호 또는 ARD 계정인증으로 접속됨(타입30 DH). 단 macOS 26은 VNC 키보드 이벤트를 드롭하므로 키 입력은 osascript 경유 필수.
+- 맥 미러 `~/workspace/gajae-app`는 **main 브랜치** — 아래 rsync로 checkpoint-c 동기화 후 재빌드 필요 (현재 .app은 수동 패치 상태).
+
 **Blocked on human/credential/toolchain (why paused):**
 1. **C7 interactive GUI smoke** — WebView render, terminal/editor/job-UI clicks, window hide/reopen with a live job, Cmd-Q interrupted UX, DMG drag-install, Gatekeeper, deep-link. Needs a logged-in GUI session (unreachable over headless SSH).
 2. **C8 interactive Electron↔Tauri rollback drill** — physical install/upgrade/rollback. Its data-survival axis is already auto-proven.
@@ -69,6 +78,7 @@ Every completed goal passed: ai-slop-cleaner PASS → architect CLEAR/APPROVE �
    - Build: `npm ci && npm run server:payload:macos && npm run tauri -- build && npm run desktop:dmg:macos`.
    - C7 GUI smoke + C8 rollback drill (record evidence per the checklist).
    - Optional: add Apple Developer ID + notarization creds, set `signingIdentity` in `tauri.conf.json`, rebuild for a notarized DMG.
+   - **재빌드 필수**: 현재 맥의 `.app`은 수동 패치 상태다. checkpoint-c 동기화 후 `npm run tauri -- build`로 다시 만들어야 entitlements가 영구 적용된다.
 4. After C7+C8 pass: do **C9 Electron removal** (remove `electron/`, `prepare-desktop-app.js`, electron scripts/deps; keep Windows Job Object), re-run `npm run verify` + mac cargo/DMG/smoke, confirm no `electron|electron-builder|ELECTRON_` in non-historical source. Then checkpoint G006 complete + close G011/G012.
 5. Control tower cuts the 1.2.0 (Slice 5) release on report collection; v2 completion gate = Slice 6 (already done).
 
