@@ -16,12 +16,14 @@ The items below require a **human at the physical Mac** (GUI interaction) and/or
 ssh macbook
 cd ~/workspace/gajae-app
 npm ci
-npm run server:payload:macos          # darwin-arm64 Node payload + externalBin (~14 min)
-npm run tauri -- build                 # ad-hoc .app (+ cosmetic DMG fails headlessly — expected)
-npm run desktop:dmg:macos              # functional DMG via hdiutil + sha256
+npm run desktop:dist:mac                # retained Electron rollback .app + DMG (ad-hoc)
+npm run server:payload:macos            # darwin-arm64 Node payload + externalBin (~14 min)
+npm run tauri -- build                  # ad-hoc .app (+ cosmetic DMG fails headlessly — expected)
+npm run desktop:dmg:macos               # functional Tauri DMG via hdiutil + sha256
 ```
 
 Artifacts:
+- `release/desktop/mac-arm64/Gajae App.app` and `release/desktop/gajae-app-desktop-0.2.0-mac-arm64.dmg` (Electron rollback, ad-hoc)
 - `src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Gajae App.app` (ad-hoc, arm64)
 - `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Gajae-App_0.2.0_aarch64.dmg` (+`.sha256`)
 
@@ -92,3 +94,35 @@ Once the interactive smoke and the full rollback drill pass, remove Electron
 `electron` + `electron-builder` deps) — keeping the Windows Job Object code — then
 re-run `npm run verify`, the mac cargo/DMG build, and the mac smoke, and confirm
 `electron|electron-builder|ELECTRON_` is absent from non-historical source/config.
+
+## C0 — Electron/Tauri parity inventory
+
+| Contract | Electron rollback shell | Tauri shell | Decision |
+| --- | --- | --- | --- |
+| Product identity / app ID | `Gajae App`, `app.gajae.desktop` | `Gajae App`, `app.gajae.desktop` | Retain |
+| URL scheme / deep link | `gajae-app://` protocol handler | `gajae-app://` Tauri plugin handler | Retain; C7 verifies delivery |
+| Local server data root | Existing checkout/server data roots | Sidecar uses the same durable server data roots | Retain; no DB downgrade on rollback |
+| Server payload | `dist-server`, `dist-native`, `server`, `shared`, web assets, and production dependency closure | `Contents/Resources/server-payload` | Retain identical post-Slice-4 server contract |
+| Tray / window lifecycle | Electron tray, window hide/show | Tauri tray, hide-on-close, explicit quit fence | Retain behavior; C7 validates interaction |
+| Remote target selection | Electron remote target store | Not carried to the Tauri local-first shell | Intentionally retired; local server is the supported target |
+| Desktop bootstrap | Local-server launch flow | Supervisor supplies launch-only key/nonce | Retain C4 HTTP contract |
+
+## Automated packaged-server smoke (Mac)
+
+After building each artifact, run these non-GUI checks from the checkout:
+
+```sh
+node scripts/release/smoke-packaged-server.mjs \
+  --tauri-app "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Gajae App.app" \
+  --project-dir "$PWD"
+
+node scripts/release/smoke-packaged-server.mjs \
+  --electron-app "release/desktop/mac-arm64/Gajae App.app" \
+  --project-dir "$PWD"
+```
+
+The script launches only the packaged sidecar/runtime on a newly allocated loopback
+port. It verifies `/health` identity, one-time desktop bootstrap (`HttpOnly` cookie
+and `303 /`), unauthenticated API denial, exact-Origin authenticated API access, and
+a GJC job create/list/abort round trip. It does not open a WebView, mount a DMG, or
+exercise Gatekeeper; those remain C7/C8 human checks.

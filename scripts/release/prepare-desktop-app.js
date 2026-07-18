@@ -47,15 +47,27 @@ async function copyRequired(relativePath) {
 }
 
 
-async function copyNodeModule(packageName) {
-  const parts = packageName.split('/');
-  const source = path.join(rootDir, 'node_modules', ...parts);
-  if (!(await pathExists(source))) return false;
+async function copyProductionNodeModules() {
+  const lockfile = JSON.parse(await fs.readFile(path.join(rootDir, 'package-lock.json'), 'utf8'));
+  const packages = Object.entries(lockfile.packages || {})
+    .filter(([relativePath, metadata]) => relativePath.startsWith('node_modules/') && !metadata.dev)
+    .sort(([left], [right]) => left.split('/').length - right.split('/').length);
 
-  const target = path.join(stageDir, 'node_modules', ...parts);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.cp(source, target, { recursive: true });
-  return true;
+  for (const [relativePath, metadata] of packages) {
+    const source = path.join(rootDir, relativePath);
+    if (!(await pathExists(source))) {
+      if (metadata.optional) continue;
+      throw new Error(`Required production dependency is missing from node_modules: ${relativePath}`);
+    }
+    const target = path.join(stageDir, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.cp(source, target, {
+      recursive: true,
+      filter: (entry) => entry === source || !path.relative(source, entry).startsWith(`node_modules${path.sep}`),
+    });
+  }
+
+  return packages.map(([relativePath]) => relativePath);
 }
 
 // The desktop app versions independently of the upstream web package (gjc-desktop-vX.Y.Z
@@ -64,7 +76,7 @@ async function copyNodeModule(packageName) {
 const desktopVersion =
   process.env.GJC_DESKTOP_VERSION || packageJson.desktopVersion || packageJson.version;
 
-function buildDesktopPackageJson(copiedOptionalDependencies) {
+function buildDesktopPackageJson() {
   return {
     name: `${packageJson.name}-desktop`,
     version: desktopVersion,
@@ -75,10 +87,7 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
     type: 'module',
     main: 'electron/main.js',
     homepage: packageJson.homepage || 'https://gjc.vibetip.help',
-    dependencies: {
-      ws: packageJson.dependencies.ws,
-    },
-    optionalDependencies: copiedOptionalDependencies,
+    dependencies: packageJson.dependencies,
     build: {
       appId: packageJson.build.appId,
       productName: packageJson.build.productName,
@@ -97,6 +106,10 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
         'public/**',
         'dist/**',
         'dist-server/**',
+        'dist-native/**',
+        'shared/**',
+        'server/**',
+        'scripts/gajae-app-runtime.mjs',
         'node_modules/**',
         'package.json',
       ],
@@ -112,45 +125,27 @@ function buildDesktopPackageJson(copiedOptionalDependencies) {
 await fs.rm(stageDir, { recursive: true, force: true });
 await fs.mkdir(stageDir, { recursive: true });
 
-await copyRequired('electron');
-await copyRequired('dist');
-await copyRequired('public');
-
-const copiedRuntimeDependencies = [];
-if (await copyNodeModule('ws')) {
-  copiedRuntimeDependencies.push('ws');
-} else {
-  throw new Error('Required desktop dependency is missing from node_modules: ws');
-}
-
-const copiedOptionalDependencies = {};
-for (const [name, version] of Object.entries(packageJson.optionalDependencies || {})) {
-  if (await copyNodeModule(name)) {
-    copiedOptionalDependencies[name] = version;
-  }
-}
-
-for (const name of [
-  '@nut-tree-fork/default-clipboard-provider',
-  '@nut-tree-fork/libnut',
-  '@nut-tree-fork/provider-interfaces',
-  '@nut-tree-fork/shared',
-  'jimp',
-  'node-abort-controller',
-  'temp',
+for (const input of [
+  'electron',
+  'dist',
+  'dist-server',
+  'dist-native',
+  'public',
+  'shared',
+  'server',
+  'scripts/gajae-app-runtime.mjs',
 ]) {
-  await copyNodeModule(name);
+  await copyRequired(input);
 }
+
+const copiedRuntimeDependencies = await copyProductionNodeModules();
 
 await fs.writeFile(
   path.join(stageDir, 'package.json'),
-  `${JSON.stringify(buildDesktopPackageJson(copiedOptionalDependencies), null, 2)}\n`,
+  `${JSON.stringify(buildDesktopPackageJson(), null, 2)}\n`,
   'utf8',
 );
 
-console.log(`Prepared thin desktop app at ${path.relative(rootDir, stageDir)}`);
+console.log(`Prepared desktop server payload at ${path.relative(rootDir, stageDir)}`);
 console.log(`Desktop version: ${desktopVersion} (web package ${packageJson.version})`);
-console.log(`Runtime dependencies: ${copiedRuntimeDependencies.join(', ')}`);
-if (Object.keys(copiedOptionalDependencies).length) {
-  console.log(`Optional dependencies: ${Object.keys(copiedOptionalDependencies).join(', ')}`);
-}
+console.log(`Production runtime dependencies: ${copiedRuntimeDependencies.join(', ')}`);
