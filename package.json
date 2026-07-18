@@ -4,14 +4,13 @@
   "version": "1.0.0",
   "desktopVersion": "0.2.0",
   "productName": "Gajae App",
-  "description": "A self-hosted web and desktop interface for GJC, Claude Code, Cursor, Codex, and OpenCode",
+"description": "A self-hosted web and desktop interface for GJC",
   "type": "module",
   "main": "dist-server/server/index.js",
   "bin": {
     "gajae-app": "dist-server/server/cli.js"
   },
   "files": [
-    "electron/",
     "server/",
     "shared/",
     "public/api-docs.html",
@@ -37,16 +36,10 @@
     "server:dev-watch": "tsx watch --tsconfig server/tsconfig.json server/index.js",
     "preserver:dev-watch": "npm run fill:runtime-manifest && npm run build:core:dev",
     "client": "vite",
-    "desktop": "electron electron/main.js",
-    "desktop:dev": "cross-env ELECTRON_DEV_URL=http://127.0.0.1:5173 electron electron/main.js",
-    "desktop:stage": "node scripts/release/prepare-desktop-app.js",
-    "desktop:pack": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --dir",
-    "desktop:dist:mac": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --mac dmg",
-    "desktop:dist:win": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --win nsis",
-    "desktop:dist:linux": "npm run build && npm run desktop:stage && electron-builder --projectDir .desktop-build/desktop-app --linux",
+    "desktop": "node src-tauri/scripts/tauri.mjs dev",
+    "desktop:dev": "node src-tauri/scripts/tauri.mjs dev",
     "server:bundle": "npm run build && node scripts/release/build-server-bundle.js",
     "server:payload:macos": "node scripts/fetch-bun.mjs && npm run build && node scripts/release/build-macos-server-payload.mjs",
-    "desktop:icon:mac": "node electron/scripts/generate-macos-icon.js",
     "tauri": "node src-tauri/scripts/tauri.mjs",
     "desktop:dmg:macos": "node scripts/release/make-macos-dmg.mjs",
     "build": "npm run build:client && npm run build:server && npm run build:core",
@@ -65,8 +58,8 @@
     "smoke:packaged-server": "node scripts/release/smoke-packaged-server.mjs",
     "pretest": "npm run build:core:dev",
     "test:e2e:gjc": "TSX_TSCONFIG_PATH=server/tsconfig.json node --import tsx --test --test-concurrency=1 server/e2e/gjc-slice4.browser.e2e.ts server/e2e/gjc-slice4.wire.e2e.ts",
-    "lint": "eslint src/ server/ electron/ shared/ scripts/ vite.config.js tailwind.config.js",
-    "lint:fix": "eslint src/ server/ electron/ shared/ scripts/ vite.config.js tailwind.config.js --fix",
+    "lint": "eslint src/ server/ shared/ scripts/ vite.config.js tailwind.config.js",
+    "lint:fix": "eslint src/ server/ shared/ scripts/ vite.config.js tailwind.config.js --fix",
     "verify": "npm run audit && npm run typecheck && npm run check:core && npm test && npm run lint && npm run check:identity && npm run build",
     "start": "npm run build && npm run server",
     "postinstall": "node scripts/fix-node-pty.js",
@@ -81,11 +74,7 @@
     "directories": {
       "output": "release/desktop"
     },
-    "extraMetadata": {
-      "main": "electron/main.js"
-    },
     "files": [
-      "electron/",
       "public/",
       "dist/",
       "dist-server/",
@@ -242,9 +231,6 @@
     "auto-changelog": "^2.5.0",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
-    "cross-env": "^10.1.0",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.15.3",
     "eslint": "^9.39.3",
     "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-boundaries": "^6.0.2",
@@ -271,6 +257,6 @@
   "lint-staged": {
     "src/**/*.{ts,tsx,js,jsx}": "eslint",
     "server/**/*.{js,ts}": "eslint",
-    "{electron,shared,scripts}/**/*.{js,mjs,cjs,ts}": "eslint"
+    "{shared,scripts}/**/*.{js,mjs,cjs,ts}": "eslint"
   }
 }

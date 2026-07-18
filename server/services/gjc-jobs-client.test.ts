@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
+
 import { GjcJobsClient, GjcJobsClientError, GjcJobsEventTooLargeError } from './gjc-jobs-client.js';
 import type { GjcNativeSpawn } from './gjc-git-client.js';
 

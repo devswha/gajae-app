@@ -1,7 +1,8 @@
 import type { WebSocket } from 'ws';
 
-import { isJobProjectionEvent, isJobProjectionInboundFrame, isJobProjectionOutboundFrame, type JobProjectionErrorCode, type JobProjectionInboundFrame, type JobProjectionOutboundFrame, type JobProjectionEvent } from '../../../../shared/gjc-job-projection-protocol.js';
 import { WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
+
+import { isJobProjectionEvent, isJobProjectionInboundFrame, isJobProjectionOutboundFrame, type JobProjectionErrorCode, type JobProjectionOutboundFrame, type JobProjectionEvent } from '../../../../shared/gjc-job-projection-protocol.js';
 
 type Authority = { get(params: { jobId: string }): Promise<unknown>; replayEvents(params: { jobId: string; after: number; byteBudget: number }): Promise<unknown> };
 type Subscription = { id: string; jobId: string; watermark: number; lastSent: number; lastEventId?: string; buffer: JobProjectionEvent[]; bufferBytes: number; timer?: NodeJS.Timeout; state: 'REPLAY_WAIT' | 'REPLAY_IO' | 'FLUSHING' | 'LIVE' };

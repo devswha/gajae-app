@@ -18,7 +18,7 @@ function option(name) {
 }
 
 function usage() {
-  throw new Error('Usage: node scripts/release/smoke-packaged-server.mjs (--tauri-app <path> | --electron-app <path>) [--project-dir <path>] [--data-survival]');
+  throw new Error('Usage: node scripts/release/smoke-packaged-server.mjs --tauri-app <path> [--project-dir <path>] [--data-survival]');
 }
 
 function request(url, { headers, method = 'GET', body, redirect = 'manual' } = {}) {
@@ -57,8 +57,7 @@ async function waitForHealth(baseUrl, output) {
 
 function packagedTargets() {
   const tauriApp = option('--tauri-app');
-  const electronApp = option('--electron-app');
-  if ((!tauriApp && !electronApp) || (tauriApp && electronApp)) usage();
+  if (!tauriApp) usage();
 
   if (tauriApp) {
     const app = path.resolve(tauriApp);
@@ -75,13 +74,6 @@ function packagedTargets() {
       extraEnv: { DYLD_LIBRARY_PATH: path.join(payload, 'node', 'lib') },
     };
   }
-
-  const app = path.resolve(electronApp);
-  const payload = path.join(app, 'Contents', 'Resources', 'app');
-  return {
-    label: 'Electron', cwd: payload, command: path.join(app, 'Contents', 'MacOS', 'gajae-app'),
-    args: [path.join(payload, 'dist-server', 'server', 'index.js')], extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
-  };
 }
 
 function launch(target, dataDirectory, projectDir) {

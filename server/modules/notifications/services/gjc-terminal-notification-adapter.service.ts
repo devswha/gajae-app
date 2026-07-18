@@ -9,6 +9,7 @@ import {
   notifyUserIfEnabled,
 } from '@/modules/notifications/services/notification-orchestrator.service.js';
 import type { JobAuthority } from '@/services/gjc-job-orchestrator.js';
+
 import type { JobProjectionEvent, JobTerminalOutcome } from '../../../../shared/gjc-job-projection-protocol.js';
 
 type TerminalPayload = {

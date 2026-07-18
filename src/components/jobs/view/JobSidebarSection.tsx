@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
-import JobStatusBadge from './JobStatusBadge';
+
 import { useJobsController } from '../hooks/useJobsController';
+
+import JobStatusBadge from './JobStatusBadge';
 export default function JobSidebarSection({ jobs: suppliedJobs }: { jobs?: Array<{ jobId?: string; id?: string; state?: any }> }) {
   const { jobs: loadedJobs } = useJobsController();
   const jobs = suppliedJobs ?? loadedJobs as Array<{ jobId?: string; id?: string; state?: any }>;

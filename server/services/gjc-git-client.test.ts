@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
+
 import { GjcGitClient, type GjcNativeSpawn } from './gjc-git-client.js';
 
 class FakeChild extends EventEmitter {

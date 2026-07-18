@@ -2,9 +2,8 @@ import http from 'node:http';
 
 import cors from 'cors';
 import express from 'express';
+
 import { createDesktopAuth, DESKTOP_BOOTSTRAP_PATH } from './middleware/desktop-auth.js';
-
-
 import { createWebSocketServer } from './modules/websocket/index.js';
 import { createGjcJobsRouter } from './routes/gjc-jobs.js';
 

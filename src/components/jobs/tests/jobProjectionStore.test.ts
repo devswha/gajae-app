@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+
 import { useSessionStore, type SessionStore } from '../../../stores/useSessionStore';
 
 function store(): SessionStore { let value: SessionStore | undefined; function Harness() { value = useSessionStore(); return null; } renderToStaticMarkup(createElement(Harness)); assert.ok(value); return value; }

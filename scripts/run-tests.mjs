@@ -86,10 +86,9 @@ function runBunTests(label, files) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-const [serverTestsAll, clientTests, electronTests] = await Promise.all([
+const [serverTestsAll, clientTests] = await Promise.all([
   collectTests('server'),
   collectTests('src'),
-  collectTests('electron'),
 ]);
 const serverBunTests = serverTestsAll.filter((file) => BUN_TEST_FILE_PATTERN.test(file));
 const serverTests = serverTestsAll.filter((file) => !BUN_TEST_FILE_PATTERN.test(file));
@@ -97,4 +96,3 @@ const serverTests = serverTestsAll.filter((file) => !BUN_TEST_FILE_PATTERN.test(
 runTests('server', serverTests, { tsconfig: 'server/tsconfig.json' });
 runBunTests('server-bun', serverBunTests);
 runTests('client', clientTests, { tsconfig: 'tsconfig.json' });
-runTests('electron', electronTests);

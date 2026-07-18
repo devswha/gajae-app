@@ -1,8 +1,10 @@
 import jwt from 'jsonwebtoken';
+
+import { userDb, appConfigDb } from '../modules/database/index.js';
+
 import { isDesktopMode } from './desktop-auth.js';
 
 
-import { userDb, appConfigDb } from '../modules/database/index.js';
 
 // Use env var if set, otherwise auto-generate a unique secret per installation
 const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();

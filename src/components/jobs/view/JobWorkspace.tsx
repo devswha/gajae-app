@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+
 import type { SessionStore } from '../../../stores/useSessionStore';
 import { useJobProjection } from '../hooks/useJobProjection';
+import { api } from '../../../utils/api';
+
 import JobStatusBadge from './JobStatusBadge';
 import JobTimeline from './JobTimeline';
 import JobGitChanges from './JobGitChanges';
-import { api } from '../../../utils/api';
 
 export default function JobWorkspace({ jobId, store }: { jobId: string; store: SessionStore }) {
   const slot = useJobProjection(jobId, store);

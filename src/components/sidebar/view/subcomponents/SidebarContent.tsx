@@ -10,6 +10,7 @@ import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMod
 import { useExternalCliSessions } from '../../hooks/useExternalCliSessions';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { getAllSessions } from '../../utils/utils';
+import { JobSidebarSection } from '../../../jobs';
 
 import SidebarFooter from './SidebarFooter';
 import SidebarHeader from './SidebarHeader';
@@ -17,7 +18,6 @@ import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProje
 import SidebarLiveSection from './SidebarLiveSection';
 import SidebarExternalSection from './SidebarExternalSection';
 import SidebarSpawnSession from './SidebarSpawnSession';
-import { JobSidebarSection } from '../../../jobs';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
   const parts: ReactNode[] = [];

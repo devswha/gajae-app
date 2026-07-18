@@ -11,8 +11,6 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { authenticatedFetch } from '../utils/api';
 import type { LLMProvider } from '../types/app';
-
-import { buildRefreshMessagesUrl } from './sessionMessageFetch';
 import type {
   JobProjectionErrorCode,
   JobProjectionEvent,
@@ -20,6 +18,8 @@ import type {
   JobState,
   JobTerminalPayload,
 } from '../../shared/gjc-job-projection-protocol';
+
+import { buildRefreshMessagesUrl } from './sessionMessageFetch';
 
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 

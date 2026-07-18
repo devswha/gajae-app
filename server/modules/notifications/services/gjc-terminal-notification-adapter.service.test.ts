@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { closeConnection, getConnection, initializeDatabase } from '@/modules/database/index.js';
 import { createGjcTerminalNotificationAdapter } from '@/modules/notifications/services/gjc-terminal-notification-adapter.service.js';
+
 import type { JobProjectionEvent } from '../../../../shared/gjc-job-projection-protocol.js';
 
 let directory: string;
