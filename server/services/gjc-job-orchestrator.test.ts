@@ -4,10 +4,11 @@ import test from 'node:test';
 import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
 import type { GjcWorkerOutcome } from '../gjc-worker-client.js';
 
-type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string } };
+type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string }; lastSequence?: number };
 class Jobs implements JobAuthority {
-  calls: Array<[string, Record<string, unknown>]> = []; state: Snap = { jobId: '', state: 'reserved', lease: { owner: 'owner', generation: 1 } };
+  calls: Array<[string, Record<string, unknown>]> = []; events: Array<{ eventId: string; sequence: number; payload: unknown }> = []; state: Snap = { jobId: '', state: 'reserved', lease: { owner: 'owner', generation: 1 }, lastSequence: 0 };
   private call(name: string, params: Record<string, unknown>): Promise<unknown> { this.calls.push([name, params]); return Promise.resolve(this.state); }
+  private event(name: string, params: Record<string, unknown>): Promise<unknown> { this.calls.push([name, params]); const existing = this.events.find((event) => event.eventId === params.eventId); if (existing) return Promise.resolve(existing); const event = { eventId: String(params.eventId), sequence: (this.state.lastSequence ?? 0) + 1, payload: params.payload }; this.events.push(event); this.state = { ...this.state, lastSequence: event.sequence }; return Promise.resolve(event); }
   reserve(p: Record<string, unknown>) { this.state = { ...this.state, jobId: String(p.jobId), state: 'reserved', lease: { owner: String(p.owner), generation: 1 } }; return this.call('reserve', p); }
   prepare(p: Record<string, unknown>) { this.state = { ...this.state, worktreeId: String(p.worktreeId), repositoryRoot: String(p.repositoryRoot), branch: String(p.branch) }; return this.call('prepare', p); }
   admit(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', currentRun: { runId: String(p.runId), appSessionId: String(p.appSessionId) } }; return this.call('admit', p); }
@@ -16,13 +17,15 @@ class Jobs implements JobAuthority {
   markDispatching(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', dispatchCheckpoint: { runId: String(p.runId) } }; return this.call('markDispatching', p); }
   finalize(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state), lease: { owner: '', generation: 0 } }; return this.call('finalize', p); }
   cancelAdmission(p: Record<string, unknown>) { this.state = { ...this.state, state: 'failed', lease: { owner: '', generation: 0 } }; return this.call('cancelAdmission', p); }
-  appendEvent(p: Record<string, unknown>) { return this.call('appendEvent', p); }
+  appendEvent(p: Record<string, unknown>) { return this.event('appendEvent', p); }
+  appendAdminEvent(p: Record<string, unknown>) { return this.event('appendAdminEvent', p); }
+  replayEvents(p: Record<string, unknown>) { this.calls.push(['replayEvents', p]); return Promise.resolve({ events: this.events.filter((event) => event.sequence > Number(p.after ?? 0)) }); }
   get(p: Record<string, unknown>) { return this.call('get', p); }
   reconcile(p: Record<string, unknown> = {}) { return this.call('reconcile', p); }
   bindProviderSession(p: Record<string, unknown>) { return this.call('bindProviderSession', p); }
   reserveStart(p: Record<string, unknown>) { return this.reserve(p); }
   turnAdmit(p: Record<string, unknown>) { return this.admit(p); }
-  runFinalize(p: Record<string, unknown>) { return this.finalize({ ...p, state: p.terminalRunState }); }
+  runFinalize(p: Record<string, unknown>) { const event = this.event('runFinalize', p); this.state = { ...this.state, state: String(p.terminalRunState), lease: { owner: '', generation: 0 } }; return event.then(() => this.state); }
   bindingResolve(p: Record<string, unknown>) { return Promise.resolve({ jobId: this.state.jobId, state: this.state.state, providerSessionId: 'provider-1', ...p }); }
   bindingRelease(p: Record<string, unknown>) { return this.call('bindingRelease', p); }
   interruptForShutdown() { this.state = { ...this.state, state: 'interrupted' }; return this.call('interruptForShutdown', {}); }
@@ -50,21 +53,21 @@ test('completion resolves only after durable finalization succeeds', async () =>
   const jobs = new Jobs(); const git = new Git();
   let settle!: () => void; const workerCompletion = new Promise<void>((resolve) => { settle = resolve; });
   let finalize!: () => void; const finalizeGate = new Promise<void>((resolve) => { finalize = resolve; });
-  jobs.finalize = async (p) => { jobs.calls.push(['finalize', p]); await finalizeGate; jobs.state = { ...jobs.state, state: String(p.state) }; return jobs.state; };
+  jobs.runFinalize = async (p) => { jobs.calls.push(['runFinalize', p]); await finalizeGate; await Jobs.prototype.runFinalize.call(jobs, p); return jobs.state; };
   const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => 'aborted' };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
   const run = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
   let completed = false; void run.completion.then(() => { completed = true; });
   settle(); await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(completed, false); assert.equal(jobs.calls.at(-1)?.[0], 'finalize');
+  assert.equal(completed, false); assert.equal(jobs.calls.at(-1)?.[0], 'runFinalize');
   finalize(); await run.completion; assert.equal(jobs.state.state, 'succeeded');
 });
 test('completion read-back accepts a committed success when the finalize response is lost', async () => {
   const jobs = new Jobs(); const git = new Git();
   let settle!: () => void; const workerCompletion = new Promise<void>((resolve) => { settle = resolve; });
-  jobs.finalize = async (p) => {
-    jobs.calls.push(['finalize', p]);
-    jobs.state = { ...jobs.state, state: String(p.state) };
+  jobs.runFinalize = async (p) => {
+    jobs.calls.push(['runFinalize', p]);
+    await Jobs.prototype.runFinalize.call(jobs, p);
     throw new Error('finalize response lost');
   };
   const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => 'aborted' };
@@ -72,7 +75,7 @@ test('completion read-back accepts a committed success when the finalize respons
   settle();
   await run.completion;
   assert.equal(jobs.state.state, 'succeeded');
-  assert.deepEqual(jobs.calls.slice(-2).map(([name]) => name), ['finalize', 'get']);
+  assert.deepEqual(jobs.calls.slice(-3).map(([name]) => name), ['runFinalize', 'get', 'replayEvents']);
 });
 test('pre-run admission failure uses cancelAdmission instead of forbidden terminal transition', async () => {
   const jobs = new Jobs(); const git = new Git(); git.create = async () => { throw new Error('worktree failed'); };
@@ -186,7 +189,7 @@ test('a completion after an unacknowledged abort finalizes Aborting as succeeded
   settle();
   await run.completion;
   assert.equal(jobs.state.state, 'succeeded');
-  assert.equal(jobs.calls.at(-1)?.[0], 'finalize');
+  assert.equal(jobs.calls.at(-2)?.[0], 'runFinalize');
 });
 test('resolveBinding reads the durable app-session binding', async () => {
   const jobs = new Jobs();
@@ -252,4 +255,29 @@ test('two non-settling runs are reaped before an early healthy authority notific
   completions.forEach((settle) => settle());
   await Promise.all([firstRun.completion, secondRun.completion, thirdRun.completion]);
   assert.equal(jobs.state.state, 'succeeded');
+});
+test('broadcast receives the committed event identity and sequence', async () => {
+  const jobs = new Jobs(); const git = new Git(); const events: Array<{ eventId: string; sequence: number; payload: unknown }> = [];
+  let complete!: () => void; const completion = new Promise<void>((resolve) => { complete = resolve; });
+  const supervisor: JobSupervisor = { spawnRun: (input) => { input.writer.send({ kind: 'delta' }); return { started: Promise.resolve(), completion, abortHandle: input.runId }; }, abort: async () => 'aborted' };
+  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', broadcast: (_jobId, event) => events.push(event) }).start('gjc', 'app-1', '/project', 'hello', options);
+  await new Promise<void>((resolve) => setImmediate(resolve)); complete(); await run.completion;
+  assert.equal(events.length, 2);
+  assert.equal(events[0]?.sequence, 1);
+  assert.equal(events[1]?.eventId, 'run-terminal:run-abc');
+  assert.deepEqual(events[1]?.payload, { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'succeeded', jobState: 'succeeded', reason: 'completed' });
+});
+test('a throwing broadcast cannot undo a committed event or terminal state', async () => {
+  const jobs = new Jobs(); const git = new Git(); let complete!: () => void; const completion = new Promise<void>((resolve) => { complete = resolve; });
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion, abortHandle: input.runId }), abort: async () => 'aborted' };
+  const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', broadcast: () => { throw new Error('subscriber failed'); } }).start('gjc', 'app-1', '/project', 'hello', options);
+  complete(); await run.completion;
+  assert.equal(jobs.state.state, 'succeeded');
+  assert.equal(jobs.events.at(-1)?.eventId, 'run-terminal:run-abc');
+});
+test('admin events broadcast only after a committed authority event is returned', async () => {
+  const jobs = new Jobs(); const events: Array<{ eventId: string; sequence: number }> = [];
+  const orchestrator = new JobOrchestrator({ jobs, git: new Git(), supervisor: new Supervisor(), broadcast: (_jobId, event) => events.push(event) });
+  await orchestrator.appendAdminEvent('job-admin', 'publish.started', { branch: 'job-admin' });
+  assert.deepEqual(events.map(({ eventId, sequence }) => ({ eventId, sequence })), [{ eventId: 'publish.started', sequence: 1 }]);
 });

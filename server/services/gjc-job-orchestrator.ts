@@ -1,3 +1,4 @@
+import { createJobTerminalPayload, isJobProjectionEvent, jobTerminalEventId, type JobProjectionEvent } from '../../shared/gjc-job-projection-protocol.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -16,15 +17,15 @@ type JobSnapshot = { jobId: string; provider?: string; state: string; lease?: Le
 type Binding = { jobId: string; state: string; providerSessionId?: string | null };
 export type JobAuthority = {
   reserveStart(params: Record<string, unknown>): Promise<unknown>; turnAdmit(params: Record<string, unknown>): Promise<unknown>; prepare(params: Record<string, unknown>): Promise<unknown>; admit(params: Record<string, unknown>): Promise<unknown>; readmit(params: Record<string, unknown>): Promise<unknown>;
-  transition(params: Record<string, unknown>): Promise<unknown>; markDispatching(params: Record<string, unknown>): Promise<unknown>; runFinalize(params: Record<string, unknown>): Promise<unknown>; cancelAdmission(params: Record<string, unknown>): Promise<unknown>; appendEvent(params: Record<string, unknown>): Promise<unknown>; get(params: Record<string, unknown>): Promise<unknown>;
-  list?(params?: Record<string, unknown>): Promise<unknown>; replayEvents?(params: Record<string, unknown>): Promise<unknown>;
+  transition(params: Record<string, unknown>): Promise<unknown>; markDispatching(params: Record<string, unknown>): Promise<unknown>; runFinalize(params: Record<string, unknown>): Promise<unknown>; cancelAdmission(params: Record<string, unknown>): Promise<unknown>; appendEvent(params: Record<string, unknown>): Promise<unknown>; appendAdminEvent(params: Record<string, unknown>): Promise<unknown>; get(params: Record<string, unknown>): Promise<unknown>;
+  list?(params?: Record<string, unknown>): Promise<unknown>; replayEvents(params: Record<string, unknown>): Promise<unknown>;
   bindingResolve(params: Record<string, unknown>): Promise<unknown>; bindingRelease(params: Record<string, unknown>): Promise<unknown>; interruptForShutdown(): Promise<unknown>; reconcile(params?: Record<string, unknown>): Promise<unknown>; bindProviderSession(params: Record<string, unknown>): Promise<unknown>;
 };
 export type GitWorktrees = { create(params: Record<string, unknown>): Promise<unknown>; list(params?: Record<string, unknown>): Promise<unknown>; status(params?: Record<string, unknown>): Promise<unknown> };
 export type JobSupervisor = { spawnRun(input: GjcWorkerSpawnRun): GjcWorkerRun; abort(alias: string): Promise<GjcWorkerAbortOutcome>; terminate?(alias: string): Promise<GjcWorkerReapOutcome> };
 export type JobOrchestratorOptions = GjcWorkerOptions & { writer: GjcWorkerWriter; jobId?: string; cap?: number; dispatched?: boolean };
 export type JobRunHandle = { jobId: string; runId?: string; state: string; started: Promise<void>; completion: Promise<void>; abortHandle: string };
-export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktrees; gitForProject?: (projectRoot: string) => GitWorktrees; supervisor: JobSupervisor; owner?: string; createId?: () => string; broadcast?: (jobId: string, event: unknown) => void; stopCompletionTimeoutMs?: number };
+export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktrees; gitForProject?: (projectRoot: string) => GitWorktrees; supervisor: JobSupervisor; owner?: string; createId?: () => string; broadcast?: (jobId: string, event: JobProjectionEvent) => void; stopCompletionTimeoutMs?: number };
 export class GjcCapacityExhaustedError extends Error { constructor(public readonly jobId: string) { super(`GJC job ${jobId} is waiting for capacity.`); this.name = 'GjcCapacityExhaustedError'; } }
 
 const safe = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -84,7 +85,22 @@ export class JobOrchestrator {
   private serial<T>(jobId: string, action: () => Promise<T>): Promise<T> { const prior = this.queues.get(jobId) ?? Promise.resolve(); const result = prior.catch(() => undefined).then(action); const tail = result.catch(() => undefined).finally(() => { if (this.queues.get(jobId) === tail) this.queues.delete(jobId); }); this.queues.set(jobId, tail); return result; }
   private params(jobId: string, current: JobSnapshot): Record<string, unknown> { return { jobId, lease: lease(current) }; }
   private async mutate(jobId: string, action: () => Promise<unknown>, confirmed: (value: JobSnapshot) => boolean): Promise<JobSnapshot> { try { return snapshot(await action()); } catch (error) { const fresh = snapshot(await this.deps.jobs.get({ jobId })); if (confirmed(fresh)) return fresh; throw error; } }
-  private async finalize(jobId: string, current: JobSnapshot, runId: string, state: 'succeeded' | 'failed' | 'aborted' | 'interrupted', payload: unknown): Promise<JobSnapshot> { const id = eventId(); return this.mutate(jobId, () => this.deps.jobs.runFinalize({ ...this.params(jobId, current), runId, terminalRunState: state, eventId: id, payload }), (fresh) => lower(fresh.state) === state || (!sameFence(fresh, runId, lease(current)) && (lower(fresh.state) === 'ready' || lower(fresh.state) === 'interrupted'))); }
+  private publish(jobId: string, event: JobProjectionEvent, writer?: GjcWorkerWriter): void {
+    try { this.deps.broadcast?.(jobId, event); } catch { /* Replay recovers an isolated live callback failure. */ }
+    try { writer?.send(event.payload); } catch { /* Worker output delivery is not durable authority state. */ }
+  }
+  private async finalize(jobId: string, current: JobSnapshot, runId: string, state: 'succeeded' | 'failed' | 'aborted' | 'interrupted', reason: unknown): Promise<JobSnapshot> {
+    const id = jobTerminalEventId(runId);
+    const after = Number.isSafeInteger(current.lastSequence) && current.lastSequence! >= 0 ? current.lastSequence! : 0;
+    const payload = createJobTerminalPayload({ runId, appSessionId: current.currentRun?.appSessionId, outcome: state, reason });
+    const result = await this.mutate(jobId, () => this.deps.jobs.runFinalize({ ...this.params(jobId, current), runId, terminalRunState: state, eventId: id, payload }), (fresh) => lower(fresh.state) === state || (!sameFence(fresh, runId, lease(current)) && (lower(fresh.state) === 'ready' || lower(fresh.state) === 'interrupted')));
+    try {
+      const replay = await this.deps.jobs.replayEvents({ jobId, after });
+      const event = safe(replay) && Array.isArray(replay.events) ? replay.events.find((candidate) => safe(candidate) && candidate.eventId === id) : undefined;
+      if (isJobProjectionEvent(event)) this.publish(jobId, event);
+    } catch { /* The committed terminal event remains recoverable through replay. */ }
+    return result;
+  }
   private trackPersistence(scope: PersistenceScope, action: () => Promise<void>): void {
     const pending = action().catch((error) => { scope.failure ??= error; }).finally(() => { scope.pending.delete(pending); });
     scope.pending.add(pending);
@@ -97,8 +113,9 @@ export class JobOrchestrator {
     this.trackPersistence(scope, () => this.serial(jobId, async () => {
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
       if (!sameFence(fresh, runId, expected)) return;
-      await this.deps.jobs.appendEvent({ ...this.params(jobId, fresh), runId, eventId: id, payload });
-      try { this.deps.broadcast?.(jobId, payload); writer.send(payload); } catch { /* Live delivery is not durable authority state. */ }
+      const event = await this.deps.jobs.appendEvent({ ...this.params(jobId, fresh), runId, eventId: id, payload });
+      if (!isJobProjectionEvent(event)) throw new Error('Invalid committed job event response.');
+      this.publish(jobId, event, writer);
     }));
   }
   private writer(jobId: string, current: JobSnapshot, runId: string, writer: GjcWorkerWriter, scope: PersistenceScope): GjcWorkerWriter {
@@ -123,7 +140,7 @@ export class JobOrchestrator {
         return this.serial(jobId, async () => {
           const fresh = snapshot(await this.deps.jobs.get({ jobId }));
           if (!sameFence(fresh, runId, expected)) return;
-          await this.finalize(jobId, fresh, runId, scope.failure ? 'failed' : 'succeeded', scope.failure ? { kind: 'persistence_failed', error: failureError(scope.failure).message } : { kind: 'completed' });
+          await this.finalize(jobId, fresh, runId, scope.failure ? 'failed' : 'succeeded', scope.failure ? failureError(scope.failure).message : 'completed');
           this.activeRuns.delete(jobId);
           if (scope.failure) throw failureError(scope.failure);
         });
@@ -133,7 +150,7 @@ export class JobOrchestrator {
         await this.serial(jobId, async () => {
           const fresh = snapshot(await this.deps.jobs.get({ jobId }));
           if (!sameFence(fresh, runId, expected)) return;
-          await this.finalize(jobId, fresh, runId, 'failed', { kind: scope.failure ? 'persistence_failed' : 'failed', error: failureError(scope.failure ?? error).message });
+          await this.finalize(jobId, fresh, runId, 'failed', failureError(scope.failure ?? error).message);
           this.activeRuns.delete(jobId);
         });
         throw failureError(error);
@@ -150,13 +167,13 @@ export class JobOrchestrator {
     }
     if (outcome === 'reaped' || outcome === 'completed') {
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
-      if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', { kind: 'persistence_failed', error: failureError(error).message });
+      if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', failureError(error).message);
       this.activeRuns.delete(jobId);
       return;
     }
     if (!run || !await this.stopRun(run)) return;
     const fresh = snapshot(await this.deps.jobs.get({ jobId }));
-    if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', { kind: 'persistence_failed', error: failureError(error).message });
+    if (sameFence(fresh, runId, expected)) await this.finalize(jobId, fresh, runId, 'failed', failureError(error).message);
     this.activeRuns.delete(jobId);
   }
   private async stopRun(run: GjcWorkerRun): Promise<boolean> {
@@ -274,6 +291,13 @@ export class JobOrchestrator {
       }
     });
   }
+  async appendAdminEvent(jobId: string, eventId: string, payload: unknown): Promise<void> {
+    await this.serial(jobId, async () => {
+      const event = await this.deps.jobs.appendAdminEvent({ jobId, eventId, payload });
+      if (!isJobProjectionEvent(event)) throw new Error('Invalid committed job event response.');
+      this.publish(jobId, event);
+    });
+  }
   async abort(target: { jobId?: string; appSessionId?: string; provider?: string } | string): Promise<boolean> {
     const jobId = typeof target === 'string' ? target : target.jobId ?? binding(await this.deps.jobs.bindingResolve({ provider: target.provider, appSessionId: target.appSessionId })).jobId;
     return this.serial(jobId, async () => {
@@ -285,7 +309,7 @@ export class JobOrchestrator {
       const stopped = await this.stopRun(active.run);
       if (!stopped) return false;
       const fresh = snapshot(await this.deps.jobs.get({ jobId }));
-      if (sameFence(fresh, active.runId, active.lease)) await this.finalize(jobId, fresh, active.runId, 'aborted', { kind: 'aborted' });
+      if (sameFence(fresh, active.runId, active.lease)) await this.finalize(jobId, fresh, active.runId, 'aborted', 'aborted');
       this.activeRuns.delete(jobId);
       return true;
     });
