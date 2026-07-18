@@ -1,9 +1,9 @@
-import { createJobTerminalPayload, isJobProjectionEvent, jobTerminalEventId, type JobProjectionEvent } from '../../shared/gjc-job-projection-protocol.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { createJobTerminalPayload, isJobProjectionEvent, jobTerminalEventId, type JobProjectionEvent } from '../../shared/gjc-job-projection-protocol.js';
 import { getGjcWorkerSupervisor, type GjcWorkerAbortOutcome, type GjcWorkerOptions, type GjcWorkerOutcome, type GjcWorkerReapOutcome, type GjcWorkerRun, type GjcWorkerSpawnRun, type GjcWorkerWriter } from '../gjc-worker-client.js';
 import { getDatabasePath } from '../modules/database/connection.js';
 
@@ -236,7 +236,14 @@ export class JobOrchestrator {
       void run.completion.catch(() => {});
       await run.started;
       current = await this.mutate(jobId, () => this.deps.jobs.transition({ ...this.params(jobId, current), state: 'running' }), (fresh) => lower(fresh.state) === 'running');
-      return { jobId, runId, state: current.state, started: run.started, completion: this.completion(jobId, runId, expected, run, scope), abortHandle: run.abortHandle };
+      const completion = this.completion(jobId, runId, expected, run, scope);
+      // REST job routes respond 202 and drop the handle without awaiting
+      // completion (unlike the chat WebSocket path). The terminal failure is
+      // already durably recorded by finalize(), so mark the wrapper handled to
+      // keep an unobserved worker failure from crashing the whole sidecar via
+      // unhandledRejection. Awaiting consumers still observe the rejection.
+      void completion.catch(() => {});
+      return { jobId, runId, state: current.state, started: run.started, completion, abortHandle: run.abortHandle };
     } catch (error) {
       if (expected) await this.failRun(jobId, runId, expected, run, error);
       throw error;

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
 import type { GjcWorkerOutcome } from '../gjc-worker-client.js';
+
+import { GjcCapacityExhaustedError, JobOrchestrator, type JobAuthority, type GitWorktrees, type JobSupervisor } from './gjc-job-orchestrator.js';
 
 type Snap = { jobId: string; state: string; lease: { owner: string; generation: number }; worktreeId?: string; repositoryRoot?: string; branch?: string; currentRun?: { runId: string; appSessionId: string }; dispatchCheckpoint?: { runId: string }; lastSequence?: number };
 class Jobs implements JobAuthority {
@@ -120,6 +121,23 @@ test('worker failure finalizes durable state and rejects completion', async () =
   const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
   await assert.rejects(run.completion, /worker exploded/);
   assert.equal(jobs.state.state, 'failed');
+});
+test('a dropped run handle does not raise unhandledRejection when the worker fails', async () => {
+  // POST /api/gjc/jobs responds 202 and never consumes `handle.completion`;
+  // a later worker failure must finalize durably without crashing the process.
+  const jobs = new Jobs(); const git = new Git();
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: Promise.reject(new Error('worker exploded')), abortHandle: input.runId }), abort: async () => 'aborted' };
+  const unhandled: unknown[] = [];
+  const capture = (reason: unknown) => { unhandled.push(reason); };
+  process.on('unhandledRejection', capture);
+  try {
+    await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, []);
+    assert.equal(jobs.state.state, 'failed');
+  } finally {
+    process.off('unhandledRejection', capture);
+  }
 });
 
 test('durability failure latches before completion and cannot be reported as success', async () => {
