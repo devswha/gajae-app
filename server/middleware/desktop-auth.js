@@ -44,6 +44,17 @@ export function createDesktopAuth({ env = process.env, server }) {
     return typeof origin === 'string' && expected !== null && origin === expected;
   };
 
+  // Browsers omit the Origin header on same-origin GET fetches and top-level
+  // navigations, so HTTP authentication accepts an absent Origin (the launch
+  // cookie remains required) while rejecting any mismatched Origin.
+  // WebSocket handshakes always carry Origin, so they stay exact-match.
+  const isAllowedHttpOrigin = (request) => {
+    if (request.headers.origin === undefined) {
+      return true;
+    }
+    return isExactOrigin(request);
+  };
+
   const hasApiKey = (request) => secureEqual(
     parseCookieHeader(request.headers.cookie)[DESKTOP_AUTH_COOKIE_NAME],
     apiKey
@@ -68,7 +79,7 @@ export function createDesktopAuth({ env = process.env, server }) {
       bootstrapNonce = null;
       response.cookie(DESKTOP_AUTH_COOKIE_NAME, apiKey, {
         httpOnly: true,
-        sameSite: 'strict',
+        sameSite: 'lax',
         path: '/',
       });
       return response.redirect(303, '/');
@@ -77,7 +88,7 @@ export function createDesktopAuth({ env = process.env, server }) {
       if (!enabled) {
         return next();
       }
-      if (!isExactOrigin(request) || !hasApiKey(request)) {
+      if (!isAllowedHttpOrigin(request) || !hasApiKey(request)) {
         return reject(response);
       }
       return next();

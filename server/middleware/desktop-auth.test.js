@@ -42,7 +42,7 @@ test('desktop bootstrap rejects incorrect nonce, consumes the correct nonce, and
   assert.deepEqual(bootstrapped.state.redirect, { code: 303, location: '/' });
   assert.equal(bootstrapped.state.cookie.name, DESKTOP_AUTH_COOKIE_NAME);
   assert.equal(bootstrapped.state.cookie.value, secret);
-  assert.deepEqual(bootstrapped.state.cookie.options, { httpOnly: true, sameSite: 'strict', path: '/' });
+  assert.deepEqual(bootstrapped.state.cookie.options, { httpOnly: true, sameSite: 'lax', path: '/' });
   assert.equal(DESKTOP_BOOTSTRAP_PATH.includes('?'), false);
 
   const replay = response();
@@ -63,11 +63,17 @@ test('desktop HTTP and WebSocket authentication require the launch cookie and ex
   assert.equal(advanced, true);
   assert.equal(auth.authenticateWebSocket(request(goodHeaders)), true);
 
+  // Same-origin browser GET fetches omit the Origin header; the cookie alone
+  // must authenticate HTTP while WebSocket handshakes still require Origin.
+  let cookieOnlyAdvanced = false;
+  auth.authenticateHttp(request({ cookie: goodHeaders.cookie }), response(), () => { cookieOnlyAdvanced = true; });
+  assert.equal(cookieOnlyAdvanced, true);
+  assert.equal(auth.authenticateWebSocket(request({ cookie: goodHeaders.cookie })), false);
+
   for (const headers of [
     { origin: goodHeaders.origin },
     { origin: goodHeaders.origin, cookie: `${DESKTOP_AUTH_COOKIE_NAME}=wrong` },
     { origin: 'http://127.0.0.1:43124', cookie: goodHeaders.cookie },
-    { cookie: goodHeaders.cookie },
   ]) {
     const rejected = response();
     let nextCalled = false;
