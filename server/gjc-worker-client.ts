@@ -253,7 +253,11 @@ export async function enrichGjcSdkRunOptions(options: GjcWorkerOptions): Promise
   };
 }
 
-export function killWorkerTree(child: Child, platform: NodeJS.Platform = process.platform): Promise<void> {
+export function killWorkerTree(
+  child: Child,
+  platform: NodeJS.Platform = process.platform,
+  kill: (pid: number, signal: NodeJS.Signals | 0) => void = process.kill,
+): Promise<void> {
   if (platform === 'win32') {
     // Windows runtime is frozen in v2; no verified tree-reap implementation exists.
     return Promise.reject(new Error('GJC worker tree reaping is unconfirmed on Windows.'));
@@ -268,6 +272,19 @@ export function killWorkerTree(child: Child, platform: NodeJS.Platform = process
       if (error) reject(error);
       else resolve();
     };
+    const reapProcessGroup = (): void => {
+      try {
+        kill(-child.pid!, 'SIGKILL');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ESRCH' && code !== 'EPERM') throw error;
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // A concurrently exited child cannot prevent process-group verification.
+      }
+    };
     const verifyProcessGroup = (): void => {
       if (settled) return;
       if (!child.pid) {
@@ -275,12 +292,19 @@ export function killWorkerTree(child: Child, platform: NodeJS.Platform = process
         return;
       }
       try {
-        process.kill(-child.pid, 0);
+        reapProcessGroup();
+        kill(-child.pid, 0);
         setTimeout(verifyProcessGroup, 25);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ESRCH' && closed) finish();
-        else if (code !== 'ESRCH') finish(new Error('GJC worker process group termination could not be verified.', { cause: error }));
+        if (code === 'ESRCH') {
+          if (closed) finish();
+          else setTimeout(verifyProcessGroup, 25);
+        } else if (code === 'EPERM') {
+          setTimeout(verifyProcessGroup, 25);
+        } else {
+          finish(new Error('GJC worker process group termination could not be verified.', { cause: error }));
+        }
       }
     };
     child.on('close', () => {
@@ -292,9 +316,15 @@ export function killWorkerTree(child: Child, platform: NodeJS.Platform = process
     try {
       if (child.pid) {
         try {
-          process.kill(-child.pid, 'SIGKILL');
+          kill(-child.pid, 'SIGKILL');
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ESRCH' && !child.kill('SIGKILL')) throw error;
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ESRCH' && code !== 'EPERM') throw error;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // A concurrently exited child cannot prevent process-group verification.
+          }
         }
       } else if (!child.kill('SIGKILL')) {
         throw new Error('GJC worker process could not be terminated.');

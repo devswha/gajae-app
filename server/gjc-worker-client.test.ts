@@ -89,6 +89,18 @@ class FakeChild extends EventEmitter {
     return true;
   }
 }
+class ReapFakeChild extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly pid = 12_345;
+  killCount = 0;
+
+  kill(): boolean {
+    this.killCount += 1;
+    return true;
+  }
+}
 
 class FakePeer {
   readonly requests: GjcWorkerRequestFrame[] = [];
@@ -194,6 +206,79 @@ function runtime(child: FakeChild, scope = 'app-session-1') {
     notifyRunFailed: () => {},
   };
 }
+test('killWorkerTree reaps a process group that forms after the initial kill', async () => {
+  const child = new ReapFakeChild();
+  let groupKillCount = 0;
+  let closeScheduled = false;
+  const esrch = (): Error & { code: string } => Object.assign(new Error('No such process.'), { code: 'ESRCH' });
+  const kill = (pid: number, signal: NodeJS.Signals | 0): void => {
+    assert.equal(pid, -child.pid);
+    if (signal === 0) throw esrch();
+
+    groupKillCount += 1;
+    if (groupKillCount < 3) throw esrch();
+    if (!closeScheduled) {
+      closeScheduled = true;
+      queueMicrotask(() => child.emit('close', 0));
+    }
+  };
+
+  await killWorkerTree(child, 'darwin', kill);
+
+  assert.equal(groupKillCount >= 3, true);
+  assert.equal(child.killCount >= 2, true);
+});
+
+test('killWorkerTree rejects when a process group cannot be verified as terminated', { timeout: 6_000 }, async () => {
+  const child = new ReapFakeChild();
+  const kill = (pid: number, signal: NodeJS.Signals | 0): void => {
+    assert.equal(pid, -child.pid);
+    if (signal === 0) return;
+  };
+
+  await assert.rejects(
+    killWorkerTree(child, 'darwin', kill),
+    /GJC worker tree termination timed out/,
+  );
+});
+test('killWorkerTree waits through an EPERM process-group verification window', { timeout: 1_000 }, async () => {
+  const child = new ReapFakeChild();
+  let probeCount = 0;
+  let closeScheduled = false;
+  const eperm = (): Error & { code: string } => Object.assign(new Error('Operation not permitted.'), { code: 'EPERM' });
+  const esrch = (): Error & { code: string } => Object.assign(new Error('No such process.'), { code: 'ESRCH' });
+  const kill = (pid: number, signal: NodeJS.Signals | 0): void => {
+    assert.equal(pid, -child.pid);
+    if (signal === 'SIGKILL') throw eperm();
+
+    probeCount += 1;
+    if (probeCount <= 10) throw eperm();
+    if (!closeScheduled) {
+      closeScheduled = true;
+      queueMicrotask(() => child.emit('close', 0));
+    }
+    throw esrch();
+  };
+
+  await killWorkerTree(child, 'darwin', kill);
+
+  assert.equal(probeCount, 12);
+  assert.equal(child.killCount >= 11, true);
+});
+
+test('killWorkerTree fails closed when process-group verification remains EPERM', { timeout: 6_000 }, async () => {
+  const child = new ReapFakeChild();
+  const eperm = (): Error & { code: string } => Object.assign(new Error('Operation not permitted.'), { code: 'EPERM' });
+  const kill = (pid: number, signal: NodeJS.Signals | 0): void => {
+    assert.equal(pid, -child.pid);
+    throw eperm();
+  };
+
+  await assert.rejects(
+    killWorkerTree(child, 'darwin', kill),
+    /GJC worker tree termination timed out/,
+  );
+});
 
 function replyToHandshake(peer: FakePeer): void {
   peer.handle((request) => {
