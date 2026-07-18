@@ -64,7 +64,11 @@ const request = (method: string, id: string, payload: Record<string, unknown> = 
   ...(['worker.initialize', 'worker.shutdown'].includes(method) ? {} : { sessionId }),
 }) as GjcWorkerRequestFrame;
 
-async function fixture(defaultModel = 'contract-model') {
+async function fixture(
+  defaultModel = 'contract-model',
+  modelProfile?: string,
+  model = { id: 'contract-model', provider: 'contract-provider' },
+) {
   const root = await mkdtemp(join(tmpdir(), 'gjc-contract-'));
   const sessions: FakeAgentSession[] = [];
   const factoryOptions: Array<Record<string, unknown>> = [];
@@ -76,7 +80,8 @@ async function fixture(defaultModel = 'contract-model') {
   };
   const modelRegistry = {
     authStorage,
-    getAll: () => [{ id: 'contract-model', provider: 'contract-provider' }],
+    getAll: () => [model],
+    getModelProfile: () => undefined,
   };
   const factory = (async (input: Record<string, unknown>) => {
     factoryOptions.push(input);
@@ -86,6 +91,7 @@ async function fixture(defaultModel = 'contract-model') {
   }) as unknown as GjcAgentSessionFactory;
   const settings = {
     getModelRole: () => defaultModel || undefined,
+    get: (key: string) => key === 'modelProfile.default' ? modelProfile : undefined,
     cloneForCwd: async () => ({ getModelRole: () => defaultModel || undefined }),
   };
   const adapter = new GjcBunSdkAdapter(authStorage as never, modelRegistry as never, {
@@ -265,6 +271,20 @@ test('default model role resolves deterministically and is reported in the start
     await run;
     assert.equal(f.factoryOptions[0]!.model && (f.factoryOptions[0]!.model as { id: string }).id, 'contract-model');
     assert.equal(((response(f.frames, 'default-model').payload as Record<string, unknown>).result as Record<string, unknown>).model, 'contract-model');
+  } finally { await f.close(); }
+});
+test('default model profile resolves its selector without the thinking suffix', async () => {
+  const f = await fixture('', 'claude-fable', { id: 'claude-fable-5', provider: 'anthropic' });
+  try {
+    const run = f.host.handle(request('session.start', 'default-model-profile', {
+      message: 'hello',
+      options: { ...f.options, modelId: 'default' },
+    }));
+    const session = await firstSession(f.sessions);
+    session.complete();
+    await run;
+    assert.equal(f.factoryOptions[0]!.model && (f.factoryOptions[0]!.model as { id: string }).id, 'claude-fable-5');
+    assert.equal(((response(f.frames, 'default-model-profile').payload as Record<string, unknown>).result as Record<string, unknown>).model, 'claude-fable-5');
   } finally { await f.close(); }
 });
 test('default model role fails closed when settings do not configure it', async () => {

@@ -1,5 +1,7 @@
 import { createAgentSession, discoverAuthStorage } from '@gajae-code/coding-agent/sdk/session';
 import { ModelRegistry } from '@gajae-code/coding-agent/config/model-registry';
+import { mergeModelProfiles, resolveProfileBindings } from '@gajae-code/coding-agent/config/model-profiles';
+import { parseModelString } from '@gajae-code/coding-agent/config/model-resolver';
 import { Settings } from '@gajae-code/coding-agent/config/settings';
 import { AuthStorage } from '@gajae-code/coding-agent/session/auth-storage';
 import { SessionManager } from '@gajae-code/coding-agent/session/session-manager';
@@ -78,10 +80,22 @@ function configFromOptions(value: Record<string, unknown>): SdkRunConfig {
   return candidate as unknown as SdkRunConfig;
 }
 
-function configuredDefaultModelId(settings: Settings): string {
-  const modelId = settings.getModelRole('default');
-  if (typeof modelId !== 'string' || !modelId) throw new Error(FAILURE);
-  return modelId;
+function configuredDefaultModelId(settings: Settings, modelRegistry: ModelRegistry): string {
+  const roleModelId = settings.getModelRole('default');
+  if (typeof roleModelId === 'string' && roleModelId) return roleModelId;
+
+  const profileName = settings.get('modelProfile.default');
+  if (typeof profileName !== 'string' || !profileName) throw new Error(FAILURE);
+
+  // ModelRegistry loads models.yml user profiles and merges them with builtins.
+  const profile = modelRegistry.getModelProfile(profileName) ?? mergeModelProfiles().get(profileName);
+  const selector = profile && resolveProfileBindings(profile).defaultSelector;
+  if (typeof selector !== 'string' || !selector) throw new Error(FAILURE);
+
+  // parseModelString handles the provider/id[:thinking] selector form.
+  const parsed = parseModelString(selector);
+  if (!parsed || !parsed.provider || !parsed.id) throw new Error(FAILURE);
+  return `${parsed.provider}/${parsed.id}`;
 }
 
 function modelFor(registry: ModelRegistry, modelId: string): Model {
@@ -234,7 +248,7 @@ export class GjcBunSdkAdapter implements GjcWorkerRuntime {
         process.env.GJC_WORKER_AGENT_DIR ? { agentDir: process.env.GJC_WORKER_AGENT_DIR } : {},
       );
       const configuredModelId = config.modelId === 'default'
-        ? configuredDefaultModelId(globalSettings)
+        ? configuredDefaultModelId(globalSettings, this.modelRegistry)
         : config.modelId;
       const settings = await globalSettings.cloneForCwd(config.cwd);
       const askController = new GjcBunAskController(writer);
