@@ -14,6 +14,14 @@ class FakeChild extends EventEmitter {
 function spawn(children: FakeChild[]): GjcNativeSpawn { return ((_command, _args, _options) => { const child = new FakeChild(); children.push(child); return child; }) as GjcNativeSpawn; }
 function requestId(child: FakeChild, index = -1): string { return JSON.parse(child.stdin.writes.at(index)!).id; }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+async function waitForChild(children: FakeChild[], index: number): Promise<FakeChild> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const child = children[index];
+    if (child) return child;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for fake child ${index}.`);
+}
 
 async function ready(client: GjcGitClient, children: FakeChild[]): Promise<FakeChild> {
   const pending = client.start(); const child = children.at(-1)!;
@@ -75,7 +83,7 @@ test('git recovers from replacement spawn failure without hanging later requests
   const first = await ready(client, children); const failed = client.create({ branch: 'x' });
   first.emit('exit', 1); await assert.rejects(failed);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const pending = client.list(); const replacement = children[1]!;
+  const pending = client.list(); const replacement = await waitForChild(children, 1);
   replacement.emitFrame({ protocolVersion: 1, kind: 'ready' }); await tick();
   const id = requestId(replacement); replacement.emitFrame({ protocolVersion: 1, kind: 'response', id, ok: true, result: { count: 0 } });
   assert.deepEqual(await pending, { count: 0, items: [] }); assert.equal(attempts, 3); client.close();

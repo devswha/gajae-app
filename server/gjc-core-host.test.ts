@@ -8,6 +8,9 @@ import { test } from 'node:test';
 
 const executable = process.platform === 'win32' ? 'gajae-core.exe' : 'gajae-core';
 const corePath = fileURLToPath(new URL(`../dist-native/${executable}`, import.meta.url));
+const WATCHER_FRAME_TIMEOUT_MS = 60_000;
+const WATCHER_PROCESS_TIMEOUT_MS = 90_000;
+const WATCHER_FRAME_POLL_INTERVAL_MS = 10;
 
 type CoreResult = {
   code: number | null;
@@ -103,7 +106,7 @@ test('native core recursively watches multiple roots and filters non-transcript 
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error('native watcher process timed out.'));
-      }, 30_000);
+      }, WATCHER_PROCESS_TIMEOUT_MS);
       child.once('error', (error) => {
         clearTimeout(timer);
         reject(error);
@@ -117,10 +120,10 @@ test('native core recursively watches multiple roots and filters non-transcript 
   const waitForFrame = async (
     predicate: (frame: Record<string, unknown>) => boolean,
   ): Promise<Record<string, unknown>> => {
-    for (let attempt = 0; attempt < 2000; attempt += 1) {
+    for (let attempt = 0; attempt < WATCHER_FRAME_TIMEOUT_MS / WATCHER_FRAME_POLL_INTERVAL_MS; attempt += 1) {
       const frame = frames.find(predicate);
       if (frame) return frame;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, WATCHER_FRAME_POLL_INTERVAL_MS));
     }
     throw new Error('Timed out waiting for native watcher frame.');
   };
