@@ -44,7 +44,9 @@ await writeFile(overlayPath, `${JSON.stringify({ ...config, version: packageJson
 
 try {
   const command = process.platform === 'win32' ? 'tauri.cmd' : 'tauri';
-  const child = spawn(command, ['--config', overlayPath, ...tauriArgs], {
+  const subcommand = tauriArgs.length > 0 ? [tauriArgs[0]] : [];
+  const rest = tauriArgs.slice(subcommand.length);
+  const child = spawn(command, [...subcommand, '--config', overlayPath, ...rest], {
     cwd: srcTauriDir,
     stdio: 'inherit',
   });
