@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::{
     collections::VecDeque,
     env,
@@ -6,7 +7,6 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use std::fmt::Write as _;
 
 use getrandom::getrandom;
 use serde::Deserialize;
@@ -59,7 +59,8 @@ impl OutputRing {
 
 fn random_secret() -> Result<String, String> {
     let mut bytes = [0u8; 32];
-    getrandom(&mut bytes).map_err(|error| format!("could not generate desktop credential: {error}"))?;
+    getrandom(&mut bytes)
+        .map_err(|error| format!("could not generate desktop credential: {error}"))?;
     let mut secret = String::with_capacity(64);
     for byte in bytes {
         write!(&mut secret, "{byte:02x}").expect("writing to a String cannot fail");
@@ -77,10 +78,18 @@ fn payload_root(app: &AppHandle) -> Result<PathBuf, String> {
         .map(|relative| resources.join(relative))
         .find_map(|candidate| candidate.canonicalize().ok())
         .ok_or_else(|| "server payload is missing".to_owned())?;
-    for relative in ["dist-server/server/index.js", "dist", "node_modules", "dist-native"] {
+    for relative in [
+        "dist-server/server/index.js",
+        "dist",
+        "node_modules",
+        "dist-native",
+    ] {
         let path = root.join(relative);
         if !path.exists() {
-            return Err(format!("server payload is incomplete (missing {})", path.display()));
+            return Err(format!(
+                "server payload is incomplete (missing {})",
+                path.display()
+            ));
         }
     }
     if !root.is_dir() {
@@ -95,7 +104,9 @@ fn endpoint(port: u16) -> String {
 
 fn health_check(port: u16, expected_version: &str) -> Result<(), String> {
     let mut stream = TcpStream::connect_timeout(
-        &format!("127.0.0.1:{port}").parse().map_err(|error| format!("invalid loopback address: {error}"))?,
+        &format!("127.0.0.1:{port}")
+            .parse()
+            .map_err(|error| format!("invalid loopback address: {error}"))?,
         Duration::from_secs(2),
     )
     .map_err(|error| format!("health connection failed: {error}"))?;
@@ -113,30 +124,53 @@ fn health_check(port: u16, expected_version: &str) -> Result<(), String> {
         .split_once("\r\n\r\n")
         .ok_or_else(|| "malformed health response".to_owned())?;
     if !headers.starts_with("HTTP/1.1 200") {
-        return Err(format!("health endpoint rejected request: {}", headers.lines().next().unwrap_or_default()));
+        return Err(format!(
+            "health endpoint rejected request: {}",
+            headers.lines().next().unwrap_or_default()
+        ));
     }
-    let health: Health = serde_json::from_str(body).map_err(|error| format!("invalid health response: {error}"))?;
-    if health.status != "ok" || health.product != "gajae-app" || health.protocol_version != PROTOCOL_VERSION || health.version != expected_version {
+    let health: Health =
+        serde_json::from_str(body).map_err(|error| format!("invalid health response: {error}"))?;
+    if health.status != "ok"
+        || health.product != "gajae-app"
+        || health.protocol_version != PROTOCOL_VERSION
+        || health.version != expected_version
+    {
         return Err("health endpoint identity did not match the supervised server".to_owned());
     }
     Ok(())
 }
 
 fn show_error(window: &WebviewWindow, message: &str) {
-    let escaped = serde_json::to_string(message).unwrap_or_else(|_| "\"Desktop server failed\"".to_owned());
+    let escaped =
+        serde_json::to_string(message).unwrap_or_else(|_| "\"Desktop server failed\"".to_owned());
     let script = format!(
-        "document.body.innerHTML = '<main style=\"font:16px system-ui;padding:3rem;max-width:48rem\"><h1>Gajae App could not start</h1><pre style=\"white-space:pre-wrap\"></pre></main>';document.querySelector('pre').textContent={escaped};"
+        "document.body.innerHTML = '<main style=\"font:16px system-ui;padding:3rem;max-width:48rem\"><h1>Gajae App could not start</h1><pre style=\"white-space:pre-wrap\"></pre><button type=\"button\" onclick=\"window.__TAURI__.core.invoke(\\'retry_desktop_server\\')\">Retry</button></main>';document.querySelector('pre').textContent={escaped};"
     );
     let _ = window.eval(&script);
     let _ = window.show();
 }
 
-fn navigate_and_show(window: &WebviewWindow, port: u16) -> Result<(), String> {
-    let url = endpoint(port)
-        .parse()
-        .map_err(|error| format!("invalid supervised server URL: {error}"))?;
-    window.navigate(url).map_err(|error| format!("could not open supervised server: {error}"))?;
-    window.show().map_err(|error| format!("could not show main window: {error}"))
+fn stop_failed_sidecar(app: &AppHandle, pid: u32) {
+    let _ = crate::lifecycle::terminate_sidecar(pid);
+    app.state::<crate::lifecycle::SidecarLifecycle>().exited();
+}
+
+fn navigate_and_show(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    port: u16,
+    nonce: &str,
+) -> Result<(), String> {
+    let origin = endpoint(port);
+    app.state::<crate::navigation::LoopbackOrigin>().set(origin);
+    let url = crate::navigation::bootstrap_url(port, nonce)?;
+    window
+        .navigate(url)
+        .map_err(|error| format!("could not open supervised server: {error}"))?;
+    window
+        .show()
+        .map_err(|error| format!("could not show main window: {error}"))
 }
 
 pub fn start(app: AppHandle) {
@@ -181,58 +215,128 @@ pub fn start(app: AppHandle) {
                     .env("NODE_ENV", "production")
                     .env("GJC_DESKTOP", "1")
                     .env("GJC_DESKTOP_API_KEY", api_key)
-                    .env("GJC_DESKTOP_BOOTSTRAP_NONCE", nonce)
+                    .env("GJC_DESKTOP_BOOTSTRAP_NONCE", &nonce)
                     .env("HOME", home)
                     .env("PATH", path)
                     .spawn()
                     .map_err(|error| format!("could not start server sidecar: {error}"))
             });
-        let (mut events, _child) = match command {
+        let (mut events, child) = match command {
             Ok(child) => child,
             Err(error) => {
                 show_error(&window, &error);
                 return;
             }
         };
+        let sidecar_pid = child.pid();
+        app.state::<crate::lifecycle::SidecarLifecycle>()
+            .track(sidecar_pid);
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         let mut output = OutputRing::default();
-        while Instant::now() < deadline {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let event = match time::timeout(remaining, events.recv()).await {
-                Ok(Some(event)) => event,
-                Ok(None) => break,
-                Err(_) => break,
+        let mut ready = false;
+        loop {
+            let event = if ready {
+                events.recv().await
+            } else {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    show_error(
+                        &window,
+                        &format!(
+                            "Desktop server did not become ready before the startup timeout.\n\n{}",
+                            output.text()
+                        ),
+                    );
+                    stop_failed_sidecar(&app, sidecar_pid);
+                    return;
+                }
+                match time::timeout(remaining, events.recv()).await {
+                    Ok(event) => event,
+                    Err(_) => {
+                        show_error(&window, &format!("Desktop server did not become ready before the startup timeout.\n\n{}", output.text()));
+                        stop_failed_sidecar(&app, sidecar_pid);
+                        return;
+                    }
+                }
+            };
+            let Some(event) = event else {
+                app.state::<crate::lifecycle::SidecarLifecycle>().exited();
+                if !ready {
+                    show_error(
+                        &window,
+                        &format!(
+                            "Desktop server exited before it became ready.\n\n{}",
+                            output.text()
+                        ),
+                    );
+                }
+                return;
             };
             match event {
                 CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
                     output.push(&line);
+                    if ready {
+                        continue;
+                    }
                     for raw_line in String::from_utf8_lossy(&line).lines() {
-                        let Ok(ready) = serde_json::from_str::<ReadyFrame>(raw_line) else { continue };
-                        if ready.kind != READY_KIND || ready.pid == 0 || ready.host != "127.0.0.1" || ready.port == 0 || ready.protocol_version != PROTOCOL_VERSION {
+                        let Ok(ready_frame) = serde_json::from_str::<ReadyFrame>(raw_line) else {
+                            continue;
+                        };
+                        if ready_frame.kind != READY_KIND
+                            || ready_frame.pid == 0
+                            || ready_frame.host != "127.0.0.1"
+                            || ready_frame.port == 0
+                            || ready_frame.protocol_version != PROTOCOL_VERSION
+                        {
                             continue;
                         }
-                        match health_check(ready.port, &ready.version) {
+                        match health_check(ready_frame.port, &ready_frame.version) {
                             Ok(()) => {
-                                if let Err(error) = navigate_and_show(&window, ready.port) {
+                                if let Err(error) =
+                                    navigate_and_show(&app, &window, ready_frame.port, &nonce)
+                                {
                                     show_error(&window, &error);
+                                    stop_failed_sidecar(&app, sidecar_pid);
+                                    return;
                                 }
-                                return;
+                                ready = true;
+                                break;
                             }
                             Err(error) => {
                                 show_error(&window, &format!("Desktop server did not pass identity verification: {error}\n\n{}", output.text()));
+                                stop_failed_sidecar(&app, sidecar_pid);
                                 return;
                             }
                         }
                     }
                 }
                 CommandEvent::Terminated(status) => {
-                    show_error(&window, &format!("Desktop server exited unexpectedly ({status:?}).\n\n{}", output.text()));
+                    app.state::<crate::lifecycle::SidecarLifecycle>().exited();
+                    if !app
+                        .state::<crate::lifecycle::SidecarLifecycle>()
+                        .is_shutting_down()
+                    {
+                        show_error(
+                            &window,
+                            &format!(
+                                "Desktop server exited unexpectedly ({status:?}).\n\n{}",
+                                output.text()
+                            ),
+                        );
+                    }
+                    return;
+                }
+                CommandEvent::Error(error) => {
+                    app.state::<crate::lifecycle::SidecarLifecycle>().exited();
+                    show_error(
+                        &window,
+                        &format!("Desktop server failed: {error}\n\n{}", output.text()),
+                    );
                     return;
                 }
                 _ => {}
             }
         }
-        show_error(&window, &format!("Desktop server did not become ready before the startup timeout.\n\n{}", output.text()));
     });
 }
 
