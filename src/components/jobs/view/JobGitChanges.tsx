@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+
 import { api } from '../../../utils/api';
+import type { JobGitDiffResponse } from '../../../../shared/gjc-job-projection-protocol';
 import GitDiffViewer from '../../git-panel/view/shared/GitDiffViewer';
 
-type DiffResponse = { text?: unknown; paths?: unknown };
+type DiffResponse = JobGitDiffResponse;
 
 export default function JobGitChanges({ jobId }: { jobId: string }) {
   const [diff, setDiff] = useState<string | null>(null);

@@ -14,6 +14,8 @@ export type JobSnapshot = {
   baseCommit?: string;
   currentRun?: { runId: string; appSessionId?: string; providerSessionId?: string };
 };
+/** Canonical HTTP response for a managed job's UTF-8 git diff. */
+export type JobGitDiffResponse = { text: string; paths: string[] };
 
 export type JobProjectionErrorCode = 'invalid_request' | 'not_found' | 'cursor_ahead' | 'cursor_mismatch' | 'authority_unavailable' | 'storage_failure' | 'buffer_overflow' | 'protocol_violation';
 /** The WebSocket client sends `type`; server frames use `kind`. */

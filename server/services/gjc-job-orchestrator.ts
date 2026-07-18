@@ -183,15 +183,29 @@ export class JobOrchestrator {
     return confirmedReap(await this.deps.supervisor.terminate?.(run.abortHandle).catch((): GjcWorkerReapOutcome => 'unconfirmed'));
   }
   private async cancelAdmission(jobId: string, current: JobSnapshot, error: unknown, runId?: string): Promise<void> {
+    const terminalEvent = runId
+      ? {
+          eventId: jobTerminalEventId(runId),
+          payload: createJobTerminalPayload({ runId, appSessionId: current.currentRun?.appSessionId, outcome: 'failed', reason: failureError(error).message }),
+        }
+      : undefined;
+    let response: unknown;
     await this.mutate(
       jobId,
-      () => this.deps.jobs.cancelAdmission({ ...this.params(jobId, current), eventId: eventId(), payload: { kind: 'admission_failed', error: failureError(error).message } }),
+      async () => {
+        response = await this.deps.jobs.cancelAdmission({
+          ...this.params(jobId, current),
+          eventId: eventId(),
+          payload: { kind: 'admission_failed', error: failureError(error).message },
+          ...(terminalEvent ? { terminalEvent } : {}),
+        });
+        return response;
+      },
       (fresh) => fresh.lease?.owner !== lease(current).owner || fresh.lease?.generation !== lease(current).generation,
     );
-    if (!runId) return;
-    const payload = createJobTerminalPayload({ runId, appSessionId: current.currentRun?.appSessionId, outcome: 'failed', reason: failureError(error).message });
-    const event = await this.deps.jobs.appendAdminEvent({ jobId, eventId: jobTerminalEventId(runId), payload });
-    if (!isJobProjectionEvent(event)) throw new Error('Invalid committed job event response.');
+    if (!terminalEvent) return;
+    const event = safe(response) ? response.terminalEvent : undefined;
+    if (!isJobProjectionEvent(event)) throw new Error('Invalid committed terminal event response.');
     this.publish(jobId, event);
   }
   private async dispatch(jobId: string, current: JobSnapshot, runId: string, appSessionId: string, message: string, options: JobOrchestratorOptions, cwd: string, sessionId?: string | null): Promise<JobRunHandle> {

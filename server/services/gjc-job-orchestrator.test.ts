@@ -16,9 +16,25 @@ class Jobs implements JobAuthority {
   transition(p: Record<string, unknown>) { if (['succeeded', 'failed', 'aborted', 'interrupted'].includes(String(p.state))) return Promise.reject(new Error('invalid_transition')); this.state = { ...this.state, state: String(p.state) }; return this.call('transition', p); }
   markDispatching(p: Record<string, unknown>) { this.state = { ...this.state, state: 'queued', dispatchCheckpoint: { runId: String(p.runId) } }; return this.call('markDispatching', p); }
   finalize(p: Record<string, unknown>) { this.state = { ...this.state, state: String(p.state), lease: { owner: '', generation: 0 } }; return this.call('finalize', p); }
-  cancelAdmission(p: Record<string, unknown>) { this.state = { ...this.state, state: 'failed', lease: { owner: '', generation: 0 } }; return this.call('cancelAdmission', p); }
+  cancelAdmission(p: Record<string, unknown>) {
+    this.state = { ...this.state, state: 'failed', lease: { owner: '', generation: 0 } };
+    this.calls.push(['cancelAdmission', p]);
+    const terminal = p.terminalEvent;
+    if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
+      const eventId = (terminal as { eventId?: unknown }).eventId;
+      if (typeof eventId !== 'string') return Promise.reject(new Error('invalid terminal event'));
+      const existing = this.events.find((event) => event.eventId === eventId);
+      const event = existing ?? { eventId, sequence: (this.state.lastSequence ?? 0) + 1, payload: (terminal as { payload?: unknown }).payload };
+      if (!existing) {
+        this.events.push(event);
+        this.state = { ...this.state, lastSequence: event.sequence };
+      }
+      return Promise.resolve({ ...this.state, terminalEvent: event });
+    }
+    return Promise.resolve(this.state);
+  }
   appendEvent(p: Record<string, unknown>) { return this.event('appendEvent', p); }
-  appendAdminEvent(p: Record<string, unknown>) { return this.event('appendAdminEvent', p); }
+  appendAdminEvent(p: Record<string, unknown>) { return this.state.state === 'ready' ? this.event('appendAdminEvent', p) : Promise.reject(new Error('invalid_transition')); }
   replayEvents(p: Record<string, unknown>) { this.calls.push(['replayEvents', p]); return Promise.resolve({ events: this.events.filter((event) => event.sequence > Number(p.after ?? 0)) }); }
   get(p: Record<string, unknown>) { return this.call('get', p); }
   reconcile(p: Record<string, unknown> = {}) { return this.call('reconcile', p); }
@@ -124,15 +140,24 @@ test('durability failure latches before completion and cannot be reported as suc
   assert.equal(jobs.state.state, 'failed');
 });
 
-test('a never-dispatched start failure cancels admission instead of leaving a queued lease', async () => {
-  const jobs = new Jobs(); const git = new Git();
+test('a never-dispatched start failure atomically records and broadcasts one canonical terminal event', async () => {
+  const jobs = new Jobs(); const git = new Git(); const events: unknown[] = [];
   const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), outcome: Promise.resolve('not_started'), abortHandle: input.runId }), abort: async () => 'unconfirmed' };
-  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', broadcast: (_jobId, event) => events.push(event) });
   await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
   assert.equal(jobs.state.state, 'failed');
-  assert.equal(jobs.calls.some(([name]) => name === 'cancelAdmission'), true);
-  const terminal = jobs.calls.find(([name]) => name === 'appendAdminEvent')?.[1];
-  assert.deepEqual(terminal?.payload, { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'failed', jobState: 'failed', reason: 'start failed' });
+  const cancelled = jobs.calls.find(([name]) => name === 'cancelAdmission')?.[1];
+  assert.deepEqual(cancelled?.terminalEvent, {
+    eventId: 'run-terminal:run-abc',
+    payload: { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'failed', jobState: 'failed', reason: 'start failed' },
+  });
+  assert.equal(jobs.calls.some(([name]) => name === 'appendAdminEvent'), false);
+  assert.deepEqual(events, [{
+    eventId: 'run-terminal:run-abc',
+    sequence: 1,
+    payload: { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'failed', jobState: 'failed', reason: 'start failed' },
+  }]);
+  assert.deepEqual((await jobs.replayEvents({ jobId: 'job-abc', after: 0 }) as { events: unknown[] }).events, events);
 });
 test('forced worker generation termination permits failed finalization after abort refusal', async () => {
   const jobs = new Jobs(); const git = new Git();
@@ -278,7 +303,7 @@ test('a throwing broadcast cannot undo a committed event or terminal state', asy
   assert.equal(jobs.events.at(-1)?.eventId, 'run-terminal:run-abc');
 });
 test('admin events broadcast only after a committed authority event is returned', async () => {
-  const jobs = new Jobs(); const events: Array<{ eventId: string; sequence: number }> = [];
+  const jobs = new Jobs(); jobs.state = { ...jobs.state, state: 'ready' }; const events: Array<{ eventId: string; sequence: number }> = [];
   const orchestrator = new JobOrchestrator({ jobs, git: new Git(), supervisor: new Supervisor(), broadcast: (_jobId, event) => events.push(event) });
   await orchestrator.appendAdminEvent('job-admin', 'publish.started', { branch: 'job-admin' });
   assert.deepEqual(events.map(({ eventId, sequence }) => ({ eventId, sequence })), [{ eventId: 'publish.started', sequence: 1 }]);

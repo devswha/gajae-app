@@ -5,10 +5,8 @@ import { randomUUID } from 'node:crypto';
 import fs, { promises as fsPromises } from 'fs';
 import path from 'path';
 import os from 'os';
-import http from 'http';
 
 import express from 'express';
-import cors from 'cors';
 import mime from 'mime-types';
 import Database from 'better-sqlite3';
 
@@ -20,12 +18,11 @@ import {
     resolveProjectFileForWrite
 } from '@/shared/project-file-containment.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
-import { createWebSocketServer } from '@/modules/websocket/index.js';
-import { GjcJobProjectionService } from './modules/websocket/services/gjc-job-projection.service.js';
-import { createGjcTerminalNotificationAdapter } from './modules/notifications/services/gjc-terminal-notification-adapter.service.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
+import { GjcJobProjectionService } from './modules/websocket/services/gjc-job-projection.service.js';
+import { createGjcTerminalNotificationAdapter } from './modules/notifications/services/gjc-terminal-notification-adapter.service.js';
 import { findAppRoot, getModuleDir } from './utils/runtime-paths.js';
 import {
     queryClaudeSDK,
@@ -50,7 +47,8 @@ import {
     resolveGjcToolApproval,
     shutdownGjcWorker,
 } from './gjc-worker-client.js';
-import { getProductionJobOrchestrator } from './services/gjc-job-orchestrator.js';
+import { getProductionJobAuthority, getProductionJobOrchestrator } from './services/gjc-job-orchestrator.js';
+import { getProductionGjcJobGitService } from './services/gjc-job-git.service.js';
 import {
     stripAnsiSequences,
     normalizeDetectedUrl,
@@ -65,7 +63,7 @@ import mcpUtilsRoutes from './routes/mcp-utils.js';
 import commandsRoutes from './routes/commands.js';
 import settingsRoutes from './routes/settings.js';
 import agentRoutes from './routes/agent.js';
-import gjcJobsRoutes from './routes/gjc-jobs.js';
+import { createGjcAppFactory } from './app-factory.js';
 import projectModuleRoutes from './modules/projects/projects.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import userRoutes from './routes/user.js';
@@ -121,19 +119,15 @@ function getPendingProviderApprovalsForSession(sessionId) {
 }
 
 
+const gjcJobAuthority = getProductionJobAuthority();
 const gjcJobOrchestrator = getProductionJobOrchestrator();
 const gjcJobProjection = new GjcJobProjectionService({
-    get: (params) => getProductionJobAuthority().get(params),
-    replayEvents: (params) => getProductionJobAuthority().replayEvents(params),
+    get: (params) => gjcJobAuthority.get(params),
+    replayEvents: (params) => gjcJobAuthority.replayEvents(params),
 });
 const gjcTerminalNotificationAdapter = createGjcTerminalNotificationAdapter({
-    authority: getProductionJobAuthority(),
+    authority: gjcJobAuthority,
 });
-gjcJobOrchestrator.deps.broadcast = (jobId, event) => {
-    try { gjcJobProjection.publish(jobId, event); } catch { /* Durable replay recovers isolated websocket fan-out failures. */ }
-    try { gjcTerminalNotificationAdapter.onCommittedEvent(jobId, event); } catch { /* Notification delivery is isolated from durable job state. */ }
-};
-void gjcTerminalNotificationAdapter.startupCatchUp().catch(() => {});
 let gjcJobAuthorityAvailable = false;
 
 function gjcJobAuthorityError() {
@@ -193,15 +187,17 @@ async function abortGjcJob(appSessionId) {
     return gjcJobOrchestrator.abort({ provider: 'gjc', appSessionId });
 }
 
-const app = express();
-app.set('trust proxy', 1);
-const server = http.createServer(app);
-
-// Single WebSocket server that handles chat, shell, and plugin proxy paths.
-const wss = createWebSocketServer(server, {
-    verifyClient: {
-        authenticateWebSocket,
-    },
+const { app, server, wss } = createGjcAppFactory({
+    authority: gjcJobAuthority,
+    orchestrator: gjcJobOrchestrator,
+    gitService: getProductionGjcJobGitService(
+        gjcJobAuthority,
+        (jobId, eventId, payload) => gjcJobOrchestrator.appendAdminEvent(jobId, eventId, payload),
+    ),
+    projection: gjcJobProjection,
+    terminalNotificationAdapter: gjcTerminalNotificationAdapter,
+    authenticateWebSocket,
+    authenticateGjcRoute: authenticateToken,
     chat: {
         spawnFns: {
             claude: queryClaudeSDK,
@@ -228,7 +224,6 @@ const wss = createWebSocketServer(server, {
             if (dbSession) {
                 return dbSession.provider_session_id ?? null;
             }
-
             return null;
         },
         stripAnsiSequences,
@@ -238,23 +233,6 @@ const wss = createWebSocketServer(server, {
     },
     getPluginPort,
 });
-
-// Make WebSocket server available to routes
-app.locals.wss = wss;
-
-app.use(cors());
-app.use(express.json({
-    limit: '50mb',
-    type: (req) => {
-        // Skip multipart/form-data requests (for file uploads like images)
-        const contentType = req.headers['content-type'] || '';
-        if (contentType.includes('multipart/form-data')) {
-            return false;
-        }
-        return contentType.includes('json');
-    }
-}));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Public health check endpoint (no authentication required)
 app.get('/health', (req, res) => {
@@ -316,7 +294,6 @@ app.use('/api/providers', authenticateToken, providerRoutes);
 
 // Agent API Routes (uses API key authentication)
 app.use('/api/agent', agentRoutes);
-app.use('/api/gjc', authenticateToken, gjcJobsRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 

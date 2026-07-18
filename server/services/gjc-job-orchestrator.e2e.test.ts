@@ -32,6 +32,7 @@ type Fixture = {
   gitRoots: string[];
   supervisor: FakeSupervisor;
   orchestrator: JobOrchestrator;
+  events: Array<{ eventId: string; sequence: number; payload: unknown }>;
   close(): Promise<void>;
 };
 
@@ -51,6 +52,7 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
   const supervisor = new FakeSupervisor();
   let next = 0;
   const gitRoots: string[] = [];
+  const events: Array<{ eventId: string; sequence: number; payload: unknown }> = [];
   const orchestrator = new JobOrchestrator({
     jobs,
     gitForProject: (projectRoot) => {
@@ -61,6 +63,7 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
     supervisor,
     owner: 'e2e-owner',
     createId: () => `e2e-${++next}`,
+    broadcast: (_jobId, event) => events.push(event),
   });
   const close = async () => {
     jobs.close();
@@ -68,7 +71,7 @@ async function fixture(t: test.TestContext): Promise<Fixture> {
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
   };
   t.after(close);
-  return { root, jobs, git, gitRoots, supervisor, orchestrator, close };
+  return { root, jobs, git, gitRoots, supervisor, orchestrator, events, close };
 }
 
 async function worktreeCount(root: string): Promise<number> {
@@ -76,6 +79,41 @@ async function worktreeCount(root: string): Promise<number> {
   return stdout.split('\n').filter((line) => line.startsWith('worktree ')).length;
 }
 
+test('native cancelAdmission atomically replays and broadcasts a pre-start terminal failure', async (t) => {
+  const f = await fixture(t);
+  f.supervisor.spawnRun = (input) => ({
+    started: Promise.reject(new Error('native start failed')),
+    completion: new Promise<void>(() => {}),
+    outcome: Promise.resolve('not_started'),
+    abortHandle: input.runId,
+  });
+
+  await assert.rejects(
+    f.orchestrator.start('gjc', 'failed-session', f.root, 'fail before start', workerOptions),
+    /native start failed/u,
+  );
+
+  const job = await f.jobs.get({ jobId: 'job-e2e1' }) as { state: string };
+  assert.equal(job.state, 'failed');
+  const replay = await f.jobs.replayEvents({ jobId: 'job-e2e1', after: 0 }) as {
+    events: Array<{ eventId: string; sequence: number; payload: unknown }>;
+  };
+  const terminals = replay.events.filter((event) => event.eventId === 'run-terminal:run-e2e-2');
+  assert.deepEqual(terminals, [{
+    eventId: 'run-terminal:run-e2e-2',
+    sequence: 2,
+    payload: {
+      schemaVersion: 1,
+      kind: 'job_terminal',
+      runId: 'run-e2e-2',
+      appSessionId: 'failed-session',
+      outcome: 'failed',
+      jobState: 'failed',
+      reason: 'native start failed',
+    },
+  }]);
+  assert.deepEqual(f.events, terminals);
+});
 test('capacity rejects the fifth bound start without creating a conflicting binding', async (t) => {
   const f = await fixture(t);
   const results = await Promise.allSettled(Array.from({ length: 5 }, (_, index) =>

@@ -125,7 +125,7 @@ test('F13 driver-level e2e: create, run, abort, resume, diff, commit, replay, an
   await writeFile(join(snapshot.worktreeId, 'worker-change.txt'), 'managed\n');
   const gitService = new GjcJobGitService(f.jobs, () => f.gitClient);
   const diff = await gitService.diff(active.jobId) as any;
-  assert.match(Buffer.from(diff.patch).toString('utf8'), /worker-change\.txt/u);
+  assert.match(diff.text, /worker-change\.txt/u);
   assert.equal((await git(f.root, ['status', '--porcelain'])).stdout, '');
 
   // 6. Commit only selected worktree path, leave base HEAD/root untouched, record admin event.

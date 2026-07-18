@@ -13,7 +13,6 @@ const NATIVE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CONFLICT_CODES = new Set(['already_exists', 'invalid_transition', 'lease_held', 'stale_lease', 'terminal_job', 'event_conflict', 'worktree_conflict', 'authority_held', 'conflict', 'capacity_exhausted']);
 const MIN_REPLAY_BYTE_BUDGET = 4 * 1024;
 const MAX_REPLAY_BYTE_BUDGET = 48 * 1024;
-const router = express.Router();
 const writer = { send() {} };
 const text = value => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const invalidQuery = message => Object.assign(new Error(message), { code: 'invalid_request' });
@@ -63,44 +62,50 @@ const listResponse = value => {
     nextCursor: typeof source.nextCursor === 'string' ? source.nextCursor : null,
   };
 };
-const jobGit = () => getProductionGjcJobGitService(
-  getProductionJobAuthority(),
-  (jobId, eventId, payload) => getProductionJobOrchestrator().appendAdminEvent(jobId, eventId, payload),
-);
+export function createGjcJobsRouter({
+  authority = getProductionJobAuthority(),
+  orchestrator = getProductionJobOrchestrator(),
+  gitService = getProductionGjcJobGitService(
+    getProductionJobAuthority(),
+    (jobId, eventId, payload) => getProductionJobOrchestrator().appendAdminEvent(jobId, eventId, payload),
+  ),
+} = {}) {
+  const router = express.Router();
+const jobGit = () => gitService;
 
 router.post('/jobs', async (req, res) => {
   const message = text(req.body?.message); const projectPath = text(req.body?.projectPath);
   if (!message || !projectPath) return res.status(400).json({ error: 'message and projectPath are required.' });
-  try { const appSessionId = appSession(req.body); const handle = await getProductionJobOrchestrator().start('gjc', appSessionId, projectPath, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
+  try { const appSessionId = appSession(req.body); const handle = await orchestrator.start('gjc', appSessionId, projectPath, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
 });
 router.post('/jobs/:jobId/turns', async (req, res) => {
   const message = text(req.body?.message); const appSessionId = text(req.body?.appSessionId) ?? text(req.body?.sessionId);
   if (!message || !appSessionId) return res.status(400).json({ error: 'message and appSessionId are required.' });
   try {
-    const orchestrator = getProductionJobOrchestrator();
+    const currentOrchestrator = orchestrator;
     const bound = await orchestrator.resolveBinding('gjc', appSessionId);
     if (!bound || bound.jobId !== req.params.jobId) return res.status(409).json({ error: 'appSessionId is not bound to this job.' });
-    const handle = await orchestrator.turnStart('gjc', appSessionId, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) });
+    const handle = await currentOrchestrator.turnStart('gjc', appSessionId, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) });
     return jobResponse(res, handle, appSessionId);
   } catch (error) { return fail(res, error); }
 });
 router.post('/jobs/:jobId/resume', async (req, res) => {
   const message = text(req.body?.message) ?? ''; const appSessionId = text(req.body?.appSessionId) ?? text(req.body?.sessionId);
   if (!appSessionId) return res.status(400).json({ error: 'appSessionId is required.' });
-  try { const handle = await getProductionJobOrchestrator().resume(req.params.jobId, appSessionId, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
+  try { const handle = await orchestrator.resume(req.params.jobId, appSessionId, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
 });
-router.post('/jobs/:jobId/abort', async (req, res) => { try { return res.status(202).json({ provider: 'gjc', jobId: req.params.jobId, aborted: await getProductionJobOrchestrator().abort(req.params.jobId) }); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/abort', async (req, res) => { try { return res.status(202).json({ provider: 'gjc', jobId: req.params.jobId, aborted: await orchestrator.abort(req.params.jobId) }); } catch (error) { return fail(res, error); } });
 router.get('/jobs', async (req, res) => {
   try {
-    return res.json(listResponse(await getProductionJobAuthority().list(decodeListQuery(req.query))));
+    return res.json(listResponse(await authority.list(decodeListQuery(req.query))));
   } catch (error) {
     return fail(res, error);
   }
 });
-router.get('/jobs/:jobId', async (req, res) => { try { return res.json(await getProductionJobAuthority().get({ jobId: req.params.jobId })); } catch (error) { return fail(res, error); } });
+router.get('/jobs/:jobId', async (req, res) => { try { return res.json(await authority.get({ jobId: req.params.jobId })); } catch (error) { return fail(res, error); } });
 router.get('/jobs/:jobId/events', async (req, res) => {
   try {
-    return res.json(await getProductionJobAuthority().replayEvents({ jobId: req.params.jobId, ...decodeReplayQuery(req.query) }));
+    return res.json(await authority.replayEvents({ jobId: req.params.jobId, ...decodeReplayQuery(req.query) }));
   } catch (error) {
     return fail(res, error);
   }
@@ -123,4 +128,6 @@ router.post('/jobs/:jobId/git/pr', async (req, res) => {
   } catch (error) { return fail(res, error); }
 });
 
-export default router;
+  return router;
+}
+export default createGjcJobsRouter();

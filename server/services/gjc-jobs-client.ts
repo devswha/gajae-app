@@ -18,6 +18,9 @@ export class GjcJobsEventTooLargeError extends GjcJobsClientError {
 }
 
 /** Process owner for the durable native jobs protocol. A down client rejects new run admission. */
+export type GjcCancelAdmissionParams = Record<string, unknown> & {
+  terminalEvent?: { eventId: string; payload: unknown };
+};
 export class GjcJobsClient extends GjcNativeClient {
   constructor(options: GjcJobsClientOptions) { super('jobs', options, ['jobs', '--database', options.database]); }
   override async request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -43,7 +46,7 @@ export class GjcJobsClient extends GjcNativeClient {
   markDispatching(params: Record<string, unknown>): Promise<unknown> { return this.request('job.markDispatching', params); }
   finalize(params: Record<string, unknown>): Promise<unknown> { return this.request('job.finalize', params); }
   runFinalize(params: Record<string, unknown>): Promise<unknown> { return this.request('run.finalize', params); }
-  cancelAdmission(params: Record<string, unknown>): Promise<unknown> { return this.request('job.cancelAdmission', params); }
+  cancelAdmission(params: GjcCancelAdmissionParams): Promise<unknown> { return this.request('job.cancelAdmission', params); }
   appendEvent(params: Record<string, unknown>): Promise<unknown> {
     // Keep worker output from killing the shared authority. Durable event chunking/blob projection is Slice 4.
     const frame = JSON.stringify({ ...params, protocolVersion: 1, id: REQUEST_ID_BYTES, method: 'event.append' });

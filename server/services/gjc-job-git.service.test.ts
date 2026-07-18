@@ -48,7 +48,7 @@ test('job git diff uses the bounded native base diff including untracked files',
     }),
   );
 
-  assert.deepEqual(await service.diff('job-a'), { patch: 'diff', paths: [] });
+  assert.deepEqual(await service.diff('job-a'), { text: 'diff', paths: [] });
   assert.deepEqual(calls, [{ jobId: 'job-a', branch: 'job/job-a', path: '/repo/.gjc-worktrees/job-a', mode: 'base', baseCommit: 'abc1234', includeUntracked: true }]);
 });
 

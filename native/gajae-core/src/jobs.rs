@@ -81,6 +81,20 @@ pub struct JobEvent {
     event_id: String,
     payload: Value,
 }
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TerminalEvent {
+    event_id: String,
+    payload: Value,
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelAdmissionResult {
+    #[serde(flatten)]
+    snapshot: JobSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_event: Option<JobEvent>,
+}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobSnapshot {
@@ -386,8 +400,12 @@ impl PersistentAuthority {
         lease: &Lease,
         event_id: &str,
         payload: Value,
-    ) -> Result<JobSnapshot, AuthorityError> {
+        terminal_event: Option<TerminalEvent>,
+    ) -> Result<CancelAdmissionResult, AuthorityError> {
         validate_id(event_id)?;
+        if let Some(event) = &terminal_event {
+            validate_id(&event.event_id)?;
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -397,6 +415,10 @@ impl PersistentAuthority {
             return Err(AuthorityError::InvalidTransition);
         }
         append(&tx, id, event_id, &payload)?;
+        let terminal_event = terminal_event
+            .as_ref()
+            .map(|event| append(&tx, id, &event.event_id, &event.payload))
+            .transpose()?;
         tx.execute(
             "UPDATE runs SET state='failed',outcome='failed' WHERE job_id=?1 AND state NOT IN ('succeeded','failed','aborted','interrupted')",
             [id],
@@ -412,9 +434,12 @@ impl PersistentAuthority {
             [id],
         )
         .map_err(|_| AuthorityError::Storage)?;
-        let result = snapshot_tx(&tx, id)?;
+        let snapshot = snapshot_tx(&tx, id)?;
         tx.commit().map_err(|_| AuthorityError::Storage)?;
-        Ok(result)
+        Ok(CancelAdmissionResult {
+            snapshot,
+            terminal_event,
+        })
     }
     fn replay(
         &self,
@@ -1362,6 +1387,7 @@ struct Request {
     run_id: Option<String>,
     app_session_id: Option<String>,
     provider_session_id: Option<String>,
+    terminal_event: Option<TerminalEvent>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1538,6 +1564,7 @@ fn dispatch(
                     .payload
                     .clone()
                     .ok_or(AuthorityError::InvalidIdentifier)?,
+                request.terminal_event.clone(),
             )?,
         ),
         "event.replay" => serde_json::to_value(
@@ -2388,10 +2415,44 @@ mod tests {
         let reserved = a.reserve_start("j", "p", "app", "owner", 1).unwrap();
         let lease = reserved.lease.unwrap();
         let cancelled = a
-            .cancel_admission("j", &lease, "admission-cancelled", json!({"kind":"failed"}))
+            .cancel_admission(
+                "j",
+                &lease,
+                "admission-cancelled",
+                json!({"kind":"failed"}),
+                Some(TerminalEvent {
+                    event_id: "run-terminal:run-1".to_owned(),
+                    payload: json!({"kind":"job_terminal","outcome":"failed"}),
+                }),
+            )
             .unwrap();
-        assert_eq!(cancelled.state, JobState::Failed);
-        assert!(cancelled.lease.is_none());
+        assert_eq!(cancelled.snapshot.state, JobState::Failed);
+        assert!(cancelled.snapshot.lease.is_none());
+        assert_eq!(
+            cancelled.terminal_event,
+            Some(JobEvent {
+                sequence: 2,
+                event_id: "run-terminal:run-1".to_owned(),
+                payload: json!({"kind":"job_terminal","outcome":"failed"}),
+            })
+        );
+        assert_eq!(
+            a.replay("j", 0, DEFAULT_REPLAY_BUDGET, "reply")
+                .unwrap()
+                .events,
+            vec![
+                JobEvent {
+                    sequence: 1,
+                    event_id: "admission-cancelled".to_owned(),
+                    payload: json!({"kind":"failed"})
+                },
+                JobEvent {
+                    sequence: 2,
+                    event_id: "run-terminal:run-1".to_owned(),
+                    payload: json!({"kind":"job_terminal","outcome":"failed"})
+                },
+            ]
+        );
         assert_eq!(a.resolve_binding("p", "app"), Err(AuthorityError::NotFound));
         assert_eq!(
             a.reserve("replacement", "p", "owner", 1).unwrap().state,
@@ -2410,9 +2471,16 @@ mod tests {
         .unwrap();
         a.admit("replacement", &queued_lease, "run", "app").unwrap();
         assert_eq!(
-            a.cancel_admission("replacement", &queued_lease, "cancel-queued", json!(null))
-                .unwrap()
-                .state,
+            a.cancel_admission(
+                "replacement",
+                &queued_lease,
+                "cancel-queued",
+                json!(null),
+                None
+            )
+            .unwrap()
+            .snapshot
+            .state,
             JobState::Failed
         );
         std::fs::remove_dir_all(d).unwrap();
@@ -2436,13 +2504,13 @@ mod tests {
         a.admit("j", &lease, "run", "app").unwrap();
         a.transition("j", &lease, JobState::Running).unwrap();
         assert_eq!(
-            a.cancel_admission("j", &lease, "cancel-running", json!(null)),
+            a.cancel_admission("j", &lease, "cancel-running", json!(null), None),
             Err(AuthorityError::InvalidTransition)
         );
         a.finalize("j", &lease, "failed", json!(null), JobState::Failed)
             .unwrap();
         assert_eq!(
-            a.cancel_admission("j", &lease, "cancel-terminal", json!(null)),
+            a.cancel_admission("j", &lease, "cancel-terminal", json!(null), None),
             Err(AuthorityError::StaleLease)
         );
         std::fs::remove_dir_all(d).unwrap();

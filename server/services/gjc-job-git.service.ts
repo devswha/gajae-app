@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
+import type { JobGitDiffResponse } from '../../shared/gjc-job-projection-protocol.js';
+
 import { GjcGitClient } from './gjc-git-client.js';
 
 type JobSnapshot = { jobId: string; worktreeId?: string | null; branch?: string | null; repositoryRoot?: string | null; baseCommit?: string | null };
@@ -60,14 +62,14 @@ export class GjcJobGitService {
   }
 
   async status(jobId: string): Promise<unknown> { const binding = await this.resolve(jobId); return binding.git.status({ jobId, branch: binding.job.branch, path: binding.path }); }
-  async diff(jobId: string): Promise<{ patch: string; paths: string[] }> {
+  async diff(jobId: string): Promise<JobGitDiffResponse> {
     const binding = await this.resolve(jobId);
     const value = await binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true });
     const response = record(value);
-    const patch = Buffer.isBuffer(response.patch) ? response.patch.toString('utf8') : typeof response.patch === 'string' ? response.patch : '';
-    const source = Array.isArray(response.paths) ? response.paths : Array.isArray(response.changedPaths) ? response.changedPaths : [];
+    const text = Buffer.isBuffer(response.patch) ? response.patch.toString('utf8') : typeof response.patch === 'string' ? response.patch : '';
+    const source = Array.isArray(response.paths) ? response.paths : Array.isArray(response.changedPaths) ? response.changedPaths : [...text.matchAll(/^diff --git a\/(.+) b\/(.+)$/gmu)].map(match => match[2]);
     const paths = [...new Set(source.filter((path): path is string => typeof path === 'string' && path.length > 0 && !path.startsWith('/') && !path.split('/').includes('..')))];
-    return { patch, paths };
+    return { text, paths };
   }
   async publish(jobId: string): Promise<{ branch: string }> {
     return this.lifecycle(jobId, 'publish', async () => {
