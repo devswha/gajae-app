@@ -19,7 +19,7 @@ class FakeSupervisor implements JobSupervisor {
   spawnRun(input: GjcWorkerSpawnRun) {
     return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId };
   }
-  async abort(): Promise<boolean> { return true; }
+  async abort() { return 'aborted' as const; }
 }
 
 test('Slice 3 persists lease-free publish lifecycle events only after a run is ready', { skip: !existsSync(corePath) }, async (t) => {

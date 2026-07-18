@@ -267,7 +267,7 @@ test('fails closed when the Windows job guard never proves app ownership', async
     /GJC worker failed/,
   );
 
-  assert.equal(child.killed, true);
+  assert.equal(child.killed, false);
 });
 
 test('shares one handshake and sends one start request per concurrent run', async () => {
@@ -496,6 +496,28 @@ test('keeps a run active when the worker cannot confirm abort', async () => {
   assert.equal(supervisor.isActive(run.abortHandle), true);
   peer.respond(start);
   await run;
+});
+test('joins concurrent alias termination requests to one worker generation reap', async () => {
+  const child = new FakeChild();
+  const peer = new FakePeer(child);
+  replyToHandshake(peer);
+  let releaseReap!: () => void;
+  const reapGate = new Promise<void>((resolve) => { releaseReap = resolve; });
+  const supervisor = new GjcWorkerSupervisor({ ...runtime(child), killTree: () => reapGate });
+  const first = spawn(supervisor, 'one', {}, { send() {} });
+  const second = spawn(supervisor, 'two', {}, { send() {} });
+  const firstStart = await peer.waitFor('session.start');
+  const secondStart = await peer.waitFor('session.start', 2);
+  peer.event('app-session-1', firstStart.id, 'session.created', { providerSessionId: 'provider-one' });
+  peer.event('app-session-1', secondStart.id, 'session.created', { providerSessionId: 'provider-two' });
+
+  const firstTermination = supervisor.terminate('provider-one');
+  const secondTermination = supervisor.terminate('provider-two');
+  releaseReap();
+
+  assert.deepEqual(await Promise.all([firstTermination, secondTermination]), ['reaped', 'reaped']);
+  await assert.rejects(first, /GJC worker failed/);
+  await assert.rejects(second, /GJC worker failed/);
 });
 
 test('mirrors approval replay, reply, and cancellation in app-owned state', async () => {
@@ -846,5 +868,11 @@ test('production POSIX terminator waits for direct-child close and process-group
   assert.throws(
     () => process.kill(-processId, 0),
     (error: unknown) => (error as NodeJS.ErrnoException).code === 'ESRCH',
+  );
+});
+test('Windows tree reaping is explicitly fail-closed while the v2 runtime is frozen', async () => {
+  await assert.rejects(
+    killWorkerTree(new FakeChild(), 'win32'),
+    /unconfirmed on Windows/,
   );
 });

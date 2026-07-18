@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { getGjcWorkerSupervisor, type GjcWorkerOptions, type GjcWorkerOutcome, type GjcWorkerRun, type GjcWorkerSpawnRun, type GjcWorkerWriter } from '../gjc-worker-client.js';
+import { getGjcWorkerSupervisor, type GjcWorkerAbortOutcome, type GjcWorkerOptions, type GjcWorkerOutcome, type GjcWorkerReapOutcome, type GjcWorkerRun, type GjcWorkerSpawnRun, type GjcWorkerWriter } from '../gjc-worker-client.js';
 import { getDatabasePath } from '../modules/database/connection.js';
 
 import { GjcGitClient } from './gjc-git-client.js';
@@ -21,7 +21,7 @@ export type JobAuthority = {
   bindingResolve(params: Record<string, unknown>): Promise<unknown>; bindingRelease(params: Record<string, unknown>): Promise<unknown>; interruptForShutdown(): Promise<unknown>; reconcile(params?: Record<string, unknown>): Promise<unknown>; bindProviderSession(params: Record<string, unknown>): Promise<unknown>;
 };
 export type GitWorktrees = { create(params: Record<string, unknown>): Promise<unknown>; list(params?: Record<string, unknown>): Promise<unknown>; status(params?: Record<string, unknown>): Promise<unknown> };
-export type JobSupervisor = { spawnRun(input: GjcWorkerSpawnRun): GjcWorkerRun; abort(alias: string): Promise<GjcWorkerOutcome | boolean>; terminate?(alias: string): Promise<GjcWorkerOutcome | boolean> };
+export type JobSupervisor = { spawnRun(input: GjcWorkerSpawnRun): GjcWorkerRun; abort(alias: string): Promise<GjcWorkerAbortOutcome>; terminate?(alias: string): Promise<GjcWorkerReapOutcome> };
 export type JobOrchestratorOptions = GjcWorkerOptions & { writer: GjcWorkerWriter; jobId?: string; cap?: number; dispatched?: boolean };
 export type JobRunHandle = { jobId: string; runId?: string; state: string; started: Promise<void>; completion: Promise<void>; abortHandle: string };
 export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktrees; gitForProject?: (projectRoot: string) => GitWorktrees; supervisor: JobSupervisor; owner?: string; createId?: () => string; broadcast?: (jobId: string, event: unknown) => void; stopCompletionTimeoutMs?: number };
@@ -38,8 +38,8 @@ function worktreePath(value: unknown, id: string): string | undefined { const it
 function sameFence(current: JobSnapshot, runId: string, expected: Lease): boolean { return current.currentRun?.runId === runId && current.lease?.owner === expected.owner && current.lease?.generation === expected.generation; }
 type PersistenceScope = { pending: Set<Promise<void>>; failure?: unknown };
 function failureError(error: unknown): Error { return error instanceof Error ? new Error(error.message) : new Error('Worker failed.'); }
-function confirmedReap(outcome: GjcWorkerOutcome | boolean | undefined): boolean {
-  return outcome === true || outcome === 'not_started' || outcome === 'reaped';
+function confirmedReap(outcome: GjcWorkerReapOutcome | undefined): boolean {
+  return outcome === 'not_started' || outcome === 'reaped';
 }
 async function settledOutcome(run: GjcWorkerRun | undefined): Promise<GjcWorkerOutcome | undefined> {
   if (!run?.outcome) return undefined;
@@ -160,10 +160,10 @@ export class JobOrchestrator {
     this.activeRuns.delete(jobId);
   }
   private async stopRun(run: GjcWorkerRun): Promise<boolean> {
-    const aborted = await this.deps.supervisor.abort(run.abortHandle).catch(() => false);
-    if (confirmedReap(aborted)) return true;
+    const aborted = await this.deps.supervisor.abort(run.abortHandle).catch((): GjcWorkerAbortOutcome => 'unconfirmed');
+    if (aborted === 'not_started') return true;
     if (await terminalCompletion(run, this.stopCompletionTimeoutMs)) return true;
-    return confirmedReap(await this.deps.supervisor.terminate?.(run.abortHandle).catch(() => false));
+    return confirmedReap(await this.deps.supervisor.terminate?.(run.abortHandle).catch((): GjcWorkerReapOutcome => 'unconfirmed'));
   }
   private async cancelAdmission(jobId: string, current: JobSnapshot, error: unknown): Promise<void> {
     await this.mutate(

@@ -69,6 +69,8 @@ export type GjcWorkerSpawnRun = {
   writer: GjcWorkerWriter;
 };
 export type GjcWorkerOutcome = 'not_started' | 'aborted' | 'completed' | 'reaped' | 'unconfirmed';
+export type GjcWorkerAbortOutcome = 'not_started' | 'aborted' | 'unconfirmed';
+export type GjcWorkerReapOutcome = 'not_started' | 'reaped' | 'unconfirmed';
 export type GjcWorkerRun = {
   started: Promise<void>;
   completion: Promise<void>;
@@ -245,44 +247,11 @@ export async function enrichGjcSdkRunOptions(options: GjcWorkerOptions): Promise
   };
 }
 
-function taskkill(processId: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const killer = spawnChild('taskkill', [
-      '/pid',
-      String(processId),
-      '/T',
-      '/F',
-    ], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    let settled = false;
-    const finish = (error?: Error): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve();
-    };
-    const timer = setTimeout(() => {
-      killer.kill('SIGKILL');
-      finish(new Error('taskkill timed out.'));
-    }, 5_000);
-    killer.once('error', finish);
-    killer.once('close', (code, signal) => {
-      if (code === 0) {
-        finish();
-        return;
-      }
-      finish(new Error(
-        `taskkill failed${code === null ? '' : ` with exit code ${code}`}`
-        + `${signal ? ` after signal ${signal}` : ''}.`,
-      ));
-    });
-  });
-}
-
-export function killWorkerTree(child: Child): Promise<void> {
+export function killWorkerTree(child: Child, platform: NodeJS.Platform = process.platform): Promise<void> {
+  if (platform === 'win32') {
+    // Windows runtime is frozen in v2; no verified tree-reap implementation exists.
+    return Promise.reject(new Error('GJC worker tree reaping is unconfirmed on Windows.'));
+  }
   return new Promise((resolve, reject) => {
     let closed = false;
     let settled = false;
@@ -331,11 +300,6 @@ export function killWorkerTree(child: Child): Promise<void> {
   });
 }
 
-function killOwnedRunTree(processId: number): void | Promise<void> {
-  if (process.platform !== 'win32') return;
-  return taskkill(processId);
-}
-
 /** Supervises the private Protocol v1 worker while preserving app-owned lifecycle state. */
 export class GjcWorkerSupervisor {
   private readonly runtime: Required<Pick<GjcWorkerSupervisorRuntime, 'spawn' | 'initializeTimeoutMs' | 'requestTimeoutMs' | 'createScope' | 'diagnostic' | 'notifyRunStopped' | 'notifyRunFailed' | 'killTree' | 'killProcessTree' | 'platform' | 'environment' | 'enrichOptions'>> & Pick<GjcWorkerSupervisorRuntime, 'corePath' | 'workerPath' | 'compiled' | 'bunPath' | 'allowDevelopmentBun'>;
@@ -345,6 +309,7 @@ export class GjcWorkerSupervisor {
   private shuttingDown = false;
   private shutdownPromise?: Promise<void>;
   private terminating?: Promise<void>;
+  private terminatingGeneration?: { child: Child; runIds: ReadonlySet<string>; outcome: Promise<GjcWorkerReapOutcome> };
   private terminationFailure?: Error;
   private decoder?: GjcWorkerNdjsonDecoder;
   private tracker = new GjcWorkerRequestTracker();
@@ -368,8 +333,8 @@ export class GjcWorkerSupervisor {
       diagnostic: runtime.diagnostic ?? (() => {}),
       notifyRunStopped: runtime.notifyRunStopped ?? notifyRunStopped as unknown as RunStoppedNotifier,
       notifyRunFailed: runtime.notifyRunFailed ?? notifyRunFailed as unknown as RunFailedNotifier,
-      killTree: runtime.killTree ?? killWorkerTree,
-      killProcessTree: runtime.killProcessTree ?? killOwnedRunTree,
+      killTree: runtime.killTree ?? ((child) => killWorkerTree(child, runtime.platform ?? process.platform)),
+      killProcessTree: runtime.killProcessTree ?? (() => {}),
       platform: runtime.platform ?? process.platform,
       environment: runtime.environment ?? process.env,
     };
@@ -765,7 +730,7 @@ export class GjcWorkerSupervisor {
     }
   }
 
-  abort(alias: string): Promise<GjcWorkerOutcome> {
+  abort(alias: string): Promise<GjcWorkerAbortOutcome> {
     const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
     const run = runId ? this.runs.get(runId) : undefined;
     if (!run || run.phase === 'run_terminal') return Promise.resolve('unconfirmed');
@@ -788,11 +753,13 @@ export class GjcWorkerSupervisor {
     run.abortPromise = abortPromise;
     return abortPromise.then((aborted) => aborted ? 'aborted' : 'unconfirmed');
   }
-  async terminate(alias: string): Promise<GjcWorkerOutcome> {
+  async terminate(alias: string): Promise<GjcWorkerReapOutcome> {
     const runId = this.runs.has(alias) ? alias : this.aliases.get(alias);
     const child = this.child;
-    if (!runId || !this.runs.has(runId) || !child) return 'unconfirmed';
-    return this.workerFailed(child);
+    if (runId && child && this.runs.has(runId)) return this.workerFailed(child);
+    const generation = this.terminatingGeneration;
+    if (runId && generation?.runIds.has(runId)) return generation.outcome;
+    return 'unconfirmed';
   }
 
   isActive(alias: string): boolean {
@@ -915,7 +882,9 @@ export class GjcWorkerSupervisor {
     run.resolve();
   }
 
-  private workerFailed(child: Child, guardedProcessExited = false): Promise<GjcWorkerOutcome> {
+  private workerFailed(child: Child, guardedProcessExited = false): Promise<GjcWorkerReapOutcome> {
+    const existingGeneration = this.terminatingGeneration;
+    if (existingGeneration?.child === child) return existingGeneration.outcome;
     if (child !== this.child) return Promise.resolve('unconfirmed');
     this.child = undefined;
     this.ready = false;
@@ -936,9 +905,10 @@ export class GjcWorkerSupervisor {
         terminations.push(Promise.reject(error));
       }
     };
-    if (!(usesWindowsJobGuard && guardedProcessExited)) {
-      terminate('GJC worker tree termination failed.', () => this.runtime.killTree(child));
-    }
+    // On frozen v2 Windows, tree reaping is deliberately unverified and fails closed.
+    // `guardedProcessExited` cannot establish descendant termination without a tested runtime.
+    void guardedProcessExited;
+    terminate('GJC worker tree termination failed.', () => this.runtime.killTree(child));
     if (!usesWindowsJobGuard) {
       for (const run of affectedRuns) {
         if (run.processId) terminate('GJC run tree termination failed.', () => this.runtime.killProcessTree(run.processId!));
@@ -949,24 +919,30 @@ export class GjcWorkerSupervisor {
       throw this.terminationFailure;
     });
     this.terminating = termination;
+    const outcome = termination.then(
+      () => {
+        for (const run of affectedRuns) {
+          this.finish(run, run.terminalForwarded ? run.terminalFailed : true, SAFE_FAILURE, 'reaped');
+        }
+        return 'reaped' as const;
+      },
+      () => {
+        for (const run of affectedRuns) run.resolveOutcome('unconfirmed');
+        return 'unconfirmed' as const;
+      },
+    );
+    this.terminatingGeneration = {
+      child,
+      runIds: new Set(affectedRuns.map((run) => run.runId)),
+      outcome,
+    };
     void termination.finally(() => {
       if (this.terminating === termination) this.terminating = undefined;
     }).catch(() => {});
 
     this.tracker.failAll(new Error(SAFE_FAILURE));
     this.expiredRequests.clear();
-    return termination.then(
-      () => {
-        for (const run of affectedRuns) {
-          this.finish(run, run.terminalForwarded ? run.terminalFailed : true, SAFE_FAILURE, 'reaped');
-        }
-        return 'reaped';
-      },
-      () => {
-        for (const run of affectedRuns) run.resolveOutcome('unconfirmed');
-        return 'unconfirmed';
-      },
-    );
+    return outcome;
   }
 
   private async awaitTermination(): Promise<void> {

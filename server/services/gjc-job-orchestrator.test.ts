@@ -28,7 +28,7 @@ class Jobs implements JobAuthority {
   interruptForShutdown() { this.state = { ...this.state, state: 'interrupted' }; return this.call('interruptForShutdown', {}); }
 }
 class Git implements GitWorktrees { calls: string[] = []; async create() { this.calls.push('create'); return { worktree: { worktreeId: '/project/.gjc-worktrees/job-abc', jobId: 'job-abc', path: '/project/.gjc-worktrees/job-abc', branch: 'job/job-abc', head: 'abc' } }; } async list() { this.calls.push('list'); return { items: [{ worktreeId: '/project/.gjc-worktrees/job-abc', path: '/project/.gjc-worktrees/job-abc' }] }; } async status() { this.calls.push('status'); return { branch: 'job/abc' }; } }
-class Supervisor implements JobSupervisor { input?: Parameters<JobSupervisor['spawnRun']>[0]; aborted?: string; spawnRun(input: Parameters<JobSupervisor['spawnRun']>[0]) { this.input = input; return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }; } async abort(id: string) { this.aborted = id; return true; } }
+class Supervisor implements JobSupervisor { input?: Parameters<JobSupervisor['spawnRun']>[0]; aborted?: string; spawnRun(input: Parameters<JobSupervisor['spawnRun']>[0]) { this.input = input; return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }; } async abort(id: string) { this.aborted = id; return 'aborted' as const; } }
 const options = { appSessionId: 'app-1', writer: { send() {} } };
 const stopCompletionTimeoutMs = 5;
 
@@ -51,7 +51,7 @@ test('completion resolves only after durable finalization succeeds', async () =>
   let settle!: () => void; const workerCompletion = new Promise<void>((resolve) => { settle = resolve; });
   let finalize!: () => void; const finalizeGate = new Promise<void>((resolve) => { finalize = resolve; });
   jobs.finalize = async (p) => { jobs.calls.push(['finalize', p]); await finalizeGate; jobs.state = { ...jobs.state, state: String(p.state) }; return jobs.state; };
-  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => true };
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => 'aborted' };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' });
   const run = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
   let completed = false; void run.completion.then(() => { completed = true; });
@@ -67,7 +67,7 @@ test('completion read-back accepts a committed success when the finalize respons
     jobs.state = { ...jobs.state, state: String(p.state) };
     throw new Error('finalize response lost');
   };
-  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => true };
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }), abort: async () => 'aborted' };
   const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
   settle();
   await run.completion;
@@ -97,7 +97,7 @@ test('surfaces an unconfirmed cancelAdmission failure instead of hiding a fenced
 test('worker failure finalizes durable state and rejects completion', async () => {
   const jobs = new Jobs(); const git = new Git();
   const workerError = new Error('worker exploded');
-  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: Promise.reject(workerError), abortHandle: input.runId }), abort: async () => true };
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.resolve(), completion: Promise.reject(workerError), abortHandle: input.runId }), abort: async () => 'aborted' };
   const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
   await assert.rejects(run.completion, /worker exploded/);
   assert.equal(jobs.state.state, 'failed');
@@ -112,7 +112,7 @@ test('durability failure latches before completion and cannot be reported as suc
       input.writer.send({ kind: 'delta' });
       return { started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId };
     },
-    abort: async () => true,
+    abort: async () => 'aborted',
   };
   jobs.appendEvent = async (p) => { jobs.calls.push(['appendEvent', p]); throw new Error('event disk failed'); };
   const run = await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', 'hello', options);
@@ -134,8 +134,8 @@ test('forced worker generation termination permits failed finalization after abo
   let terminated = false;
   const supervisor: JobSupervisor = {
     spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), abortHandle: input.runId }),
-    abort: async () => false,
-    terminate: async () => (terminated = true),
+    abort: async () => 'unconfirmed',
+    terminate: async () => (terminated = true, 'reaped' as const),
   };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', stopCompletionTimeoutMs });
   await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
@@ -177,7 +177,7 @@ test('a completion after an unacknowledged abort finalizes Aborting as succeeded
   let settle!: () => void; const workerCompletion = new Promise<void>((resolve) => { settle = resolve; });
   const supervisor: JobSupervisor = {
     spawnRun: (input) => ({ started: Promise.resolve(), completion: workerCompletion, abortHandle: input.runId }),
-    abort: async () => false,
+    abort: async () => 'unconfirmed',
   };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', stopCompletionTimeoutMs });
   const run = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
@@ -223,11 +223,12 @@ test('a running transition failure compensates before the worker outcome settles
   settleCompletion();
   await Promise.all([workerOutcome, workerCompletion]);
 });
-test('an early healthy authority notification waits for prior cleanup and reconciles once', async () => {
+test('two non-settling runs are reaped before an early healthy authority notification admits work', async () => {
   const jobs = new Jobs(); const git = new Git();
   let releaseAbort!: () => void;
   const abortGate = new Promise<void>((resolve) => { releaseAbort = resolve; });
   const completions: Array<() => void> = [];
+  let aborts = 0;
   const supervisor: JobSupervisor = {
     spawnRun: (input) => {
       let settle!: () => void;
@@ -235,18 +236,20 @@ test('an early healthy authority notification waits for prior cleanup and reconc
       completions.push(settle);
       return { started: Promise.resolve(), completion, abortHandle: input.runId };
     },
-    abort: async () => { await abortGate; return 'aborted'; },
+    abort: async () => { aborts += 1; await abortGate; return 'aborted'; },
     terminate: async () => 'reaped',
   };
   const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', stopCompletionTimeoutMs });
   const firstRun = await orchestrator.start('gjc', 'app-1', '/project', 'hello', options);
+  const secondRun = await orchestrator.start('gjc', 'app-2', '/project', 'hello', { ...options, jobId: 'job-second' });
   const down = orchestrator.authorityHealth(false);
   const up = orchestrator.authorityHealth(true);
   releaseAbort();
   await Promise.all([down, up]);
+  assert.equal(aborts, 2);
   assert.equal(jobs.calls.filter(([name]) => name === 'reconcile').length, 1);
-  const secondRun = await orchestrator.start('gjc', 'app-2', '/project', 'hello', options);
+  const thirdRun = await orchestrator.start('gjc', 'app-3', '/project', 'hello', { ...options, jobId: 'job-third' });
   completions.forEach((settle) => settle());
-  await Promise.all([firstRun.completion, secondRun.completion]);
+  await Promise.all([firstRun.completion, secondRun.completion, thirdRun.completion]);
   assert.equal(jobs.state.state, 'succeeded');
 });

@@ -22,7 +22,7 @@ class FakeSupervisor implements JobSupervisor {
     this.inputs.push(input);
     return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId };
   }
-  async abort(): Promise<boolean> { return true; }
+  async abort() { return 'aborted' as const; }
 }
 
 type Fixture = {

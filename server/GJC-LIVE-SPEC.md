@@ -172,15 +172,13 @@ redacted recursively by the serializer.
 
 ## Process and terminal lifecycle
 
-- On POSIX, the application starts the Rust core as a detached process-group
-  leader. The Node worker and GJC children inherit that group.
-- On Windows, the existing PowerShell guard opens an exact
-  application-process handle, completes a fixed ready/ack exchange with an exact
-  unbuffered `ReadFile` over inherited stdin, then uses `STARTUPINFOEX` with
-  `PROC_THREAD_ATTRIBUTE_JOB_LIST` to create the Rust core inside a
-  kill-on-close Job Object from its first instruction. The Node worker and GJC
-  descendants inherit the same Job. Explicit `taskkill /T /F` is a validated
-  escalation path; failed cleanup permanently blocks replacement generations.
+- On POSIX (Linux and macOS), the application starts the Rust core as a detached
+  process-group leader. The Node worker and GJC children inherit that group;
+  reaping requires direct-child close and process-group `ESRCH`.
+- Windows is a v2 non-target and runtime-frozen per this brief: CI and a
+  verified desktop machine are unavailable. No `taskkill /T /F` fallback is
+  part of the v2 contract. Windows cleanup is fail-closed as `unconfirmed`, so
+  it cannot release a lease or admit a replacement generation.
 - A start/resume response remains pending until the GJC run settles and all
   earlier worker events have been emitted.
 - `turn.abort` targets `runId`; the worker time-bounds the SDK attempt before
