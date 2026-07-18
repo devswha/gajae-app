@@ -62,6 +62,7 @@
     "check:core": "cargo fmt --manifest-path native/gajae-core/Cargo.toml -- --check && cargo clippy --locked --manifest-path native/gajae-core/Cargo.toml --all-targets -- -D warnings && cargo test --locked --manifest-path native/gajae-core/Cargo.toml",
     "fill:runtime-manifest": "node scripts/fill-runtime-manifest.mjs",
     "test": "node scripts/run-tests.mjs",
+    "smoke:packaged-server": "node scripts/release/smoke-packaged-server.mjs",
     "pretest": "npm run build:core:dev",
     "test:e2e:gjc": "TSX_TSCONFIG_PATH=server/tsconfig.json node --import tsx --test --test-concurrency=1 server/e2e/gjc-slice4.browser.e2e.ts server/e2e/gjc-slice4.wire.e2e.ts",
     "lint": "eslint src/ server/ electron/ shared/ scripts/ vite.config.js tailwind.config.js",
