@@ -21,6 +21,8 @@ import {
 } from '@/shared/project-file-containment.js';
 import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
+import { GjcJobProjectionService } from './modules/websocket/services/gjc-job-projection.service.js';
+import { createGjcTerminalNotificationAdapter } from './modules/notifications/services/gjc-terminal-notification-adapter.service.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
@@ -120,6 +122,18 @@ function getPendingProviderApprovalsForSession(sessionId) {
 
 
 const gjcJobOrchestrator = getProductionJobOrchestrator();
+const gjcJobProjection = new GjcJobProjectionService({
+    get: (params) => getProductionJobAuthority().get(params),
+    replayEvents: (params) => getProductionJobAuthority().replayEvents(params),
+});
+const gjcTerminalNotificationAdapter = createGjcTerminalNotificationAdapter({
+    authority: getProductionJobAuthority(),
+});
+gjcJobOrchestrator.deps.broadcast = (jobId, event) => {
+    try { gjcJobProjection.publish(jobId, event); } catch { /* Durable replay recovers isolated websocket fan-out failures. */ }
+    try { gjcTerminalNotificationAdapter.onCommittedEvent(jobId, event); } catch { /* Notification delivery is isolated from durable job state. */ }
+};
+void gjcTerminalNotificationAdapter.startupCatchUp().catch(() => {});
 let gjcJobAuthorityAvailable = false;
 
 function gjcJobAuthorityError() {
@@ -206,6 +220,7 @@ const wss = createWebSocketServer(server, {
         resolveToolApproval: resolveProviderToolApproval,
         getPendingApprovalsForSession: getPendingProviderApprovalsForSession,
         gjcResume,
+        gjcProjection: gjcJobProjection,
     },
     shell: {
         resolveProviderSessionId: (sessionId, provider) => {

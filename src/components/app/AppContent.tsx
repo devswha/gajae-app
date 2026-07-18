@@ -12,6 +12,8 @@ import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
+import { useSessionStore } from '../../stores/useSessionStore';
+import { JobWorkspace, NewJobFlow } from '../jobs';
 import type { ExternalTerminalTarget } from '../../types/app';
 
 type RunningSessionApiItem = {
@@ -50,10 +52,11 @@ export default function AppContent() {
 
 function AppContentInner() {
   const navigate = useNavigate();
-  const { sessionId } = useParams<{ sessionId?: string }>();
+  const { sessionId, jobId } = useParams<{ sessionId?: string; jobId?: string }>();
   const { t } = useTranslation('common');
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { ws, sendMessage, subscribe } = useWebSocket();
+  const jobStore = useSessionStore();
 
   const {
     processingSessions,
@@ -277,46 +280,50 @@ function AppContentInner() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <MainContent
-          selectedProject={selectedProject}
-          selectedSession={selectedSession}
-          isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
-          liveSessionTmuxName={
-            // Relay (tower /send types into the tmux pane) only for LINEAGE
-            // claims — a cwd-fallback label points at someone else's pane.
-            selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
-              ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null)
-              : null
-          }
-          liveSessionTmuxId={
-            selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
-              ? (sidebarSharedProps.liveSessionTmuxIds.get(selectedSession.id) ?? null)
-              : null
-          }
-          liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          ws={ws}
-          sendMessage={sendMessage}
-          isMobile={isMobile}
-          onMenuClick={() => setSidebarOpen(true)}
-          isLoading={isLoadingProjects}
-          onInputFocusChange={setIsInputFocused}
-          onSessionProcessing={markSessionProcessing}
-          onSessionIdle={markSessionIdle}
-          processingSessions={processingSessions}
-          onNavigateToSession={(targetSessionId: string, options) =>
-            navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
-          }
-          onSessionEstablished={(targetSessionId, context) =>
-            registerOptimisticSession({ sessionId: targetSessionId, ...context })
-          }
-          onShowSettings={openSettings}
-          externalMessageUpdate={externalMessageUpdate}
-          newSessionTrigger={newSessionTrigger}
-          externalTerminal={externalTerminal}
-          onExternalTerminalClose={closeExternalTerminal}
-        />
+        {jobId ? (
+          <JobWorkspace jobId={jobId} store={jobStore} />
+        ) : window.location.pathname.endsWith('/jobs/new') ? (
+          <NewJobFlow projects={sidebarSharedProps.projects ?? []} onCreated={(createdJobId) => navigate(`/jobs/${createdJobId}`)} />
+        ) : (
+          <MainContent
+            selectedProject={selectedProject}
+            selectedSession={selectedSession}
+            isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
+            liveSessionTmuxName={
+              selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
+                ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null)
+                : null
+            }
+            liveSessionTmuxId={
+              selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
+                ? (sidebarSharedProps.liveSessionTmuxIds.get(selectedSession.id) ?? null)
+                : null
+            }
+            liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            ws={ws}
+            sendMessage={sendMessage}
+            isMobile={isMobile}
+            onMenuClick={() => setSidebarOpen(true)}
+            isLoading={isLoadingProjects}
+            onInputFocusChange={setIsInputFocused}
+            onSessionProcessing={markSessionProcessing}
+            onSessionIdle={markSessionIdle}
+            processingSessions={processingSessions}
+            onNavigateToSession={(targetSessionId: string, options) =>
+              navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
+            }
+            onSessionEstablished={(targetSessionId, context) =>
+              registerOptimisticSession({ sessionId: targetSessionId, ...context })
+            }
+            onShowSettings={openSettings}
+            externalMessageUpdate={externalMessageUpdate}
+            newSessionTrigger={newSessionTrigger}
+            externalTerminal={externalTerminal}
+            onExternalTerminalClose={closeExternalTerminal}
+          />
+        )}
       </div>
 
       <CommandPalette

@@ -1,0 +1,2 @@
+import type { JobProjectionEvent } from '../../../../shared/gjc-job-projection-protocol';
+export default function JobTimeline({ events }: { events: JobProjectionEvent[] }) { return <ol className="space-y-2">{events.map(event => <li key={event.eventId} className="rounded border p-3 text-sm"><span className="mr-2 text-muted-foreground">#{event.sequence}</span><pre className="whitespace-pre-wrap">{typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload, null, 2)}</pre></li>)}</ol>; }

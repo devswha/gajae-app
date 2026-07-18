@@ -196,7 +196,7 @@ export class JobOrchestrator {
       current = await this.mutate(jobId, () => this.deps.jobs.markDispatching({ ...this.params(jobId, current), runId }), (fresh) => Boolean(fresh.dispatchCheckpoint));
       expected = lease(current);
       const scope: PersistenceScope = { pending: new Set() };
-      run = this.deps.supervisor.spawnRun({ runId, appSessionId, message, options: { ...options, cwd, sessionId }, writer: this.writer(jobId, current, runId, options.writer, scope) });
+      run = this.deps.supervisor.spawnRun({ runId, appSessionId, message, options: { ...options, cwd, sessionId, notificationOwner: 'terminal-adapter' }, writer: this.writer(jobId, current, runId, options.writer, scope) });
       this.activeRuns.set(jobId, { runId, lease: expected, abortHandle: run.abortHandle, run });
       void run.completion.catch(() => {});
       await run.started;

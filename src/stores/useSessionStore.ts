@@ -13,6 +13,11 @@ import { authenticatedFetch } from '../utils/api';
 import type { LLMProvider } from '../types/app';
 
 import { buildRefreshMessagesUrl } from './sessionMessageFetch';
+import type {
+  JobProjectionErrorCode,
+  JobProjectionEvent,
+  JobSnapshot,
+} from '../../shared/gjc-job-projection-protocol';
 
 // ─── NormalizedMessage (mirrors server/adapters/types.js) ────────────────────
 
@@ -119,6 +124,25 @@ export interface SessionSlot {
 }
 
 const EMPTY: NormalizedMessage[] = [];
+export type JobProjectionSlot = {
+  snapshot: JobSnapshot | null;
+  lastAppliedSequence: number;
+  eventsBySequence: Map<number, JobProjectionEvent>;
+  orderedTail: JobProjectionEvent[];
+  status: 'idle' | 'subscribed' | 'error';
+  error: JobProjectionErrorCode | 'protocol_violation' | null;
+};
+
+function createEmptyJobSlot(): JobProjectionSlot {
+  return {
+    snapshot: null,
+    lastAppliedSequence: 0,
+    eventsBySequence: new Map(),
+    orderedTail: [],
+    status: 'idle',
+    error: null,
+  };
+}
 
 function createEmptySlot(): SessionSlot {
   return {
@@ -508,6 +532,8 @@ export function useSessionStore() {
   const storeRef = useRef(new Map<string, SessionSlot>());
   const activeSessionIdRef = useRef<string | null>(null);
   // Bump to force re-render — only when the active session's data changes.
+  const jobSlotsRef = useRef(new Map<string, JobProjectionSlot>());
+  const activeJobIdRef = useRef<string | null>(null);
   // Session ids are stable for the whole conversation lifetime (the backend
   // allocates them before the first send), so slots are keyed directly with
   // no alias/redirect indirection.
@@ -516,6 +542,9 @@ export function useSessionStore() {
     if (sessionId === activeSessionIdRef.current) {
       setTick(n => n + 1);
     }
+  }, []);
+  const notifyJob = useCallback((jobId: string) => {
+    if (jobId === activeJobIdRef.current) setTick(n => n + 1);
   }, []);
   const trimInactiveSlots = useCallback((protectedSessionId?: string) => {
     const store = storeRef.current;
@@ -539,6 +568,80 @@ export function useSessionStore() {
     store.set(sessionId, slot);
     trimInactiveSlots(sessionId);
   }, [trimInactiveSlots]);
+
+  const getJobSlot = useCallback((jobId: string): JobProjectionSlot => {
+    const slot = jobSlotsRef.current.get(jobId) ?? createEmptyJobSlot();
+    jobSlotsRef.current.set(jobId, slot);
+    return slot;
+  }, []);
+
+  const setActiveJob = useCallback((jobId: string | null) => {
+    activeJobIdRef.current = jobId;
+    setTick(n => n + 1);
+  }, []);
+
+  const applyJobSubscribed = useCallback((jobId: string, snapshot: JobSnapshot) => {
+    const slot = getJobSlot(jobId);
+    slot.snapshot = snapshot;
+    slot.status = 'subscribed';
+    slot.error = null;
+    notifyJob(jobId);
+  }, [getJobSlot, notifyJob]);
+
+  const applyJobEvent = useCallback((jobId: string, event: JobProjectionEvent) => {
+    const slot = getJobSlot(jobId);
+    const existing = slot.eventsBySequence.get(event.sequence);
+    if (event.sequence <= slot.lastAppliedSequence) {
+      if (existing?.eventId === event.eventId) return true;
+      if (existing && existing.eventId !== event.eventId) {
+        slot.status = 'error';
+        slot.error = 'protocol_violation';
+        notifyJob(jobId);
+        return false;
+      }
+      return true;
+    }
+    if (event.sequence !== slot.lastAppliedSequence + 1 || existing) {
+      slot.status = 'error';
+      slot.error = 'protocol_violation';
+      notifyJob(jobId);
+      return false;
+    }
+    slot.eventsBySequence.set(event.sequence, event);
+    slot.orderedTail = [...slot.orderedTail, event];
+    slot.lastAppliedSequence = event.sequence;
+    slot.status = 'subscribed';
+    slot.error = null;
+    notifyJob(jobId);
+    return true;
+  }, [getJobSlot, notifyJob]);
+
+  const applyJobReplayChunk = useCallback((jobId: string, events: JobProjectionEvent[]) => {
+    for (const event of events) {
+      if (!applyJobEvent(jobId, event)) return false;
+    }
+    return true;
+  }, [applyJobEvent]);
+
+  const applyJobLiveEvent = useCallback((jobId: string, event: JobProjectionEvent) =>
+    applyJobEvent(jobId, event), [applyJobEvent]);
+
+  const getJobCursor = useCallback((jobId: string) =>
+    jobSlotsRef.current.get(jobId)?.lastAppliedSequence ?? 0, []);
+
+  const setJobError = useCallback((jobId: string, error: JobProjectionErrorCode) => {
+    const slot = getJobSlot(jobId);
+    slot.status = 'error';
+    slot.error = error;
+    notifyJob(jobId);
+  }, [getJobSlot, notifyJob]);
+
+  const clearJobs = useCallback(() => {
+    const wasActive = activeJobIdRef.current !== null;
+    jobSlotsRef.current.clear();
+    activeJobIdRef.current = null;
+    if (wasActive) setTick(n => n + 1);
+  }, []);
 
   const setActiveSession = useCallback((sessionId: string | null) => {
     activeSessionIdRef.current = sessionId;
@@ -964,6 +1067,14 @@ export function useSessionStore() {
     finalizeStreaming,
     clearRealtime,
     clear,
+    getJobSlot,
+    getJobCursor,
+    setActiveJob,
+    applyJobSubscribed,
+    applyJobReplayChunk,
+    applyJobLiveEvent,
+    setJobError,
+    clearJobs,
     getMessages,
     getSessionSlot,
   }), [
@@ -971,6 +1082,8 @@ export function useSessionStore() {
     appendRealtime, appendRealtimeBatch, refreshFromServer,
     setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
     clearRealtime, clear, getMessages, getSessionSlot,
+    getJobSlot, getJobCursor, setActiveJob, applyJobSubscribed, applyJobReplayChunk,
+    applyJobLiveEvent, setJobError, clearJobs,
   ]);
 }
 

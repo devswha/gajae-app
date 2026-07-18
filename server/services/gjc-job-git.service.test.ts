@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFile as execFileCallback } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+
 
 import { GjcJobGitService } from './gjc-job-git.service.js';
+
+const execFile = promisify(execFileCallback);
 
 test('job git status resolves only the stored managed worktree', async () => {
   const calls: Record<string, unknown>[] = [];
@@ -42,4 +50,45 @@ test('job git diff uses the bounded native base diff including untracked files',
 
   assert.deepEqual(await service.diff('job-a'), { patch: Buffer.from('diff') });
   assert.deepEqual(calls, [{ jobId: 'job-a', branch: 'job/job-a', path: '/repo/.gjc-worktrees/job-a', mode: 'base', baseCommit: 'abc1234', includeUntracked: true }]);
+});
+
+test('job git commit resolves its managed worktree, commits changed relative paths, and records an admin event', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'gjc-job-commit-'));
+  const events: Record<string, unknown>[] = [];
+  const commands = async (...args: string[]) => execFile('git', args, { cwd: directory });
+  try {
+    await commands('init');
+    await commands('config', 'user.email', 'test@example.com');
+    await commands('config', 'user.name', 'GJC test');
+    await writeFile(path.join(directory, 'changed.txt'), 'changed\n');
+    const service = new GjcJobGitService(
+      {
+        get: async () => ({ jobId: 'job-a', repositoryRoot: '/repository-root', worktreeId: 'worktree-a', branch: 'job/job-a', baseCommit: 'base' }),
+        appendAdminEvent: async params => { events.push(params); return {}; },
+      },
+      () => ({
+        list: async () => ({ items: [{ worktreeId: 'worktree-a', path: directory, branch: 'job/job-a' }] }),
+        status: async () => ({ clean: false }),
+        diff: async () => ({}),
+      }),
+    );
+
+    const result = await service.commit('job-a', '  Commit changed file  ', ['changed.txt']);
+    assert.match(result.commit, /^[0-9a-f]{40}$/u);
+    assert.match(result.eventId, /^commit\./u);
+    assert.deepEqual((await commands('show', '--format=%s', '--no-patch')).stdout.trim(), 'Commit changed file');
+    assert.deepEqual((await commands('show', '--format=', '--name-only', 'HEAD')).stdout.trim(), 'changed.txt');
+    assert.deepEqual(events, [{ jobId: 'job-a', eventId: result.eventId, payload: { kind: 'git_commit', commit: result.commit, paths: ['changed.txt'] } }]);
+
+    for (const [message, paths] of [
+      ['', ['changed.txt']],
+      ['message', ['/absolute.txt']],
+      ['message', ['../traversal.txt']],
+      ['message', ['unchanged.txt']],
+      ['message', Array.from({ length: 101 }, (_, index) => `file-${index}`)],
+    ] as const) await assert.rejects(service.commit('job-a', message, paths), { code: 'invalid_request' });
+    await assert.rejects(service.commit('job-a', 'a'.repeat(4097), ['changed.txt']), { code: 'invalid_request' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

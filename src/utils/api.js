@@ -91,6 +91,22 @@ export const api = {
   // After the projectName → projectId migration the path/query identifier is
   // the DB-assigned `projectId`; parameter names reflect that for clarity.
   projects: () => authenticatedFetch('/api/projects?skipSynchronization=1'),
+  gjcJobs: {
+    list: () => authenticatedFetch('/api/gjc/jobs'),
+    get: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}`),
+    create: (input) => authenticatedFetch('/api/gjc/jobs', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+    abort: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/abort`, { method: 'POST' }),
+    resume: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }),
+    replay: (jobId, after = 0) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/replay?after=${encodeURIComponent(after)}`),
+    diff: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/diff`),
+    commit: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/commit`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  },
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
   // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
   liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),

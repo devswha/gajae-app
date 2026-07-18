@@ -126,6 +126,41 @@ CREATE TABLE IF NOT EXISTS scan_state (
 );
 `;
 
+export const GJC_TERMINAL_NOTIFICATION_DISPATCHES_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS gjc_terminal_notification_dispatches (
+    job_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    run_id TEXT NOT NULL,
+    app_session_id TEXT,
+    user_id INTEGER,
+    outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'aborted', 'interrupted')),
+    status TEXT NOT NULL CHECK (status IN ('claimed', 'accepted', 'failed')),
+    claim_token TEXT NOT NULL,
+    claimed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accepted_at DATETIME,
+    failure TEXT,
+    PRIMARY KEY (job_id, event_id),
+    UNIQUE (job_id, sequence),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+`;
+
+export const GJC_TERMINAL_NOTIFICATION_SCAN_CURSORS_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS gjc_terminal_notification_scan_cursors (
+    job_id TEXT PRIMARY KEY,
+    last_sequence INTEGER NOT NULL CHECK (last_sequence >= 0),
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
+export const GJC_TERMINAL_NOTIFICATION_META_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS gjc_terminal_notification_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    initialized INTEGER NOT NULL DEFAULT 0 CHECK (initialized IN (0, 1))
+);
+`;
+
 export const APP_CONFIG_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
@@ -174,6 +209,10 @@ CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id);
 -- NOTE: This index is created in migrations after sessions is rebuilt to include project_path.
 -- Creating it here can fail on upgraded installs where the legacy sessions table has no project_path.
 
+${GJC_TERMINAL_NOTIFICATION_DISPATCHES_TABLE_SCHEMA_SQL}
+CREATE INDEX IF NOT EXISTS idx_gjc_terminal_notification_dispatches_status_claimed_at ON gjc_terminal_notification_dispatches(status, claimed_at);
+${GJC_TERMINAL_NOTIFICATION_SCAN_CURSORS_TABLE_SCHEMA_SQL}
+${GJC_TERMINAL_NOTIFICATION_META_TABLE_SCHEMA_SQL}
 ${LAST_SCANNED_AT_SQL}
 
 ${APP_CONFIG_TABLE_SCHEMA_SQL}

@@ -47,7 +47,13 @@ type RunFailedNotification = {
 type RunStoppedNotifier = (notification: RunStoppedNotification) => unknown;
 type RunFailedNotifier = (notification: RunFailedNotification) => unknown;
 export type GjcApprovalDecision = { allow: boolean; updatedInput?: unknown; message?: string; rememberEntry?: unknown };
-export type GjcWorkerOptions = Record<string, unknown> & { sessionId?: string | null; cwd?: string; projectPath?: string; sessionSummary?: string };
+export type GjcWorkerOptions = Record<string, unknown> & {
+  sessionId?: string | null;
+  cwd?: string;
+  projectPath?: string;
+  sessionSummary?: string;
+  notificationOwner?: 'terminal-adapter';
+};
 type GjcOptionsEnricher = (options: GjcWorkerOptions) => Promise<GjcWorkerOptions>;
 export type GjcWorkerWriter = { send(value: unknown): void; setSessionId?(id: string): void; getAppSessionId?(): string | undefined; userId?: string | number | null };
 type Child = {
@@ -849,13 +855,15 @@ export class GjcWorkerSupervisor {
           // Notification and promise settlement remain authoritative.
         }
       }
-      this.invokeAppCallback('GJC failure notification failed.', () => this.runtime.notifyRunFailed({
-        userId: run.writer.userId ?? null,
-        provider: 'gjc',
-        sessionId,
-        sessionName: run.options.sessionSummary ?? null,
-        error: failureMessage,
-      }));
+      if (run.options.notificationOwner !== 'terminal-adapter') {
+        this.invokeAppCallback('GJC failure notification failed.', () => this.runtime.notifyRunFailed({
+          userId: run.writer.userId ?? null,
+          provider: 'gjc',
+          sessionId,
+          sessionName: run.options.sessionSummary ?? null,
+          error: failureMessage,
+        }));
+      }
       run.reject(new Error(failureMessage));
       return;
     }
@@ -872,13 +880,15 @@ export class GjcWorkerSupervisor {
         // Notification and promise settlement remain authoritative.
       }
     }
-    this.invokeAppCallback('GJC stop notification failed.', () => this.runtime.notifyRunStopped({
-      userId: run.writer.userId ?? null,
-      provider: 'gjc',
-      sessionId,
-      sessionName: run.options.sessionSummary ?? null,
-      stopReason: run.aborted ? 'aborted' : 'completed',
-    }));
+    if (run.options.notificationOwner !== 'terminal-adapter') {
+      this.invokeAppCallback('GJC stop notification failed.', () => this.runtime.notifyRunStopped({
+        userId: run.writer.userId ?? null,
+        provider: 'gjc',
+        sessionId,
+        sessionName: run.options.sessionSummary ?? null,
+        stopReason: run.aborted ? 'aborted' : 'completed',
+      }));
+    }
     run.resolve();
   }
 

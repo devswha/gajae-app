@@ -17,6 +17,7 @@ import SidebarProjectList, { type SidebarProjectListProps } from './SidebarProje
 import SidebarLiveSection from './SidebarLiveSection';
 import SidebarExternalSection from './SidebarExternalSection';
 import SidebarSpawnSession from './SidebarSpawnSession';
+import { JobSidebarSection } from '../../../jobs';
 
 function HighlightedSnippet({ snippet, highlights }: { snippet: string; highlights: { start: number; end: number }[] }) {
   const parts: ReactNode[] = [];
@@ -637,7 +638,10 @@ export default function SidebarContent({
             </div>
           )
         ) : (
-          <SidebarProjectList {...projectListProps} />
+          <>
+            <JobSidebarSection />
+            <SidebarProjectList {...projectListProps} />
+          </>
         )}
       </ScrollArea>
       )}

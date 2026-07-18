@@ -9,6 +9,14 @@ type Jobs = {
   get(params: Record<string, unknown>): Promise<unknown>;
   appendAdminEvent(params: Record<string, unknown>): Promise<unknown>;
 };
+const MAX_COMMIT_MESSAGE = 4096;
+const MAX_COMMIT_PATHS = 100;
+const MAX_COMMIT_PATH = 1024;
+function commitInput(message: unknown, paths: unknown): { message: string; paths: string[] } {
+  if (typeof message !== 'string' || !message.trim() || message.length > MAX_COMMIT_MESSAGE) throw Object.assign(new Error('Invalid commit message.'), { code: 'invalid_request' });
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > MAX_COMMIT_PATHS || paths.some(path => typeof path !== 'string' || !path || path.length > MAX_COMMIT_PATH || path.startsWith('/') || path.split('/').includes('..'))) throw Object.assign(new Error('Invalid commit paths.'), { code: 'invalid_request' });
+  return { message: message.trim(), paths: [...new Set(paths)] };
+}
 type Git = {
   list(params?: Record<string, unknown>): Promise<unknown>;
   status(params: Record<string, unknown>): Promise<unknown>;
@@ -63,6 +71,18 @@ export class GjcJobGitService {
     });
   }
   async hasCommits(jobId: string): Promise<boolean> { const binding = await this.resolve(jobId); return Boolean((await execute(binding.path, ['rev-list', '--max-count=1', `${binding.job.baseCommit}..HEAD`])).trim()); }
+  async commit(jobId: string, message: unknown, paths: unknown): Promise<{ commit: string; eventId: string }> {
+    const input = commitInput(message, paths);
+    const binding = await this.resolve(jobId);
+    const changed = new Set((await execute(binding.path, ['status', '--porcelain', '--untracked-files=all'])).split('\n').filter(Boolean).map(line => line.slice(3).replace(/^"|"$/gu, '')));
+    if (input.paths.some(path => !changed.has(path))) throw Object.assign(new Error('Commit paths must be currently changed relative paths.'), { code: 'invalid_request' });
+    await execute(binding.path, ['add', '--', ...input.paths]);
+    await execute(binding.path, ['commit', '-m', input.message]);
+    const commit = (await execute(binding.path, ['rev-parse', 'HEAD'])).trim();
+    const eventId = `commit.${randomUUID()}`;
+    await this.recordAdminEvent(jobId, eventId, { kind: 'git_commit', commit, paths: input.paths });
+    return { commit, eventId };
+  }
   async createPullRequest<T>(jobId: string, create: (context: { branch: string; baseBranch: string; remoteUrl: string }) => Promise<T>): Promise<T> {
     return this.lifecycle(jobId, 'pr', async () => {
       const binding = await this.resolve(jobId);

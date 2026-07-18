@@ -12,6 +12,7 @@ import type {
   LLMProvider,
 } from '@/shared/types.js';
 import { parseIncomingJsonObject } from '@/shared/utils.js';
+import type { GjcJobProjectionService } from '@/modules/websocket/services/gjc-job-projection.service.js';
 
 /**
  * Trust boundary for client-supplied image attachments: chat.send options come
@@ -83,6 +84,7 @@ type ChatWebSocketDependencies = {
     options: AnyRecord,
     writer: unknown
   ) => Promise<unknown>;
+  gjcProjection?: GjcJobProjectionService;
 };
 
 /**
@@ -428,6 +430,9 @@ export function handleChatConnection(
 
       const data = parsed as AnyRecord;
       const messageType = typeof data.type === 'string' ? data.type : '';
+      if (await dependencies.gjcProjection?.handle(ws, data)) {
+        return;
+      }
 
       switch (messageType) {
         case 'chat.send':

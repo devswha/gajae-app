@@ -751,6 +751,26 @@ test('forwards one worker terminal event without synthesizing a duplicate', asyn
   assert.deepEqual(sent, [terminal]);
   assert.equal(failures, 1);
 });
+test('durable-job notification ownership suppresses direct GJC terminal sends', async () => {
+  const child = new FakeChild();
+  const peer = new FakePeer(child);
+  replyToHandshake(peer);
+  let failures = 0;
+  const supervisor = new GjcWorkerSupervisor({
+    ...runtime(child, 'app-terminal-owned'),
+    notifyRunFailed: () => { failures += 1; },
+  });
+  const run = spawn(
+    supervisor,
+    'hello',
+    { notificationOwner: 'terminal-adapter' },
+    { send() {} },
+  );
+  const start = await peer.waitFor('session.start');
+  peer.respond(start, { ok: false, error: { code: 'run_failed', message: 'safe' } });
+  await assert.rejects(run, /GJC worker failed/);
+  assert.equal(failures, 0);
+});
 
 test('completed terminal event remains authoritative if the worker exits before its response', async () => {
   const child = new FakeChild();

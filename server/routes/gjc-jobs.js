@@ -11,6 +11,8 @@ const MAX_LIST_LIMIT = 100;
 const MAX_SAFE_U64 = Number.MAX_SAFE_INTEGER;
 const NATIVE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CONFLICT_CODES = new Set(['already_exists', 'invalid_transition', 'lease_held', 'stale_lease', 'terminal_job', 'event_conflict', 'worktree_conflict', 'authority_held', 'conflict', 'capacity_exhausted']);
+const MIN_REPLAY_BYTE_BUDGET = 4 * 1024;
+const MAX_REPLAY_BYTE_BUDGET = 48 * 1024;
 const router = express.Router();
 const writer = { send() {} };
 const text = value => typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -37,7 +39,11 @@ export const decodeListQuery = query => {
 };
 export const decodeReplayQuery = query => {
   const after = u64(query.cursor, 'cursor');
-  return after === undefined ? {} : { after };
+  const rawBudget = queryValue(query.byteBudget, 'byteBudget');
+  if (rawBudget !== undefined && !/^(?:0|[1-9]\d*)$/u.test(rawBudget)) throw invalidQuery('byteBudget must be an unsigned integer.');
+  const byteBudget = rawBudget === undefined ? undefined : Number(rawBudget);
+  if (byteBudget !== undefined && (!Number.isSafeInteger(byteBudget) || byteBudget > MAX_SAFE_U64)) throw invalidQuery('byteBudget is outside the supported range.');
+  return { ...(after === undefined ? {} : { after }), ...(byteBudget === undefined ? {} : { byteBudget: Math.max(MIN_REPLAY_BYTE_BUDGET, Math.min(MAX_REPLAY_BYTE_BUDGET, byteBudget)) }) };
 };
 export const statusForGjcError = error => {
   const code = error?.code;
@@ -91,6 +97,7 @@ router.get('/jobs/:jobId/events', async (req, res) => {
 router.get('/jobs/:jobId/git/status', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).status(req.params.jobId)); } catch (error) { return fail(res, error); } });
 router.get('/jobs/:jobId/git/diff', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).diff(req.params.jobId)); } catch (error) { return fail(res, error); } });
 router.post('/jobs/:jobId/git/publish', async (req, res) => { try { return res.json(await getProductionGjcJobGitService(getProductionJobAuthority()).publish(req.params.jobId)); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/git/commit', async (req, res) => { try { return res.status(201).json(await getProductionGjcJobGitService(getProductionJobAuthority()).commit(req.params.jobId, req.body?.message, req.body?.paths)); } catch (error) { return fail(res, error); } });
 router.post('/jobs/:jobId/git/pr', async (req, res) => {
   try {
     const result = await getProductionGjcJobGitService(getProductionJobAuthority()).createPullRequest(req.params.jobId, async context => {

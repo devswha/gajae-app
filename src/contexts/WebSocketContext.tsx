@@ -17,12 +17,29 @@ export type ServerEvent = {
   [key: string]: unknown;
 };
 
+import type {
+  JobProjectionErrorCode,
+  JobProjectionEvent,
+  JobSnapshot,
+} from '../../shared/gjc-job-projection-protocol';
+
+type JobSubscription = {
+  jobId: string;
+  getCursor: () => number;
+  onSubscribed: (snapshot: JobSnapshot) => void;
+  applyReplayChunk: (events: JobProjectionEvent[]) => boolean;
+  applyLiveEvent: (event: JobProjectionEvent) => boolean;
+  onError: (code: JobProjectionErrorCode) => void;
+};
+
+type JobSubscriptionIntent = JobSubscription & { owners: number; subscriptionId: number; generation: number };
 type ServerEventListener = (event: ServerEvent) => void;
 
 type WebSocketContextType = {
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   subscribe: (listener: ServerEventListener) => () => void;
+  registerJobSubscription: (subscription: JobSubscription) => () => void;
   latestMessage: ServerEvent | null;
   isConnected: boolean;
 };
@@ -47,10 +64,13 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const unmountedRef = useRef(false);
   const hasConnectedRef = useRef(false);
   const listenersRef = useRef(new Set<ServerEventListener>());
+  const jobIntentsRef = useRef(new Map<string, JobSubscriptionIntent>());
+  const nextJobSubscriptionIdRef = useRef(0);
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [latestMessage, setLatestMessage] = useState<ServerEvent | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const { user } = useAuth();
+  const authenticatedUserRef = useRef(user);
 
   const dispatch = useCallback((event: ServerEvent) => {
     for (const listener of listenersRef.current) {
@@ -70,6 +90,25 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     }
   }, []);
 
+  const sendJobFrame = useCallback((frame: unknown) => {
+    const activeSocket = wsRef.current;
+    if (activeSocket?.readyState === WebSocket.OPEN) activeSocket.send(JSON.stringify(frame));
+  }, []);
+
+  const subscribeJobsForGeneration = useCallback((generation: number) => {
+    for (const intent of jobIntentsRef.current.values()) {
+      intent.generation = generation;
+      intent.subscriptionId = ++nextJobSubscriptionIdRef.current;
+      sendJobFrame({
+        protocolVersion: 1,
+        kind: 'gjc.job.subscribe',
+        jobId: intent.jobId,
+        after: intent.getCursor(),
+        subscriptionId: intent.subscriptionId,
+      });
+    }
+  }, [sendJobFrame]);
+
   const connect = useCallback((generation: number, isAuthenticated: boolean) => {
     if (unmountedRef.current || socketGenerationRef.current !== generation || !isAuthenticated) return;
     const wsUrl = buildWebSocketUrl();
@@ -88,12 +127,30 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         setIsConnected(true);
         if (hasConnectedRef.current) dispatch({ kind: 'websocket_reconnected', timestamp: Date.now() });
         hasConnectedRef.current = true;
+        subscribeJobsForGeneration(generation);
       };
 
       websocket.onmessage = (event) => {
         if (!isCurrentSocket()) return;
         try {
-          dispatch(JSON.parse(event.data) as ServerEvent);
+          const message = JSON.parse(event.data) as ServerEvent & { jobId?: string; subscriptionId?: number; event?: JobProjectionEvent; events?: JobProjectionEvent[]; snapshot?: JobSnapshot; code?: JobProjectionErrorCode };
+          const intent = typeof message.jobId === 'string' ? jobIntentsRef.current.get(message.jobId) : undefined;
+          const isCurrentJobFrame = intent
+            && intent.generation === generation
+            && message.subscriptionId === intent.subscriptionId;
+          if (isCurrentJobFrame && message.kind === 'gjc_job_subscribed' && message.snapshot) {
+            intent.onSubscribed(message.snapshot);
+          } else if (isCurrentJobFrame && message.kind === 'gjc_job_replay_chunk' && Array.isArray(message.events)) {
+            const applied = intent.applyReplayChunk(message.events);
+            if (applied) {
+              sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.replay', jobId: intent.jobId, after: intent.getCursor(), subscriptionId: intent.subscriptionId });
+            }
+          } else if (isCurrentJobFrame && message.kind === 'gjc_job_event' && message.event) {
+            intent.applyLiveEvent(message.event);
+          } else if (isCurrentJobFrame && message.kind === 'gjc_job_error' && message.code) {
+            intent.onError(message.code);
+          }
+          dispatch(message);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
         }
@@ -120,8 +177,14 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         console.error('Error creating WebSocket connection:', error);
       }
     }
-  }, [clearReconnect, dispatch]);
+  }, [clearReconnect, dispatch, subscribeJobsForGeneration]);
 
+  useEffect(() => {
+    if (authenticatedUserRef.current !== user) {
+      jobIntentsRef.current.clear();
+      authenticatedUserRef.current = user;
+    }
+  }, [user]);
   useEffect(() => {
     unmountedRef.current = false;
     const generation = socketGenerationRef.current + 1;
@@ -161,14 +224,43 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     listenersRef.current.add(listener);
     return () => listenersRef.current.delete(listener);
   }, []);
+  const registerJobSubscription = useCallback((subscription: JobSubscription) => {
+    const existing = jobIntentsRef.current.get(subscription.jobId);
+    if (existing) {
+      existing.owners += 1;
+      Object.assign(existing, subscription);
+    } else {
+      jobIntentsRef.current.set(subscription.jobId, {
+        ...subscription,
+        owners: 1,
+        subscriptionId: 0,
+        generation: socketGenerationRef.current,
+      });
+    }
+    const intent = jobIntentsRef.current.get(subscription.jobId)!;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      intent.subscriptionId = ++nextJobSubscriptionIdRef.current;
+      sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.subscribe', jobId: intent.jobId, after: intent.getCursor(), subscriptionId: intent.subscriptionId });
+    }
+    return () => {
+      const current = jobIntentsRef.current.get(subscription.jobId);
+      if (!current) return;
+      current.owners -= 1;
+      if (current.owners === 0) {
+        sendJobFrame({ protocolVersion: 1, kind: 'gjc.job.unsubscribe', jobId: current.jobId, subscriptionId: current.subscriptionId });
+        jobIntentsRef.current.delete(subscription.jobId);
+      }
+    };
+  }, [sendJobFrame]);
 
   return useMemo(() => ({
     ws: socket,
     sendMessage,
     subscribe,
+    registerJobSubscription,
     latestMessage,
     isConnected,
-  }), [isConnected, latestMessage, sendMessage, socket, subscribe]);
+  }), [isConnected, latestMessage, registerJobSubscription, sendMessage, socket, subscribe]);
 };
 
 export const WebSocketProvider = ({ children }: { children: React.ReactNode }) => {

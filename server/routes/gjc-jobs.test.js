@@ -53,12 +53,23 @@ test('GJC jobs pagination decodes HTTP query values into the native envelope', (
   assert.deepEqual(decodeListQuery({ limit: '999' }), { limit: 100 });
   assert.deepEqual(decodeReplayQuery({ cursor: '12' }), { after: 12 });
 });
+test('GJC event replay clamps byte budgets before forwarding to native authority', () => {
+  assert.deepEqual(decodeReplayQuery({ cursor: '12', byteBudget: '1' }), { after: 12, byteBudget: 4096 });
+  assert.deepEqual(decodeReplayQuery({ byteBudget: '999999' }), { byteBudget: 49152 });
+  assert.deepEqual(decodeReplayQuery({ byteBudget: '8192' }), { byteBudget: 8192 });
+});
+
 
 test('GJC jobs pagination rejects values that would violate the native envelope', () => {
   assert.throws(() => decodeListQuery({ limit: 'not-a-number' }), { code: 'invalid_request' });
   assert.throws(() => decodeListQuery({ cursor: 'invalid cursor' }), { code: 'invalid_request' });
   assert.throws(() => decodeReplayQuery({ cursor: '1.5' }), { code: 'invalid_request' });
   assert.throws(() => decodeReplayQuery({ cursor: ['1', '2'] }), { code: 'invalid_request' });
+});
+test('GJC event replay rejects invalid byte budgets before native authority access', () => {
+  assert.throws(() => decodeReplayQuery({ byteBudget: '1.5' }), { code: 'invalid_request' });
+  assert.throws(() => decodeReplayQuery({ byteBudget: ['4096', '8192'] }), { code: 'invalid_request' });
+  assert.throws(() => decodeReplayQuery({ byteBudget: String(Number.MAX_SAFE_INTEGER + 1) }), { code: 'invalid_request' });
 });
 
 test('GJC jobs errors use availability, conflict, and missing-resource statuses', () => {
