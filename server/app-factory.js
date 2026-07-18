@@ -18,6 +18,7 @@ export function createGjcAppFactory({
   terminalNotificationAdapter,
   authenticateWebSocket,
   authenticateGjcRoute,
+  validateApiKey,
   chat,
   shell,
   getPluginPort,
@@ -47,6 +48,7 @@ export function createGjcAppFactory({
     },
   }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use('/api', validateApiKey);
   app.use('/api/gjc', authenticateGjcRoute, createGjcJobsRouter({ authority, orchestrator, gitService }));
 
   return { app, server, wss };

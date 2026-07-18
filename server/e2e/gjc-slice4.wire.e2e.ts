@@ -12,6 +12,7 @@ import { WebSocket } from 'ws';
 import { isJobProjectionOutboundFrame } from '../../shared/gjc-job-projection-protocol.js';
 import type { GjcWorkerSpawnRun } from '../gjc-worker-client.js';
 import { createGjcAppFactory } from '../app-factory.js';
+import { validateApiKey } from '../middleware/auth.js';
 import { GjcJobProjectionService } from '../modules/websocket/services/gjc-job-projection.service.js';
 import { GjcGitClient } from '../services/gjc-git-client.js';
 import { GjcJobGitService } from '../services/gjc-job-git.service.js';
@@ -102,6 +103,8 @@ test('wire e2e: HTTP jobs endpoints and full websocket projection matrix', { tim
     broadcast: () => {},
   });
   const gitService = new GjcJobGitService(jobs, () => client, async (jobId, eventId, payload) => orchestrator.appendAdminEvent(jobId, eventId, payload));
+  const originalApiKey = process.env.API_KEY;
+  process.env.API_KEY = 'wire-e2e-api-key';
   const { server, wss } = createGjcAppFactory({
     authority,
     orchestrator,
@@ -110,6 +113,7 @@ test('wire e2e: HTTP jobs endpoints and full websocket projection matrix', { tim
     terminalNotificationAdapter: { onCommittedEvent() {}, async startupCatchUp() {} },
     authenticateWebSocket: () => ({ id: 'wire-user', username: 'wire-user' }),
     authenticateGjcRoute: (_req: unknown, _res: unknown, next: () => void) => next(),
+    validateApiKey,
     chat: {
       spawnFns: { claude: async () => undefined, cursor: async () => undefined, codex: async () => undefined, opencode: async () => undefined, gjc: async () => undefined },
       abortFns: { claude: async () => false, cursor: async () => false, codex: async () => false, opencode: async () => false, gjc: async () => false },
@@ -121,8 +125,12 @@ test('wire e2e: HTTP jobs endpoints and full websocket projection matrix', { tim
     getPluginPort: () => undefined,
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); const port = (server.address() as any).port;
-  t.after(async () => { for (const ws of wss.clients) ws.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve())); jobs.close(); client.close(); await rm(database, { force: true }); await rm(root, { recursive: true, force: true }); });
-  const request = (path: string, method = 'GET', body?: unknown) => fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  t.after(async () => { for (const ws of wss.clients) ws.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve())); jobs.close(); client.close(); await rm(database, { force: true }); await rm(root, { recursive: true, force: true }); if (originalApiKey === undefined) delete process.env.API_KEY; else process.env.API_KEY = originalApiKey; });
+  const request = (path: string, method = 'GET', body?: unknown, apiKey: string | null = 'wire-e2e-api-key') => fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { 'content-type': 'application/json', ...(apiKey === null ? {} : { 'x-api-key': apiKey }) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const beforeUnauthorized = authorityCalls;
+  assert.equal((await request('/api/gjc/jobs/not-a-job', 'GET', undefined, null)).status, 401);
+  assert.equal((await request('/api/gjc/jobs/not-a-job', 'GET', undefined, 'wrong-api-key')).status, 401);
+  assert.equal(authorityCalls, beforeUnauthorized);
 
   const created = await request('/api/gjc/jobs', 'POST', { appSessionId: 'app-wire', projectPath: root, message: 'run' });
   assert.equal(created.status, 202); const { jobId: responseJobId } = await created.json() as any; assert.equal(typeof responseJobId, 'string'); const jobId = responseJobId;

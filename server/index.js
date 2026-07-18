@@ -198,6 +198,7 @@ const { app, server, wss } = createGjcAppFactory({
     terminalNotificationAdapter: gjcTerminalNotificationAdapter,
     authenticateWebSocket,
     authenticateGjcRoute: authenticateToken,
+    validateApiKey,
     chat: {
         spawnFns: {
             claude: queryClaudeSDK,
@@ -244,9 +245,6 @@ app.get('/health', (req, res) => {
         version: RUNNING_VERSION
     });
 });
-
-// Optional API key validation (if configured)
-app.use('/api', validateApiKey);
 
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);

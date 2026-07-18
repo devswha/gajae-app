@@ -159,6 +159,26 @@ test('a never-dispatched start failure atomically records and broadcasts one can
   }]);
   assert.deepEqual((await jobs.replayEvents({ jobId: 'job-abc', after: 0 }) as { events: unknown[] }).events, events);
 });
+test('a lost cancelAdmission reply replays and publishes the committed canonical terminal event', async () => {
+  const jobs = new Jobs(); const git = new Git(); const events: unknown[] = [];
+  const supervisor: JobSupervisor = { spawnRun: (input) => ({ started: Promise.reject(new Error('start failed')), completion: new Promise<void>(() => {}), outcome: Promise.resolve('not_started'), abortHandle: input.runId }), abort: async () => 'unconfirmed' };
+  jobs.cancelAdmission = async (params) => {
+    await Jobs.prototype.cancelAdmission.call(jobs, params);
+    throw new Error('cancel response lost');
+  };
+  const orchestrator = new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc', broadcast: (_jobId, event) => events.push(event) });
+
+  await assert.rejects(orchestrator.start('gjc', 'app-1', '/project', 'hello', options), /start failed/);
+
+  assert.equal(jobs.state.state, 'failed');
+  assert.deepEqual(jobs.calls.slice(-3).map(([name]) => name), ['cancelAdmission', 'get', 'replayEvents']);
+  assert.deepEqual(events, [{
+    eventId: 'run-terminal:run-abc',
+    sequence: 1,
+    payload: { schemaVersion: 1, kind: 'job_terminal', runId: 'run-abc', appSessionId: 'app-1', outcome: 'failed', jobState: 'failed', reason: 'start failed' },
+  }]);
+  assert.equal((await jobs.replayEvents({ jobId: 'job-abc', after: 0 }) as { events: unknown[] }).events.length, 1);
+});
 test('forced worker generation termination permits failed finalization after abort refusal', async () => {
   const jobs = new Jobs(); const git = new Git();
   let terminated = false;

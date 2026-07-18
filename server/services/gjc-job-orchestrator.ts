@@ -29,6 +29,13 @@ export type JobOrchestratorDependencies = { jobs: JobAuthority; git?: GitWorktre
 export class GjcCapacityExhaustedError extends Error { constructor(public readonly jobId: string) { super(`GJC job ${jobId} is waiting for capacity.`); this.name = 'GjcCapacityExhaustedError'; } }
 
 const safe = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+function samePayload(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) return left.length === right.length && left.every((value, index) => samePayload(value, right[index]));
+  if (!safe(left) || !safe(right)) return false;
+  const leftKeys = Object.keys(left).sort(); const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && samePayload(left[key], right[key]));
+}
 const lower = (value: string) => value.toLowerCase();
 const eventId = () => `event-${randomUUID()}`;
 function snapshot(value: unknown): JobSnapshot { if (!safe(value) || typeof value.jobId !== 'string' || typeof value.state !== 'string') throw new Error('Invalid jobs authority response.'); return value as JobSnapshot; }
@@ -189,6 +196,7 @@ export class JobOrchestrator {
           payload: createJobTerminalPayload({ runId, appSessionId: current.currentRun?.appSessionId, outcome: 'failed', reason: failureError(error).message }),
         }
       : undefined;
+    const after = Number.isSafeInteger(current.lastSequence) && current.lastSequence! >= 0 ? current.lastSequence! : 0;
     let response: unknown;
     await this.mutate(
       jobId,
@@ -204,8 +212,16 @@ export class JobOrchestrator {
       (fresh) => fresh.lease?.owner !== lease(current).owner || fresh.lease?.generation !== lease(current).generation,
     );
     if (!terminalEvent) return;
-    const event = safe(response) ? response.terminalEvent : undefined;
-    if (!isJobProjectionEvent(event)) throw new Error('Invalid committed terminal event response.');
+    let event = safe(response) ? response.terminalEvent : undefined;
+    if (!isJobProjectionEvent(event)) {
+      const replay = await this.deps.jobs.replayEvents({ jobId, after });
+      event = safe(replay) && Array.isArray(replay.events)
+        ? replay.events.find((candidate) => safe(candidate) && candidate.eventId === terminalEvent.eventId)
+        : undefined;
+    }
+    if (!isJobProjectionEvent(event) || event.eventId !== terminalEvent.eventId || !samePayload(event.payload, terminalEvent.payload)) {
+      throw new Error('Invalid committed terminal event response.');
+    }
     this.publish(jobId, event);
   }
   private async dispatch(jobId: string, current: JobSnapshot, runId: string, appSessionId: string, message: string, options: JobOrchestratorOptions, cwd: string, sessionId?: string | null): Promise<JobRunHandle> {
