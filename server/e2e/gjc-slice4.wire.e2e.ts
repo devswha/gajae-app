@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
-import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -10,51 +10,188 @@ import express from 'express';
 import test from 'node:test';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isJobProjectionOutboundFrame } from '../../shared/gjc-job-projection-protocol.js';
+import type { GjcWorkerSpawnRun } from '../gjc-worker-client.js';
+import { GjcJobProjectionService } from '../modules/websocket/services/gjc-job-projection.service.js';
 import { GjcGitClient } from '../services/gjc-git-client.js';
 import { GjcJobGitService } from '../services/gjc-job-git.service.js';
 import { GjcJobsClient } from '../services/gjc-jobs-client.js';
 import { JobOrchestrator, type JobSupervisor } from '../services/gjc-job-orchestrator.js';
-import { GjcJobProjectionService } from '../modules/websocket/services/gjc-job-projection.service.js';
-import type { GjcWorkerSpawnRun } from '../gjc-worker-client.js';
 
 const execFile = promisify(execFileCallback);
 const corePath = join(process.cwd(), 'dist-native', 'gajae-core');
 const git = (cwd: string, args: string[]) => execFile('git', args, { cwd });
-class Supervisor implements JobSupervisor {
-  runs: GjcWorkerSpawnRun[] = [];
-  spawnRun(input: GjcWorkerSpawnRun) { this.runs.push(input); return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId, phase: () => 'request_issued' as const }; }
-  async abort() { return 'aborted' as const; }
-}
-const waitFrame = (ws: WebSocket, kind: string) => new Promise<any>((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error(`timed out waiting for ${kind}`)), 3_000);
-  ws.on('message', raw => { const frame = JSON.parse(String(raw)); if (frame.kind === kind) { clearTimeout(timer); resolve(frame); } });
-});
+const sleep = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
 
-test('wire e2e: HTTP jobs endpoints and canonical websocket projection frames', { timeout: 15_000 }, async t => {
+class Supervisor implements JobSupervisor {
+  readonly runs: Array<{ input: GjcWorkerSpawnRun; resolve(): void }> = [];
+  spawnRun(input: GjcWorkerSpawnRun) {
+    let resolve!: () => void;
+    const completion = new Promise<void>(done => { resolve = done; });
+    this.runs.push({ input, resolve });
+    return { started: Promise.resolve(), completion, abortHandle: input.runId, phase: () => 'request_issued' as const };
+  }
+  async abort(alias: string) { this.runs.find(run => run.input.runId === alias)?.resolve(); return 'aborted' as const; }
+  async terminate() { return 'reaped' as const; }
+  emit(index: number, payload: unknown) { this.runs[index]?.input.writer.send(payload); }
+}
+
+function observe(ws: WebSocket) {
+  const frames: any[] = [];
+  ws.on('message', raw => frames.push(JSON.parse(String(raw))));
+  return {
+    frames,
+    async wait(predicate: (frame: any) => boolean, label: string) {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        const frame = frames.find(predicate);
+        if (frame) return frame;
+        await sleep();
+      }
+      throw new Error(`timed out waiting for ${label}: ${JSON.stringify(frames)}`);
+    },
+  };
+}
+
+async function waitFor(check: () => Promise<boolean>, label: string) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (await check()) return;
+    await sleep();
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+async function subscribe(ws: WebSocket, inbox: ReturnType<typeof observe>, jobId: string, after: number): Promise<{ subscriptionId: string; watermark: number }> {
+  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.subscribe', jobId, after }));
+  const frame = await inbox.wait(frame => frame.kind === 'gjc_job_subscribed' && frame.jobId === jobId, 'subscription');
+  assert.ok(isJobProjectionOutboundFrame(frame));
+  assert.equal(frame.kind, 'gjc_job_subscribed');
+  return frame;
+}
+
+async function replay(ws: WebSocket, inbox: ReturnType<typeof observe>, jobId: string, subscriptionId: string, after: number) {
+  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.replay', jobId, subscriptionId, after, byteBudget: 4096 }));
+  return inbox.wait(frame => frame.kind === 'gjc_job_replay_chunk' && frame.subscriptionId === subscriptionId, 'replay');
+}
+
+test('wire e2e: HTTP jobs endpoints and full websocket projection matrix', { timeout: 30_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'gjc-wire-')));
   const database = join(root, '..', `${basename(root)}.jobs.sqlite3`);
   await git(root, ['init']); await git(root, ['config', 'user.email', 'e2e@test']); await git(root, ['config', 'user.name', 'E2E']);
   await writeFile(join(root, 'README.md'), 'base\n'); await git(root, ['add', 'README.md']); await git(root, ['commit', '-m', 'base']);
-  const jobs = new GjcJobsClient({ database, corePath }); const client = new GjcGitClient({ workdir: root, corePath }); const supervisor = new Supervisor();
-  const projection = new GjcJobProjectionService(jobs as any);
-  const orchestrator = new JobOrchestrator({ jobs, supervisor, owner: 'wire-e2e', createId: () => `wire-${supervisor.runs.length + 1}`, gitForProject: () => client, broadcast: (id, event) => projection.publish(id, event) });
-  const gitService = new GjcJobGitService(jobs, () => client);
+  const jobs = new GjcJobsClient({ database, corePath });
+  const client = new GjcGitClient({ workdir: root, corePath });
+  const supervisor = new Supervisor();
+  let authorityCalls = 0;
+  const authority = { get: async (params: { jobId: string }) => { authorityCalls += 1; return jobs.get(params); }, replayEvents: (params: any) => jobs.replayEvents(params) };
+  const projection = new GjcJobProjectionService(authority as any);
+  const unavailableProjection = new GjcJobProjectionService({ get: async () => { throw Object.assign(new Error('down'), { code: 'authority_unavailable' }); }, replayEvents: async () => { throw Object.assign(new Error('down'), { code: 'authority_unavailable' }); } });
+  let authorityDown = false;
+  let throwBroadcast = false;
+  let id = 0;
+  const orchestrator = new JobOrchestrator({
+    jobs, supervisor, owner: 'wire-e2e', createId: () => `wire-${++id}`, gitForProject: () => client,
+    broadcast: (jobId, event) => { if (throwBroadcast) throw new Error('projection callback failed'); projection.publish(jobId, event); },
+  });
+  const gitService = new GjcJobGitService(jobs, () => client, async (jobId, eventId, payload) => orchestrator.appendAdminEvent(jobId, eventId, payload));
+  const handles = new Map<string, Awaited<ReturnType<JobOrchestrator['start']>>>();
   const app = express(); app.use(express.json());
-  app.post('/api/gjc/jobs', async (req, res) => { try { const h = await orchestrator.start('gjc', req.body.appSessionId, req.body.projectPath, req.body.message, { provider: 'gjc', appSessionId: req.body.appSessionId, writer: { send() {} }, model: 'default', effort: 'default' }); res.status(202).json({ jobId: h.jobId, appSessionId: req.body.appSessionId }); } catch (e) { res.status(400).json({ error: String(e) }); } });
+  app.post('/api/gjc/jobs', async (req, res) => { try { const handle = await orchestrator.start('gjc', req.body.appSessionId, req.body.projectPath, req.body.message, { provider: 'gjc', appSessionId: req.body.appSessionId, writer: { send() {} }, model: 'default', effort: 'default' }); handles.set(handle.jobId, handle); res.status(202).json({ jobId: handle.jobId, appSessionId: req.body.appSessionId }); } catch (error) { res.status(400).json({ error: String(error) }); } });
   app.post('/api/gjc/jobs/:id/resume', async (req, res) => { if (!req.body.appSessionId) return res.status(400).end(); res.status(200).json({ appSessionId: req.body.appSessionId }); });
   app.get('/api/gjc/jobs/:id/git/diff', async (req, res) => res.json(await gitService.diff(req.params.id)));
-  app.post('/api/gjc/jobs/:id/git/commit', async (req, res) => res.status(201).json(await gitService.commit(req.params.id, req.body.message, req.body.paths)));
+  app.post('/api/gjc/jobs/:id/git/commit', async (req, res) => { try { res.status(201).json(await gitService.commit(req.params.id, req.body.message, req.body.paths)); } catch (error) { res.status(400).json({ error: String(error) }); } });
   const server = createServer(app); const wss = new WebSocketServer({ server, path: '/ws' });
-  wss.on('connection', ws => ws.on('message', raw => { const data = JSON.parse(String(raw)); void projection.handle(ws, data); }));
+  wss.on('connection', ws => {
+    projection.attach(ws as any); unavailableProjection.attach(ws as any);
+    ws.on('message', raw => {
+      const data = JSON.parse(String(raw));
+      if (data.type === 'chat.subscribe') { ws.send(JSON.stringify({ kind: 'chat_subscribed', channel: data.channel })); return; }
+      if (data.type === 'chat.send') { ws.send(JSON.stringify({ kind: 'chat_message', text: data.text })); return; }
+      void (authorityDown ? unavailableProjection : projection).handle(ws as any, data);
+    });
+  });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); const port = (server.address() as any).port;
   t.after(async () => { for (const ws of wss.clients) ws.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); await new Promise<void>(resolve => server.close(() => resolve())); jobs.close(); client.close(); await rm(database, { force: true }); await rm(root, { recursive: true, force: true }); });
   const request = (path: string, method = 'GET', body?: unknown) => fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const created = await request('/api/gjc/jobs', 'POST', { appSessionId: 'app-wire', projectPath: root, message: 'run' }); assert.equal(created.status, 202); const { jobId } = await created.json() as any;
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(ws, 'open');
-  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.subscribe', jobId, after: 0 })); const subscribed = await waitFrame(ws, 'gjc_job_subscribed'); assert.ok(isJobProjectionOutboundFrame(subscribed)); const subscriptionId = subscribed.subscriptionId as string; assert.match(subscriptionId, /^gjc-/u);
-  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.replay', jobId, subscriptionId, after: 0, byteBudget: 4096 })); const replay = await waitFrame(ws, 'gjc_job_replay_chunk'); assert.ok(isJobProjectionOutboundFrame(replay)); assert.equal((replay as any).done, true);
-  const livePromise = waitFrame(ws, 'gjc_job_event'); supervisor.runs[0]!.writer.send({ kind: 'wire_live' }); const live = await livePromise; assert.equal(live.event.payload.kind, 'wire_live');
-  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.unsubscribe', jobId, subscriptionId })); assert.ok(isJobProjectionOutboundFrame(await waitFrame(ws, 'gjc_job_unsubscribed'))); ws.terminate(); await once(ws, 'close');
+
+  const created = await request('/api/gjc/jobs', 'POST', { appSessionId: 'app-wire', projectPath: root, message: 'run' });
+  assert.equal(created.status, 202); const { jobId: responseJobId } = await created.json() as any; assert.equal(typeof responseJobId, 'string'); const jobId = responseJobId;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(ws, 'open'); const inbox = observe(ws);
+  const firstSubscription = await subscribe(ws, inbox, jobId, 0);
+  const firstReplay = await replay(ws, inbox, jobId, firstSubscription.subscriptionId, 0); assert.equal(firstReplay.done, true);
+  supervisor.emit(0, { kind: 'wire_live' });
+  const firstLive = await inbox.wait(frame => frame.kind === 'gjc_job_event' && frame.event.payload.kind === 'wire_live', 'initial live event');
+  assert.equal(firstLive.event.sequence, 1);
+  ws.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.unsubscribe', jobId, subscriptionId: firstSubscription.subscriptionId }));
+  await inbox.wait(frame => frame.kind === 'gjc_job_unsubscribed', 'unsubscribe');
+  ws.terminate(); await once(ws, 'close');
   assert.equal((await request(`/api/gjc/jobs/${jobId}/resume`, 'POST', { appSessionId: 'app-wire' })).status, 200);
-  const snapshot = await jobs.get({ jobId }) as any; await writeFile(join(snapshot.worktreeId, 'wire.txt'), 'managed\n'); const diff = await request(`/api/gjc/jobs/${jobId}/git/diff`); assert.equal(diff.status, 200); assert.match(JSON.stringify(await diff.json()), /wire\.txt/u);
+
+  await t.test('reconnect orders durable replay before buffered live with no duplicate or gap', async () => {
+    supervisor.emit(0, { kind: 'offline', step: 1 }); supervisor.emit(0, { kind: 'offline', step: 2 });
+    await waitFor(async () => (await jobs.get({ jobId }) as any).lastSequence === 3, 'offline durable events');
+    const reconnect = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(reconnect, 'open'); const messages = observe(reconnect);
+    const sub = await subscribe(reconnect, messages, jobId, 1);
+    assert.equal(sub.watermark, 3);
+    supervisor.emit(0, { kind: 'watermark_after' });
+    const chunk = await replay(reconnect, messages, jobId, sub.subscriptionId, 1);
+    assert.deepEqual(chunk.events.map((event: any) => event.sequence), [2, 3]);
+    const buffered = await messages.wait(frame => frame.kind === 'gjc_job_event' && frame.event.payload.kind === 'watermark_after', 'buffered live event');
+    assert.equal(buffered.event.sequence, 4);
+    supervisor.emit(0, { kind: 'live_after_reconnect' });
+    await messages.wait(frame => frame.kind === 'gjc_job_event' && frame.event.payload.kind === 'live_after_reconnect', 'post replay live event');
+    const sequences = messages.frames.filter(frame => frame.kind === 'gjc_job_replay_chunk' || frame.kind === 'gjc_job_event').flatMap(frame => frame.kind === 'gjc_job_replay_chunk' ? frame.events.map((event: any) => event.sequence) : [frame.event.sequence]);
+    assert.deepEqual(sequences, [2, 3, 4, 5]); assert.equal(new Set(sequences).size, sequences.length);
+    reconnect.terminate(); await once(reconnect, 'close');
+  });
+
+  await t.test('oversized and malformed ids are rejected without authority contact or healthy subscription impact', async () => {
+    const isolate = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(isolate, 'open'); const messages = observe(isolate);
+    const before = authorityCalls;
+    isolate.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.subscribe', jobId: 'x'.repeat(129), after: 0 }));
+    const oversized = await messages.wait(frame => frame.kind === 'gjc_job_error', 'oversized id rejection'); assert.equal(oversized.code, 'invalid_request');
+    isolate.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.subscribe', jobId: 'bad/id', after: 0 }));
+    const malformed = await messages.wait(frame => frame.kind === 'gjc_job_error' && messages.frames.indexOf(frame) > messages.frames.indexOf(oversized), 'malformed id rejection'); assert.equal(malformed.code, 'invalid_request');
+    assert.equal(authorityCalls, before);
+    const sub = await subscribe(isolate, messages, jobId, 5); const chunk = await replay(isolate, messages, jobId, sub.subscriptionId, 5); assert.equal(chunk.done, true);
+    supervisor.emit(0, { kind: 'healthy_after_invalid' }); await messages.wait(frame => frame.kind === 'gjc_job_event' && frame.event.payload.kind === 'healthy_after_invalid', 'healthy live event');
+    isolate.terminate(); await once(isolate, 'close');
+  });
+
+  await t.test('authority outage rejects only GJC while legacy chat remains available', async () => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(socket, 'open'); const messages = observe(socket); authorityDown = true;
+    socket.send(JSON.stringify({ protocolVersion: 1, type: 'gjc.job.subscribe', jobId, after: 0 }));
+    const error = await messages.wait(frame => frame.kind === 'gjc_job_error', 'authority unavailable'); assert.equal(error.code, 'authority_unavailable'); assert.equal(error.retryable, true);
+    socket.send(JSON.stringify({ type: 'chat.subscribe', channel: 'general' })); await messages.wait(frame => frame.kind === 'chat_subscribed', 'chat subscribe');
+    socket.send(JSON.stringify({ type: 'chat.send', text: 'still works' })); const chat = await messages.wait(frame => frame.kind === 'chat_message', 'chat message'); assert.equal(chat.text, 'still works');
+    authorityDown = false; socket.terminate(); await once(socket, 'close');
+  });
+
+  await t.test('throwing projection callback preserves durable state and isolates other websocket traffic', async () => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(socket, 'open'); const messages = observe(socket);
+    const cursor = (await jobs.get({ jobId }) as any).lastSequence;
+    throwBroadcast = true; supervisor.emit(0, { kind: 'broadcast_throw' });
+    await waitFor(async () => (await jobs.get({ jobId }) as any).lastSequence === cursor + 1, 'durable event after throwing callback');
+    throwBroadcast = false;
+    socket.send(JSON.stringify({ type: 'chat.send', text: 'legacy survives' })); await messages.wait(frame => frame.kind === 'chat_message' && frame.text === 'legacy survives', 'legacy traffic');
+    const recovery = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(recovery, 'open'); const recoveryMessages = observe(recovery);
+    const recovered = await subscribe(recovery, recoveryMessages, jobId, cursor); const chunk = await replay(recovery, recoveryMessages, jobId, recovered.subscriptionId, cursor);
+    assert.equal(chunk.events.length, 1); assert.equal(chunk.events[0].payload.kind, 'broadcast_throw');
+    supervisor.emit(0, { kind: 'other_subscriber_live' }); await recoveryMessages.wait(frame => frame.kind === 'gjc_job_event' && frame.event.payload.kind === 'other_subscriber_live', 'recovered subscriber after throw');
+    recovery.terminate(); await once(recovery, 'close'); socket.terminate(); await once(socket, 'close');
+  });
+
+  await t.test('HTTP diff and commit use the ready managed worktree and publish the commit event live', async () => {
+    supervisor.runs[0]!.resolve(); await handles.get(jobId)!.completion;
+    assert.equal((await jobs.get({ jobId }) as any).state, 'ready');
+    const snapshot = await jobs.get({ jobId }) as any;
+    await writeFile(join(snapshot.worktreeId, 'selected.txt'), 'selected\n'); await writeFile(join(snapshot.worktreeId, 'unselected.txt'), 'unselected\n');
+    const baseHead = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim();
+    const diff = await request(`/api/gjc/jobs/${jobId}/git/diff`); assert.equal(diff.status, 200); const diffDto = await diff.json() as any; assert.match(diffDto.patch, /selected\.txt/u); assert.match(diffDto.patch, /unselected\.txt/u);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`); await once(socket, 'open'); const messages = observe(socket);
+    const cursor = (await jobs.get({ jobId }) as any).lastSequence; const sub = await subscribe(socket, messages, jobId, cursor); await replay(socket, messages, jobId, sub.subscriptionId, cursor);
+    const committed = await request(`/api/gjc/jobs/${jobId}/git/commit`, 'POST', { message: 'selected only', paths: ['selected.txt'] }); assert.equal(committed.status, 201); const dto = await committed.json() as any;
+    assert.notEqual(dto.commit, baseHead); assert.equal((await git(root, ['rev-parse', 'HEAD'])).stdout.trim(), baseHead);
+    assert.deepEqual((await git(snapshot.worktreeId, ['status', '--porcelain'])).stdout.trim().split('\n').filter(Boolean), ['?? unselected.txt']);
+    const event = await messages.wait(frame => frame.kind === 'gjc_job_event' && frame.event.eventId === dto.eventId, 'live commit event'); assert.equal(event.event.payload.kind, 'git_commit'); assert.deepEqual(event.event.payload.paths, ['selected.txt']);
+    socket.terminate(); await once(socket, 'close');
+  });
 });
