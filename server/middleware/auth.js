@@ -1,4 +1,6 @@
 import jwt from 'jsonwebtoken';
+import { isDesktopMode } from './desktop-auth.js';
+
 
 import { userDb, appConfigDb } from '../modules/database/index.js';
 
@@ -145,6 +147,10 @@ const getAuthenticatedUser = (token) => {
 // Optional API key middleware
 const validateApiKey = (req, res, next) => {
   // Skip API key validation if not configured
+  if (isDesktopMode()) {
+    return next();
+  }
+
   if (!process.env.API_KEY) {
     return next();
   }
@@ -158,6 +164,11 @@ const validateApiKey = (req, res, next) => {
 
 // JWT authentication middleware
 const authenticateToken = async (req, res, next) => {
+  if (isDesktopMode()) {
+    req.user = getImplicitOwner();
+    return next();
+  }
+
   if (isAuthDisabled()) {
     req.user = getImplicitOwner();
     return next();
@@ -197,6 +208,10 @@ const generateToken = (user) => {
 
 // WebSocket authentication function
 const authenticateWebSocket = (token) => {
+  if (isDesktopMode()) {
+    const owner = getImplicitOwner();
+    return { userId: owner.id, username: owner.username };
+  }
   if (isAuthDisabled()) {
     const owner = getImplicitOwner();
     return { userId: owner.id, username: owner.username };

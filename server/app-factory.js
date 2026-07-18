@@ -2,6 +2,8 @@ import http from 'node:http';
 
 import cors from 'cors';
 import express from 'express';
+import { createDesktopAuth, DESKTOP_BOOTSTRAP_PATH } from './middleware/desktop-auth.js';
+
 
 import { createWebSocketServer } from './modules/websocket/index.js';
 import { createGjcJobsRouter } from './routes/gjc-jobs.js';
@@ -32,14 +34,26 @@ export function createGjcAppFactory({
   const app = express();
   app.set('trust proxy', 1);
   const server = http.createServer(app);
+  const desktopAuth = createDesktopAuth({ server });
   const wss = createWebSocketServer(server, {
-    verifyClient: { authenticateWebSocket },
+    verifyClient: { authenticateWebSocket, desktopAuth },
     chat,
     shell,
     getPluginPort,
   });
   app.locals.wss = wss;
-  app.use(cors());
+  app.use(cors(desktopAuth.corsOptions ?? undefined));
+  if (desktopAuth.enabled) {
+    app.get(DESKTOP_BOOTSTRAP_PATH, desktopAuth.bootstrap);
+    app.use((request, response, next) => {
+      if (request.path === '/health') {
+        return next();
+      }
+      return request.path === '/api' || request.path.startsWith('/api/')
+        ? desktopAuth.authenticateHttp(request, response, next)
+        : desktopAuth.authenticatePage(request, response, next);
+    });
+  }
   app.use(express.json({
     limit: '50mb',
     type: (req) => {

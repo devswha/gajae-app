@@ -1602,12 +1602,12 @@ const DISPLAY_HOST = getConnectableHost(HOST);
 const VITE_PORT = process.env.VITE_PORT || 5173;
 const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.gajae-app', 'local-server.json');
 
-async function writeLocalServerMarker() {
+async function writeLocalServerMarker(port) {
     const marker = {
         pid: process.pid,
         host: HOST,
-        port: Number.parseInt(String(SERVER_PORT), 10),
-        url: `http://${DISPLAY_HOST}:${SERVER_PORT}`,
+        port,
+        url: `http://${DISPLAY_HOST}:${port}`,
         appRoot: APP_ROOT,
         updatedAt: new Date().toISOString(),
     };
@@ -1683,17 +1683,30 @@ async function startServer() {
         console.log(`${c.info('[INFO]')} To run in development mode with hot-module replacement, go to http://${DISPLAY_HOST}:${VITE_PORT}`);
    
         server.listen(SERVER_PORT, HOST, async () => {
+            const address = server.address();
+            const port = typeof address === 'object' && address ? address.port : Number.parseInt(String(SERVER_PORT), 10);
             const appRoot = APP_ROOT;
-            await writeLocalServerMarker().catch((error) => {
+            await writeLocalServerMarker(port).catch((error) => {
                 console.warn('[WARN] Could not write local server marker:', error.message);
             });
+
+            if (process.env.GJC_DESKTOP === '1') {
+                console.log(JSON.stringify({
+                    kind: 'gajae-desktop-ready',
+                    pid: process.pid,
+                    host: HOST,
+                    port,
+                    protocolVersion: 1,
+                    version: RUNNING_VERSION,
+                }));
+            }
 
             console.log('');
             console.log(c.dim('═'.repeat(63)));
             console.log(`  ${c.bright('Gajae App Server - Ready')}`);
             console.log(c.dim('═'.repeat(63)));
             console.log('');
-            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://' + DISPLAY_HOST + ':' + SERVER_PORT)}`);
+            console.log(`${c.info('[INFO]')} Server URL:  ${c.bright('http://' + DISPLAY_HOST + ':' + port)}`);
             console.log(`${c.info('[INFO]')} App root: ${c.dim(appRoot)}`);
             console.log(`${c.tip('[TIP]')}  Run "gajae-app status" for full configuration details`);
             console.log('');

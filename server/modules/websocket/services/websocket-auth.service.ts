@@ -10,7 +10,11 @@ type WebSocketAuthDependencies = {
     username?: string;
     [key: string]: unknown;
   } | null;
+  desktopAuth?: {
+    authenticateWebSocket: (request: { headers: { origin?: string; cookie?: string } }) => boolean;
+  };
 };
+
 
 /**
  * Authenticates websocket upgrade requests before the `connection` handler runs.
@@ -28,6 +32,9 @@ export function verifyWebSocketClient(
     return false;
   }
 
+  if (dependencies.desktopAuth && !dependencies.desktopAuth.authenticateWebSocket(request)) {
+    return false;
+  }
   const token =
     getBearerToken(request.headers.authorization) ??
     parseCookieHeader(request.headers.cookie)[AUTH_COOKIE_NAME] ??

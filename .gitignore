@@ -14,6 +14,11 @@ build/
 out/
 dist-native/
 native/**/target/
+# Tauri desktop build artifacts (platform-specific, built per-OS)
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/resources/server-payload/
+src-tauri/gen/
 
 # Local agent runtime state
 .gjc/
