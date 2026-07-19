@@ -51,6 +51,29 @@ class Git implements GitWorktrees { calls: string[] = []; async create() { this.
 class Supervisor implements JobSupervisor { input?: Parameters<JobSupervisor['spawnRun']>[0]; aborted?: string; spawnRun(input: Parameters<JobSupervisor['spawnRun']>[0]) { this.input = input; return { started: Promise.resolve(), completion: new Promise<void>(() => {}), abortHandle: input.runId }; } async abort(id: string) { this.aborted = id; return 'aborted' as const; } }
 const options = { appSessionId: 'app-1', writer: { send() {} } };
 const stopCompletionTimeoutMs = 5;
+test('start reserves a trimmed initial prompt capped at 2000 characters and omits blank prompts', async () => {
+  const prompt = 'x'.repeat(2_001);
+  const jobs = new Jobs(); const git = new Git(); const supervisor = new Supervisor();
+  await new JobOrchestrator({ jobs, git, supervisor, owner: 'owner', createId: () => 'abc' }).start('gjc', 'app-1', '/project', ` \n${prompt}\t `, options);
+  const reserve = jobs.calls.find(([name]) => name === 'reserve')?.[1];
+  assert.equal(reserve?.prompt, 'x'.repeat(2_000));
+
+  const blankJobs = new Jobs();
+  await new JobOrchestrator({ jobs: blankJobs, git: new Git(), supervisor: new Supervisor(), owner: 'owner', createId: () => 'def' }).start('gjc', 'app-1', '/project', ' \n\t ', options);
+  const blankReserve = blankJobs.calls.find(([name]) => name === 'reserve')?.[1];
+  assert.equal('prompt' in (blankReserve ?? {}), false);
+});
+
+test('start never splits a surrogate pair at the 2000-character prompt cap', async () => {
+  // 1999 units then an emoji (2 units): the cap boundary lands between the
+  // surrogate halves; the lone high surrogate must be dropped, not sent.
+  const message = `${'x'.repeat(1_999)}\u{1F600}`;
+  const jobs = new Jobs();
+  await new JobOrchestrator({ jobs, git: new Git(), supervisor: new Supervisor(), owner: 'owner', createId: () => 'ghi' }).start('gjc', 'app-1', '/project', message, options);
+  const reserve = jobs.calls.find(([name]) => name === 'reserve')?.[1];
+  assert.equal(reserve?.prompt, 'x'.repeat(1_999));
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify({ prompt: reserve?.prompt })));
+});
 
 test('start reserves before creating a worktree, admits caller-owned run id, then runs it', async () => {
   const jobs = new Jobs(); const git = new Git(); const supervisor = new Supervisor();

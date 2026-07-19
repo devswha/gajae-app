@@ -254,10 +254,15 @@ export class JobOrchestrator {
     if (provider !== 'gjc' || !appSessionId) throw new Error('GJC provider and app session are required.');
     this.ensureAdmission();
     const suffix = this.createId().replace(/[^a-z0-9]/giu, '').toLowerCase().slice(-12); const jobId = options.jobId ?? `job-${suffix}`;
+    // Cap by UTF-16 units but never split a surrogate pair: a trailing lone
+    // high surrogate becomes an unpaired \uDXXX escape that the native
+    // authority's JSON parser rejects, failing job creation.
+    let prompt = message.trim().slice(0, 2_000);
+    if (/[\uD800-\uDBFF]$/u.test(prompt)) prompt = prompt.slice(0, -1);
     return this.serial(jobId, async () => {
       let current: JobSnapshot;
       try {
-        current = snapshot(await this.deps.jobs.reserveStart({ jobId, provider, appSessionId, owner: this.owner, cap: options.cap ?? 4 }));
+        current = snapshot(await this.deps.jobs.reserveStart({ jobId, provider, appSessionId, owner: this.owner, cap: options.cap ?? 4, ...(prompt ? { prompt } : {}) }));
       } catch (error) {
         if (error instanceof GjcJobsClientError && error.code === 'capacity_exhausted') throw new GjcCapacityExhaustedError(jobId);
         throw error;

@@ -156,7 +156,7 @@ export default function JobTimeline({ events }: { events: JobProjectionEvent[] }
           {row.summary && <span className="min-w-0 truncate text-muted-foreground">{row.summary}</span>}
           <span className="ml-auto shrink-0 text-xs text-muted-foreground">#{first.sequence}{row.events.length > 1 ? `–${last.sequence}` : ''}</span>
         </div>
-        {row.body && <pre className={`mt-1 whitespace-pre-wrap break-words font-sans ${row.bodyMuted ? 'text-muted-foreground italic' : ''}`}>{row.body}</pre>}
+        {row.body && <pre className={`mt-1 whitespace-pre-wrap break-words font-sans ${row.bodyMuted ? 'italic text-muted-foreground' : ''}`}>{row.body}</pre>}
         <details className="mt-1">
           <summary className="cursor-pointer select-none text-xs text-muted-foreground">raw ({row.events.length})</summary>
           <div className="mt-1 space-y-1">

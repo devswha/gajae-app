@@ -107,6 +107,8 @@ pub struct JobSnapshot {
     branch: Option<String>,
     base_commit: Option<String>,
     repository_root: Option<String>,
+    created_at: String,
+    prompt: Option<String>,
     current_run: Option<CurrentRun>,
     dispatch_checkpoint: Option<DispatchCheckpoint>,
 }
@@ -517,7 +519,7 @@ impl PersistentAuthority {
         }
         let state_value = state_filter.map(JobState::as_str);
         let after = after.unwrap_or("");
-        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
+        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,j.prompt FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
         let rows = statement
             .query_map(
                 params![state_value, provider, after, limit],
@@ -780,12 +782,14 @@ impl PersistentAuthority {
         provider: &str,
         app_session_id: &str,
         owner: &str,
+        prompt: Option<&str>,
         cap: u64,
     ) -> Result<JobSnapshot, AuthorityError> {
         validate_id(id)?;
         validate_id(provider)?;
         validate_id(app_session_id)?;
         validate_id(owner)?;
+        let prompt = prompt.map(validate_prompt).transpose()?;
         if !(1..=64).contains(&cap) {
             return Err(AuthorityError::InvalidIdentifier);
         }
@@ -802,7 +806,7 @@ impl PersistentAuthority {
             .map_err(|_| AuthorityError::Storage)?;
         match existing.as_deref() {
             None => {
-                tx.execute("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,'reserved',?3,1,2)", params![id, provider, owner]).map_err(map_insert)?;
+                tx.execute("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation,prompt) VALUES(?1,?2,'reserved',?3,1,2,?4)", params![id, provider, owner, prompt]).map_err(map_insert)?;
             }
             _ => return Err(AuthorityError::AlreadyExists),
         }
@@ -1150,10 +1154,10 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> Result<JobEvent, rusqlite::Error> 
     })
 }
 fn snapshot_connection(connection: &Connection, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    connection.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,j.prompt FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_tx(tx: &Transaction<'_>, id: &str) -> Result<JobSnapshot, AuthorityError> {
-    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
+    tx.query_row("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,j.prompt FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE j.id=?1 GROUP BY j.id", [id], snapshot_from_row).optional().map_err(|_| AuthorityError::Storage)?.ok_or(AuthorityError::NotFound)
 }
 fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::Error> {
     let state: String = row.get(2)?;
@@ -1172,6 +1176,8 @@ fn snapshot_from_row(row: &rusqlite::Row<'_>) -> Result<JobSnapshot, rusqlite::E
         branch: row.get(6)?,
         base_commit: row.get(7)?,
         repository_root: row.get(8)?,
+        created_at: row.get(14)?,
+        prompt: row.get(15)?,
         last_sequence: row.get(9)?,
         current_run: run_id.clone().map(|run_id| CurrentRun {
             run_id,
@@ -1230,7 +1236,7 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
             |r| r.get(0),
         )
         .map_err(|_| AuthorityError::Storage)?;
-    if version > 5 {
+    if version > 6 {
         return Err(AuthorityError::Storage);
     }
     if version == 0 {
@@ -1289,6 +1295,11 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
         tx.execute_batch("ALTER TABLE jobs ADD COLUMN base_commit TEXT NULL; ALTER TABLE jobs ADD COLUMN repository_root TEXT NULL; ALTER TABLE runs ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'; ALTER TABLE runs ADD COLUMN outcome TEXT NULL; ALTER TABLE job_events ADD COLUMN run_id TEXT NULL REFERENCES runs(run_id); CREATE TABLE session_job_bindings (provider TEXT NOT NULL, app_session_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id), provider_session_id TEXT NULL, bound_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, released_at TEXT NULL, UNIQUE(job_id)); CREATE UNIQUE INDEX active_session_job_bindings ON session_job_bindings(provider,app_session_id) WHERE released_at IS NULL;").map_err(|_| AuthorityError::Storage)?;
         tx.execute("INSERT INTO schema_migrations(version) VALUES(5)", [])
             .map_err(|_| AuthorityError::Storage)?;
+        version = 5;
+    }
+    if version == 5 {
+        tx.execute_batch("ALTER TABLE jobs ADD COLUMN prompt TEXT NULL; INSERT INTO schema_migrations(version) VALUES(6);")
+            .map_err(|_| AuthorityError::Storage)?;
     }
     tx.commit().map_err(|_| AuthorityError::Storage)
 }
@@ -1324,6 +1335,14 @@ fn validate_id(value: &str) -> Result<(), AuthorityError> {
         Err(AuthorityError::InvalidIdentifier)
     } else {
         Ok(())
+    }
+}
+fn validate_prompt(value: &str) -> Result<&str, AuthorityError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 4096 {
+        Err(AuthorityError::InvalidIdentifier)
+    } else {
+        Ok(value)
     }
 }
 fn validate_worktree_id(value: &str) -> Result<(), AuthorityError> {
@@ -1376,6 +1395,7 @@ struct Request {
     payload: Option<Value>,
     after: Option<u64>,
     provider: Option<String>,
+    prompt: Option<String>,
     byte_budget: Option<u64>,
     after_cursor: Option<String>,
     limit: Option<u64>,
@@ -1688,6 +1708,7 @@ fn dispatch(
                     .owner
                     .as_deref()
                     .ok_or(AuthorityError::InvalidIdentifier)?,
+                request.prompt.as_deref(),
                 request.cap.unwrap_or(DEFAULT_CAPACITY),
             )?,
         ),
@@ -2137,6 +2158,118 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
+    fn reserve_start_prompt_round_trips_through_get_and_list() {
+        let (d, p) = db();
+        let input = concat!(
+            r#"{"protocolVersion":1,"id":"reserve","method":"job.reserveStart","jobId":"job","provider":"p","appSessionId":"app","owner":"owner","cap":1,"prompt":"  draft  "}"#,
+            "\n",
+            r#"{"protocolVersion":1,"id":"get","method":"job.get","jobId":"job"}"#,
+            "\n",
+            r#"{"protocolVersion":1,"id":"list","method":"job.list"}"#,
+            "\n"
+        );
+        let mut output = Vec::new();
+        assert!(run(&p, std::io::Cursor::new(input.as_bytes()), &mut output,));
+        let responses: Vec<Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect();
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[1]["result"]["prompt"], json!("draft"));
+        assert!(
+            !responses[1]["result"]["createdAt"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(responses[2]["result"][0]["prompt"], json!("draft"));
+        assert!(
+            !responses[2]["result"][0]["createdAt"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn reserve_start_rejects_prompt_over_4096_chars() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        let maximum = "x".repeat(4096);
+        assert_eq!(
+            a.reserve_start("maximum", "p", "app", "owner", Some(&maximum), 1)
+                .unwrap()
+                .prompt
+                .as_deref(),
+            Some(maximum.as_str())
+        );
+        let too_long = "x".repeat(4097);
+        assert_eq!(
+            a.reserve_start("too-long", "p", "app", "owner", Some(&too_long), 1),
+            Err(AuthorityError::InvalidIdentifier)
+        );
+        assert_eq!(
+            a.reserve_start("empty", "p", "app", "owner", Some("   "), 1),
+            Err(AuthorityError::InvalidIdentifier)
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn reserve_start_without_prompt_round_trips_null() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        let reserved = a
+            .reserve_start("job", "p", "app", "owner", None, 1)
+            .unwrap();
+        assert_eq!(reserved.prompt, None);
+        let snapshot = a.snapshot("job").unwrap();
+        assert_eq!(snapshot.prompt, None);
+        assert_eq!(
+            serde_json::to_value(snapshot).unwrap()["prompt"],
+            json!(null)
+        );
+        assert_eq!(a.list(None, None, None, 1).unwrap()[0].prompt, None);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn migrates_v5_prompt_column_and_lists_existing_jobs() {
+        let (d, p) = db();
+        let mut c = Connection::open(&p).unwrap();
+        let tx = c.transaction().unwrap();
+        create_normalized(&tx).unwrap();
+        tx.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(5);").unwrap();
+        tx.execute(
+            "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,?3,?4,1,2)",
+            params!["legacy", "p", "reserved", "owner"],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        drop(c);
+
+        let a = PersistentAuthority::open(&p).unwrap();
+        assert_eq!(
+            a.connection
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            6
+        );
+        let prompt: Option<String> = a
+            .connection
+            .query_row("SELECT prompt FROM jobs WHERE id='legacy'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(prompt, None);
+        let jobs = a.list(None, None, None, 1).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_id, "legacy");
+        assert!(jobs[0].created_at.len() == 19);
+        assert_eq!(jobs[0].prompt, None);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
     fn migrates_v1_blob_once() {
         let (d, p) = db();
         let c = Connection::open(&p).unwrap();
@@ -2152,7 +2285,7 @@ mod tests {
                 .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
         drop(a);
         PersistentAuthority::open(&p).unwrap();
@@ -2259,7 +2392,7 @@ mod tests {
         }
     }
     #[test]
-    fn migrates_v2_and_v3_to_v5_atomically() {
+    fn migrates_v2_and_v3_to_v6_atomically() {
         for version in [2, 3] {
             let (d, p) = db();
             let c = Connection::open(&p).unwrap();
@@ -2275,7 +2408,7 @@ mod tests {
                     .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                         .get::<_, i64>(0))
                     .unwrap(),
-                5
+                6
             );
             authority
                 .connection
@@ -2412,7 +2545,7 @@ mod tests {
     fn cancel_admission_releases_binding_and_capacity_before_running() {
         let (d, p) = db();
         let mut a = PersistentAuthority::open(&p).unwrap();
-        let reserved = a.reserve_start("j", "p", "app", "owner", 1).unwrap();
+        let reserved = a.reserve_start("j", "p", "app", "owner", None, 1).unwrap();
         let lease = reserved.lease.unwrap();
         let cancelled = a
             .cancel_admission(
@@ -2592,10 +2725,10 @@ mod tests {
     fn v5_binding_turn_finalize_and_shutdown() {
         let (d, p) = db();
         let mut a = PersistentAuthority::open(&p).unwrap();
-        let reserved = a.reserve_start("j", "p", "app", "owner", 2).unwrap();
+        let reserved = a.reserve_start("j", "p", "app", "owner", None, 2).unwrap();
         assert_eq!(reserved.state, JobState::Reserved);
         assert_eq!(
-            a.reserve_start("other", "p", "app", "owner", 2),
+            a.reserve_start("other", "p", "app", "owner", None, 2),
             Err(AuthorityError::AlreadyExists)
         );
         let lease = a.snapshot("j").unwrap().lease.unwrap();

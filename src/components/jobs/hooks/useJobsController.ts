@@ -25,7 +25,7 @@ export function useJobsController() {
       if (!response.ok) throw new Error(body?.error?.code || 'Unable to load jobs');
       if (generation !== generationRef.current) return;
       if (!isMountedRef.current) return;
-      const items = Array.isArray(body?.items) ? body.items : [];
+      const items: unknown[] = Array.isArray(body?.items) ? body.items : [];
       setJobs(items);
       setError(null);
       if (items.some((item) => (

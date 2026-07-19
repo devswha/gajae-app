@@ -7,6 +7,8 @@ export type JobSnapshot = {
   jobId: string;
   provider: 'gjc';
   state: JobState;
+  createdAt?: string;
+  prompt?: string | null;
   lastSequence: JobSequence;
   worktreeId?: string;
   branch?: string;
