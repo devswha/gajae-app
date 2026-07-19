@@ -170,7 +170,7 @@ Options:
 Examples:
   $ gajae-app                        # Start with defaults
   $ gajae-app --port 8080            # Start on port 8080
-  $ gajae-app --host 0.0.0.0         # Expose on the network (auth required — see below)
+  $ gajae-app --host 0.0.0.0         # Trusted private network only — see below
   $ gajae-app sandbox ~/my-project   # Run in a Docker sandbox
   $ gajae-app status                 # Show configuration
 
@@ -180,7 +180,7 @@ Environment Variables:
   DATABASE_PATH       Set custom database location
   CLAUDE_CLI_PATH     Set custom Claude CLI path
   CONTEXT_WINDOW      Set context window size (default: 160000)
-  ALLOW_REMOTE_SETUP  Set to 1 to allow first-run setup on a non-loopback HOST (trusted networks only)
+  GAJAE_ALLOW_UNAUTH_REMOTE  Set to 1 for a trusted private-network non-loopback bind
 
 Documentation:
   ${packageJson.homepage || 'https://github.com/devswha/gajae-app'}

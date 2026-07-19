@@ -16,55 +16,46 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 // Import translation resources
 import enCommon from './locales/en/common.json';
 import enSettings from './locales/en/settings.json';
-import enAuth from './locales/en/auth.json';
 import enSidebar from './locales/en/sidebar.json';
 import enChat from './locales/en/chat.json';
 import enCodeEditor from './locales/en/codeEditor.json';
 import koCommon from './locales/ko/common.json';
 import koSettings from './locales/ko/settings.json';
-import koAuth from './locales/ko/auth.json';
 import koSidebar from './locales/ko/sidebar.json';
 import koChat from './locales/ko/chat.json';
 import koCodeEditor from './locales/ko/codeEditor.json';
 import zhCommon from './locales/zh-CN/common.json';
 import zhSettings from './locales/zh-CN/settings.json';
-import zhAuth from './locales/zh-CN/auth.json';
 import zhSidebar from './locales/zh-CN/sidebar.json';
 import zhChat from './locales/zh-CN/chat.json';
 import zhCodeEditor from './locales/zh-CN/codeEditor.json';
 import jaCommon from './locales/ja/common.json';
 import jaSettings from './locales/ja/settings.json';
-import jaAuth from './locales/ja/auth.json';
 import jaSidebar from './locales/ja/sidebar.json';
 import jaChat from './locales/ja/chat.json';
 import jaCodeEditor from './locales/ja/codeEditor.json';
 import ruCommon from './locales/ru/common.json';
 import ruSettings from './locales/ru/settings.json';
-import ruAuth from './locales/ru/auth.json';
 import ruSidebar from './locales/ru/sidebar.json';
 import ruChat from './locales/ru/chat.json';
 import ruCodeEditor from './locales/ru/codeEditor.json';
 import deCommon from './locales/de/common.json';
 import deSettings from './locales/de/settings.json';
-import deAuth from './locales/de/auth.json';
 import deSidebar from './locales/de/sidebar.json';
 import deChat from './locales/de/chat.json';
 import deCodeEditor from './locales/de/codeEditor.json';
 import trCommon from './locales/tr/common.json';
 import trSettings from './locales/tr/settings.json';
-import trAuth from './locales/tr/auth.json';
 import trSidebar from './locales/tr/sidebar.json';
 import trChat from './locales/tr/chat.json';
 import trCodeEditor from './locales/tr/codeEditor.json';
 import itCommon from './locales/it/common.json';
 import itSettings from './locales/it/settings.json';
-import itAuth from './locales/it/auth.json';
 import itSidebar from './locales/it/sidebar.json';
 import itChat from './locales/it/chat.json';
 import itCodeEditor from './locales/it/codeEditor.json';
 import zhTWCommon from './locales/zh-TW/common.json';
 import zhTWSettings from './locales/zh-TW/settings.json';
-import zhTWAuth from './locales/zh-TW/auth.json';
 import zhTWSidebar from './locales/zh-TW/sidebar.json';
 import zhTWChat from './locales/zh-TW/chat.json';
 import zhTWCodeEditor from './locales/zh-TW/codeEditor.json';
@@ -95,7 +86,6 @@ i18n
       en: {
         common: enCommon,
         settings: enSettings,
-        auth: enAuth,
         sidebar: enSidebar,
         chat: enChat,
         codeEditor: enCodeEditor,
@@ -103,7 +93,6 @@ i18n
       ko: {
         common: koCommon,
         settings: koSettings,
-        auth: koAuth,
         sidebar: koSidebar,
         chat: koChat,
         codeEditor: koCodeEditor,
@@ -111,7 +100,6 @@ i18n
       'zh-CN': {
         common: zhCommon,
         settings: zhSettings,
-        auth: zhAuth,
         sidebar: zhSidebar,
         chat: zhChat,
         codeEditor: zhCodeEditor,
@@ -119,7 +107,6 @@ i18n
       ja: {
         common: jaCommon,
         settings: jaSettings,
-        auth: jaAuth,
         sidebar: jaSidebar,
         chat: jaChat,
         codeEditor: jaCodeEditor,
@@ -127,7 +114,6 @@ i18n
       ru: {
         common: ruCommon,
         settings: ruSettings,
-        auth: ruAuth,
         sidebar: ruSidebar,
         chat: ruChat,
         codeEditor: ruCodeEditor,
@@ -135,7 +121,6 @@ i18n
       de: {
         common: deCommon,
         settings: deSettings,
-        auth: deAuth,
         sidebar: deSidebar,
         chat: deChat,
         codeEditor: deCodeEditor,
@@ -143,7 +128,6 @@ i18n
       tr: {
         common: trCommon,
         settings: trSettings,
-        auth: trAuth,
         sidebar: trSidebar,
         chat: trChat,
         codeEditor: trCodeEditor,
@@ -151,7 +135,6 @@ i18n
       it: {
         common: itCommon,
         settings: itSettings,
-        auth: itAuth,
         sidebar: itSidebar,
         chat: itChat,
         codeEditor: itCodeEditor,
@@ -159,7 +142,6 @@ i18n
       'zh-TW': {
         common: zhTWCommon,
         settings: zhTWSettings,
-        auth: zhTWAuth,
         sidebar: zhTWSidebar,
         chat: zhTWChat,
         codeEditor: zhTWCodeEditor,
@@ -176,7 +158,7 @@ i18n
     debug: false,
 
     // Namespaces - load only what's needed
-    ns: ['common', 'settings', 'auth', 'sidebar', 'chat', 'codeEditor'],
+    ns: ['common', 'settings', 'sidebar', 'chat', 'codeEditor'],
     defaultNS: 'common',
 
     // Key separator for nested keys (default: '.')

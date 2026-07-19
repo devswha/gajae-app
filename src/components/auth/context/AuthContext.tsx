@@ -1,26 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { api } from '../../../utils/api';
-import {
-  clearAuthToken,
-  getAuthTokenSnapshot,
-  isCurrentAuthTokenSnapshot,
-  setAuthToken,
-  subscribeAuthToken,
-  type TokenSnapshot,
-} from '../../../utils/authToken';
-import { AUTH_ERROR_MESSAGES } from '../constants';
-import type {
-  AuthActionResult,
-  AuthContextValue,
-  AuthProviderProps,
-  AuthSessionPayload,
-  AuthStatusPayload,
-  AuthUser,
-  AuthUserPayload,
-  OnboardingStatusPayload,
-} from '../types';
-import { parseJsonSafely, resolveApiErrorMessage } from '../utils';
+import type { AuthContextValue, AuthProviderProps, AuthUser, AuthUserPayload } from '../types';
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -35,217 +16,36 @@ export function useAuth(): AuthContextValue {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(() => getAuthTokenSnapshot().token);
   const [isLoading, setIsLoading] = useState(true);
-  const [needsSetup, setNeedsSetup] = useState(false);
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const mutationRef = useRef(0);
-  const onboardingAbortRef = useRef<AbortController | null>(null);
-  const bootstrapAbortRef = useRef<AbortController | null>(null);
-
-  const isCurrent = useCallback((snapshot: TokenSnapshot, mutation: number) =>
-    mutationRef.current === mutation && isCurrentAuthTokenSnapshot(snapshot), []);
-
-  const resetOnboarding = useCallback(() => {
-    onboardingAbortRef.current?.abort();
-    onboardingAbortRef.current = null;
-    setHasCompletedOnboarding(true);
-  }, []);
-
-  const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
-    resetOnboarding();
-    setUser(nextUser);
-    setAuthToken(nextToken);
-  }, [resetOnboarding]);
-
-  const clearSession = useCallback(() => {
-    resetOnboarding();
-    setUser(null);
-    clearAuthToken();
-  }, [resetOnboarding]);
-
-  useEffect(() => subscribeAuthToken((snapshot) => {
-    setToken(snapshot.token);
-    resetOnboarding();
-  }), [resetOnboarding]);
-
-  const checkOnboardingStatus = useCallback(async (snapshot = getAuthTokenSnapshot(), mutation = mutationRef.current) => {
-    if (!snapshot.token) return;
-    onboardingAbortRef.current?.abort();
-    const controller = new AbortController();
-    onboardingAbortRef.current = controller;
-
-    try {
-      const response = await api.user.onboardingStatus({ signal: controller.signal });
-      if (!isCurrent(snapshot, mutation) || controller.signal.aborted || !response.ok) return;
-      const payload = await parseJsonSafely<OnboardingStatusPayload>(response);
-      if (isCurrent(snapshot, mutation) && !controller.signal.aborted) {
-        setHasCompletedOnboarding(Boolean(payload?.hasCompletedOnboarding));
-      }
-    } catch (caughtError) {
-      if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-      console.error('Error checking onboarding status:', caughtError);
-      setHasCompletedOnboarding(true);
-    } finally {
-      if (onboardingAbortRef.current === controller) onboardingAbortRef.current = null;
-    }
-  }, [isCurrent]);
-
-  const refreshOnboardingStatus = useCallback(async () => {
-    await checkOnboardingStatus();
-  }, [checkOnboardingStatus]);
 
   useEffect(() => {
     const controller = new AbortController();
-    bootstrapAbortRef.current = controller;
-    const snapshot = getAuthTokenSnapshot();
-    const mutation = mutationRef.current;
 
-    const checkAuthStatus = async () => {
+    const bootstrapUser = async () => {
       try {
-        setIsLoading(true);
-        setError(null);
-        const statusResponse = await api.auth.status({ signal: controller.signal });
-        if (!statusResponse.ok) {
-          throw new Error(`Auth status request failed with HTTP ${statusResponse.status}`);
-        }
-        const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
-        if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
+        const response = await api.auth.user({ signal: controller.signal });
+        if (!response.ok || controller.signal.aborted) return;
 
-        // Auth mode 'none': the server treats every request as the implicit
-        // owner — no setup, no login screen, no local token. Resolve the owner
-        // via /api/auth/user (which succeeds without credentials) and finish.
-        if (statusPayload?.authMode === 'none') {
-          setNeedsSetup(false);
-          const ownerResponse = await api.auth.user({ signal: controller.signal });
-          if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-          if (ownerResponse.ok) {
-            const ownerPayload = await parseJsonSafely<AuthUserPayload>(ownerResponse);
-            if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-            if (ownerPayload?.user) {
-              setUser(ownerPayload.user);
-              return;
-            }
-          }
-          setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
-          return;
+        const payload = (await response.json()) as AuthUserPayload;
+        if (!controller.signal.aborted) {
+          setUser(payload.user ?? null);
         }
-
-        if (statusPayload?.needsSetup) {
-          setNeedsSetup(true);
-          return;
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error('[Auth] Owner bootstrap failed:', error);
         }
-        setNeedsSetup(false);
-        if (!snapshot.token) return;
-
-        const userResponse = await api.auth.user({ signal: controller.signal });
-        if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-        if (!userResponse.ok) {
-          clearSession();
-          return;
-        }
-
-        const userPayload = await parseJsonSafely<AuthUserPayload>(userResponse);
-        if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-        if (!userPayload?.user) {
-          clearSession();
-          return;
-        }
-
-        setUser(userPayload.user);
-        await checkOnboardingStatus(snapshot, mutation);
-      } catch (caughtError) {
-        if (!isCurrent(snapshot, mutation) || controller.signal.aborted) return;
-        console.error('[Auth] Auth status check failed:', caughtError);
-        setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
       } finally {
-        if (bootstrapAbortRef.current === controller) {
-          bootstrapAbortRef.current = null;
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
         }
-        if (isCurrent(snapshot, mutation) && !controller.signal.aborted) setIsLoading(false);
       }
     };
 
-    void checkAuthStatus();
-    return () => {
-      controller.abort();
-      if (bootstrapAbortRef.current === controller) {
-        bootstrapAbortRef.current = null;
-      }
-    };
-  }, [checkOnboardingStatus, clearSession, isCurrent, token]);
+    void bootstrapUser();
+    return () => controller.abort();
+  }, []);
 
-  const authenticate = useCallback(async (
-    request: () => Promise<Response>,
-    fallbackMessage: string,
-  ): Promise<AuthActionResult> => {
-    bootstrapAbortRef.current?.abort();
-    bootstrapAbortRef.current = null;
-    setIsLoading(false);
-    const mutation = mutationRef.current + 1;
-    mutationRef.current = mutation;
-    const snapshot = getAuthTokenSnapshot();
-    try {
-      setError(null);
-      const response = await request();
-      const payload = await parseJsonSafely<AuthSessionPayload>(response);
-      if (!isCurrent(snapshot, mutation)) return { success: false, error: fallbackMessage };
-      if (!response.ok || !payload?.token || !payload.user) {
-        const message = resolveApiErrorMessage(payload, fallbackMessage);
-        setError(message);
-        return { success: false, error: message };
-      }
-
-      setSession(payload.user, payload.token);
-      setNeedsSetup(false);
-      await checkOnboardingStatus(getAuthTokenSnapshot(), mutation);
-      return { success: true };
-    } catch (caughtError) {
-      if (!isCurrent(snapshot, mutation)) return { success: false, error: fallbackMessage };
-      console.error('Authentication error:', caughtError);
-      setError(AUTH_ERROR_MESSAGES.networkError);
-      return { success: false, error: AUTH_ERROR_MESSAGES.networkError };
-    }
-  }, [checkOnboardingStatus, isCurrent, setSession]);
-
-  const login = useCallback<AuthContextValue['login']>((username, password) =>
-    authenticate(() => api.auth.login(username, password), AUTH_ERROR_MESSAGES.loginFailed), [authenticate]);
-
-  const register = useCallback<AuthContextValue['register']>((username, password) =>
-    authenticate(() => api.auth.register(username, password), AUTH_ERROR_MESSAGES.registrationFailed), [authenticate]);
-
-  const logout = useCallback(() => {
-    const tokenToInvalidate = getAuthTokenSnapshot().token;
-    const logoutRequest = tokenToInvalidate
-      ? api.auth.logout({ headers: { Authorization: `Bearer ${tokenToInvalidate}` } })
-      : null;
-
-    mutationRef.current += 1;
-    bootstrapAbortRef.current?.abort();
-    bootstrapAbortRef.current = null;
-    setIsLoading(false);
-    clearSession();
-    setNeedsSetup(false);
-    setError(null);
-
-    void logoutRequest?.catch((caughtError: unknown) => {
-      console.error('Logout endpoint error:', caughtError);
-    });
-  }, [clearSession]);
-
-  const contextValue = useMemo<AuthContextValue>(() => ({
-    user,
-    token,
-    isLoading,
-    needsSetup,
-    hasCompletedOnboarding,
-    error,
-    login,
-    register,
-    logout,
-    refreshOnboardingStatus,
-  }), [error, hasCompletedOnboarding, isLoading, login, logout, needsSetup, refreshOnboardingStatus, register, token, user]);
+  const contextValue = useMemo<AuthContextValue>(() => ({ user, isLoading }), [isLoading, user]);
 
   return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
 }

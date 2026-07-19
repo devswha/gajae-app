@@ -1,17 +1,3 @@
-import {
-  applyRefreshedAuthToken,
-  getAuthTokenSnapshot,
-} from './authToken';
-// Only accept a refreshed token that has this app's issued JWT shape
-// (three base64url segments). An attacker-injected/malformed header value
-// must never overwrite the stored auth token.
-/**
- * @param {unknown} token
- * @returns {token is string}
- */
-export const isValidRefreshedToken = (token) =>
-  typeof token === 'string' &&
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
 const AUTH_BOOTSTRAP_TIMEOUT_MS = 10_000;
 
 const withBootstrapTimeout = (request, externalSignal) => {
@@ -27,20 +13,13 @@ const withBootstrapTimeout = (request, externalSignal) => {
   });
 };
 
-// Utility function for authenticated API calls
+// Utility function for same-origin API calls.
 export const authenticatedFetch = (url, options = {}) => {
-  const tokenSnapshot = getAuthTokenSnapshot();
-  const token = tokenSnapshot.token;
-
   const defaultHeaders = {};
 
   // Only set Content-Type for non-FormData requests
   if (!(options.body instanceof FormData)) {
     defaultHeaders['Content-Type'] = 'application/json';
-  }
-
-  if (token) {
-    defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
   return fetch(url, {
@@ -50,40 +29,16 @@ export const authenticatedFetch = (url, options = {}) => {
       ...defaultHeaders,
       ...options.headers,
     },
-  }).then((response) => {
-    const refreshedToken = response.headers.get('X-Refreshed-Token');
-    if (isValidRefreshedToken(refreshedToken)) {
-      applyRefreshedAuthToken(tokenSnapshot, refreshedToken);
-    }
-    return response;
   });
 };
 
 // API endpoints
 export const api = {
-  // Auth endpoints (no token required)
   auth: {
-    status: (options = {}) => withBootstrapTimeout(
-      (signal) => fetch('/api/auth/status', { ...options, signal, credentials: 'same-origin' }),
-      options.signal,
-    ),
-    login: (username, password) => fetch('/api/auth/login', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    }),
-    register: (username, password) => fetch('/api/auth/register', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    }),
     user: (options = {}) => withBootstrapTimeout(
       (signal) => authenticatedFetch('/api/auth/user', { ...options, signal }),
       options.signal,
     ),
-    logout: (options = {}) => authenticatedFetch('/api/auth/logout', { method: 'POST', ...options }),
   },
 
   // Protected endpoints
@@ -253,14 +208,6 @@ export const api = {
       authenticatedFetch('/api/user/git-config', {
         method: 'POST',
         body: JSON.stringify({ gitName, gitEmail }),
-      }),
-    onboardingStatus: (options = {}) => withBootstrapTimeout(
-      (signal) => authenticatedFetch('/api/user/onboarding-status', { ...options, signal }),
-      options.signal,
-    ),
-    completeOnboarding: () =>
-      authenticatedFetch('/api/user/complete-onboarding', {
-        method: 'POST',
       }),
   },
 

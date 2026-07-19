@@ -47,8 +47,8 @@ import userRoutes from './routes/user.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import voiceRoutes from './voice-proxy.js';
 import { assetsRoutes } from './modules/assets/index.js';
-import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
-import { validateApiKey, authenticateToken, authenticateWebSocket, AUTH_MODE } from './middleware/auth.js';
+import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
+import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { c } from './utils/colors.js';
 import { evaluateExposure } from './utils/exposure-guard.js';
 
@@ -1581,14 +1581,10 @@ async function startServer() {
         }
 
 
-        // Fail-closed exposure guard: refuse non-loopback listen while no
-        // account exists (first /register would be claimable network-wide) or
-        // while GAJAE_AUTH=none leaves the port without any login at all.
+        // Fail-closed exposure guard: desktop traffic stays on loopback unless
+        // a trusted private-network override is explicitly configured.
         const exposure = evaluateExposure({
             host: HOST,
-            hasUsers: userDb.hasUsers(),
-            allowRemoteSetup: process.env.ALLOW_REMOTE_SETUP === '1',
-            authMode: AUTH_MODE,
             allowUnauthRemote: process.env.GAJAE_ALLOW_UNAUTH_REMOTE === '1',
         });
         if (exposure.level === 'block') {

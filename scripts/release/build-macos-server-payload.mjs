@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const NODE_VERSION = '22.22.2';
 const NODE_ARCHIVE_SHA256 = 'db4b275b83736df67533529a18cc55de2549a8329ace6c7bcc68f8d22d3c9000';
 const BUN_VERSION = '1.3.14';
-const NATIVE_MODULES = ['better-sqlite3', 'bcrypt', 'node-pty'];
+const NATIVE_MODULES = ['better-sqlite3', 'node-pty'];
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..', '..');
 const payloadDir = path.join(rootDir, 'src-tauri', 'resources', 'server-payload');
@@ -121,13 +121,10 @@ async function smoke(payloadNode) {
     import path from 'node:path';
     const require = createRequire(import.meta.url);
     const Database = require('better-sqlite3');
-    const bcrypt = require('bcrypt');
     const pty = require('node-pty');
     const database = new Database(':memory:');
     if (database.prepare('SELECT 22 AS value').get().value !== 22) throw new Error('better-sqlite3 smoke failed');
     database.close();
-    const hash = bcrypt.hashSync('payload-smoke', 4);
-    if (!bcrypt.compareSync('payload-smoke', hash)) throw new Error('bcrypt smoke failed');
     await new Promise((resolve, reject) => {
       const terminal = pty.spawn(process.execPath, ['-e', 'process.exit(0)'], { name: 'xterm-256color', cols: 80, rows: 24, cwd: process.cwd(), env: process.env });
       const timer = setTimeout(() => { terminal.kill(); reject(new Error('PTY timed out')); }, 5000);
@@ -149,7 +146,7 @@ async function smoke(payloadNode) {
     });
     await rm(agentDir, { recursive: true, force: true });
     const port = 39000 + Math.floor(Math.random() * 1000);
-    const server = spawn(process.execPath, ['dist-server/server/index.js'], { env: { ...process.env, PATH: path.dirname(process.execPath) + ':/usr/bin:/bin', SERVER_PORT: String(port), HOST: '127.0.0.1', GAJAE_AUTH: 'none', GJC_WORKER_AGENT_DIR: agentDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const server = spawn(process.execPath, ['dist-server/server/index.js'], { env: { ...process.env, PATH: path.dirname(process.execPath) + ':/usr/bin:/bin', SERVER_PORT: String(port), HOST: '127.0.0.1', GJC_WORKER_AGENT_DIR: agentDir }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; server.stdout.setEncoding('utf8'); server.stderr.setEncoding('utf8'); server.stdout.on('data', chunk => { output += chunk; }); server.stderr.on('data', chunk => { output += chunk; });
     try { let health; for (let attempt = 0; attempt < 50; attempt += 1) { try { health = await fetch('http://127.0.0.1:' + port + '/health'); if (health.ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 100)); } if (!health?.ok) throw new Error('Payload health check failed: ' + output); } finally { server.kill('SIGTERM'); await new Promise(resolve => server.once('close', resolve)); }
   `;

@@ -19,7 +19,7 @@ for required_path in \
   [ -e "$APP_ROOT/$required_path" ] || fail "prepared local source is missing $APP_ROOT/$required_path"
 done
 
-for native_module in better-sqlite3 bcrypt node-pty; do
+for native_module in better-sqlite3 node-pty; do
   [ -d "$APP_ROOT/node_modules/$native_module" ] || \
     fail "prepared local source is missing node_modules/$native_module"
 done

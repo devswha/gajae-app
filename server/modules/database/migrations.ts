@@ -429,13 +429,6 @@ export const runMigrations = (db: Database) => {
 
     addColumnToTableIfNotExists(db, 'users', userColumnNames, 'git_name', 'TEXT');
     addColumnToTableIfNotExists(db, 'users', userColumnNames, 'git_email', 'TEXT');
-    addColumnToTableIfNotExists(
-      db,
-      'users',
-      userColumnNames,
-      'has_completed_onboarding',
-      'BOOLEAN DEFAULT 0'
-    );
 
     db.exec(APP_CONFIG_TABLE_SCHEMA_SQL);
     db.exec(USER_NOTIFICATION_PREFERENCES_TABLE_SCHEMA_SQL);

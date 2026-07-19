@@ -3,8 +3,7 @@
  *
  * Owns the single SQLite connection used across all repositories.
  * Handles path resolution, directory creation, and eager app_config bootstrap
- * so the auth middleware can read the JWT secret before the full schema is
- * applied.
+ * before the full schema is applied.
  *
  * Consumers should never create their own Database instance — they use
  * `getConnection()` to obtain the shared singleton.
@@ -59,7 +58,7 @@ let instance: Database.Database | null = null;
  *   1. Resolves the target database path
  *   2. Ensures the parent directory exists
  *   3. Opens the SQLite connection
- *   4. Eagerly creates the app_config table (auth reads JWT secret at import time)
+ *   4. Eagerly creates the app_config table
  *   5. Logs the database location
  */
 export function getConnection(): Database.Database {
@@ -71,8 +70,7 @@ export function getConnection(): Database.Database {
 
   instance = new Database(dbPath);
 
-  // app_config must exist immediately — the auth middleware reads
-  // the JWT secret at module-load time, before initializeDatabase() runs.
+  // app_config must exist before repositories perform early-startup reads.
   instance.exec(APP_CONFIG_TABLE_SCHEMA_SQL);
 
   return instance;

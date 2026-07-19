@@ -178,7 +178,7 @@ jobs:
           node extracted/scripts/gajae-app-runtime.mjs --help
           (
             cd extracted
-            node -e "const Database=require('better-sqlite3'); const bcrypt=require('bcrypt'); const pty=require('node-pty'); const db=new Database(':memory:'); db.exec('select 1'); db.close(); const hash=bcrypt.hashSync('smoke',4); if(!bcrypt.compareSync('smoke',hash)) process.exit(1); const child=pty.spawn(process.execPath,['-e','process.exit(0)']); child.onExit(() => process.exit(0)); setTimeout(() => process.exit(1),5000)"
+            node -e "const Database=require('better-sqlite3'); const pty=require('node-pty'); const db=new Database(':memory:'); db.exec('select 1'); db.close(); const child=pty.spawn(process.execPath,['-e','process.exit(0)']); child.onExit(() => process.exit(0)); setTimeout(() => process.exit(1),5000)"
             node -e "const {spawnSync}=require('node:child_process'); const rg=require('@vscode/ripgrep').rgPath; const result=spawnSync(rg,['--version'],{stdio:'inherit'}); process.exit(result.status ?? 1)"
           )
           export HOME="$RUNNER_TEMP/gajae-app-home"

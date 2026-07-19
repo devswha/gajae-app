@@ -11,7 +11,7 @@ const TARGET_NODE_VERSION = [22, 22, 2];
 const TARGET_GLIBC_VERSION = [2, 35, 0];
 const TARGET_PLATFORM = 'linux';
 const TARGET_ARCH = 'x64';
-const NATIVE_MODULES = ['better-sqlite3', 'bcrypt', 'node-pty'];
+const NATIVE_MODULES = ['better-sqlite3', 'node-pty'];
 const BUN_VERSION = '1.3.14';
 const GJC_SDK_PACKAGE = '@gajae-code/coding-agent';
 const GJC_NATIVES_PACKAGE = '@gajae-code/natives';
@@ -295,7 +295,6 @@ async function smokeNativeRuntime(stageDir) {
     import path from 'node:path';
     const require = createRequire(import.meta.url);
     const Database = require('better-sqlite3');
-    const bcrypt = require('bcrypt');
     const pty = require('node-pty');
     const { rgPath } = require('@vscode/ripgrep');
 
@@ -304,10 +303,6 @@ async function smokeNativeRuntime(stageDir) {
     database.close();
     if (result.value !== 22) throw new Error('better-sqlite3 query failed.');
 
-    const hash = bcrypt.hashSync('gajae-app-smoke', 4);
-    if (!bcrypt.compareSync('gajae-app-smoke', hash)) {
-      throw new Error('bcrypt verification failed.');
-    }
 
     await access(rgPath, constants.X_OK);
     const ripgrep = spawnSync(rgPath, ['--version'], { encoding: 'utf8' });

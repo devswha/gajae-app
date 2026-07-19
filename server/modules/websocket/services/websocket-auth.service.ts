@@ -1,10 +1,9 @@
 import type { VerifyClientCallbackSync } from 'ws';
 
 import type { AuthenticatedWebSocketRequest } from '@/shared/types.js';
-import { AUTH_COOKIE_NAME, getBearerToken, parseCookieHeader } from '@/middleware/auth.js';
 
 type WebSocketAuthDependencies = {
-  authenticateWebSocket: (token: string | null) => {
+  authenticateWebSocket: () => {
     id?: string | number;
     userId?: string | number;
     username?: string;
@@ -27,20 +26,11 @@ export function verifyWebSocketClient(
   const upgradeUrl = new URL(request.url ?? '/', 'http://localhost');
   console.log('WebSocket connection attempt to:', upgradeUrl.pathname);
 
-  if (upgradeUrl.searchParams.has('token')) {
-    console.log('[WARN] WebSocket authentication failed');
-    return false;
-  }
 
   if (dependencies.desktopAuth && !dependencies.desktopAuth.authenticateWebSocket(request)) {
     return false;
   }
-  const token =
-    getBearerToken(request.headers.authorization) ??
-    parseCookieHeader(request.headers.cookie)[AUTH_COOKIE_NAME] ??
-    null;
-
-  const user = dependencies.authenticateWebSocket(token);
+  const user = dependencies.authenticateWebSocket();
   if (!user) {
     console.log('[WARN] WebSocket authentication failed');
     return false;
