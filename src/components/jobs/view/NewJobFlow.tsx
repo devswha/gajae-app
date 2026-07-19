@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import type { Project } from '../../../types/app';
 import { api } from '../../../utils/api';
@@ -9,6 +10,7 @@ import { api } from '../../../utils/api';
 const isManagedWorktreePath = (fullPath: string) => fullPath.split(/[\\/]/).includes('.gjc-worktrees');
 
 export default function NewJobFlow({ projects, onCreated }: { projects: Project[]; onCreated: (jobId: string) => void }) {
+  const preferred = (useLocation().state as { projectPath?: string } | null)?.projectPath;
   const selectableProjects = useMemo(
     () => projects.filter((project) => !isManagedWorktreePath(project.fullPath ?? '')),
     [projects],
@@ -19,8 +21,10 @@ export default function NewJobFlow({ projects, onCreated }: { projects: Project[
   useEffect(() => {
     setProjectPath((current) => selectableProjects.some((project) => project.fullPath === current)
       ? current
-      : (selectableProjects[0]?.fullPath ?? ''));
-  }, [selectableProjects]);
+      : (selectableProjects.some((project) => project.fullPath === preferred)
+        ? preferred!
+        : (selectableProjects[0]?.fullPath ?? '')));
+  }, [preferred, selectableProjects]);
   const [message, setMessage] = useState('');
   const [model, setModel] = useState('default');
   const [effort, setEffort] = useState('default');

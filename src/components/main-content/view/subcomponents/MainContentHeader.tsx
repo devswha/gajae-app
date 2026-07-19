@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { FolderOpen } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { FolderOpen, Hammer } from 'lucide-react';
 
 import type { MainContentHeaderProps } from '../../types/types';
 
@@ -20,6 +21,7 @@ export default function MainContentHeader({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const navigate = useNavigate();
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current;
@@ -80,6 +82,14 @@ export default function MainContentHeader({
         >
           <FolderOpen className="h-4 w-4" />
         </button>
+        {selectedProject && <button
+          type="button"
+          onClick={() => navigate('/jobs/new', { state: { projectPath: selectedProject.fullPath } })}
+          title="백그라운드 잡으로 위임"
+          className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+        >
+          <Hammer className="h-4 w-4" />
+        </button>}
         </div>
       </div>
     </div>
