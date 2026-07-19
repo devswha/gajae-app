@@ -70,6 +70,12 @@ const snapshots = (value: unknown): JobSnapshot[] => Array.isArray(value)
     ? value.items.filter((item): item is JobSnapshot => isObject(item) && typeof item.jobId === 'string')
     : [];
 
+// Budget-truncated pages can be shorter than the requested limit, so page
+// length is not a termination signal; only a null/absent nextCursor is.
+const listNextCursor = (value: unknown): string | null => (
+  isObject(value) && typeof value.nextCursor === 'string' && value.nextCursor ? value.nextCursor : null
+);
+
 export function createGjcTerminalNotificationAdapter(
   options: GjcTerminalNotificationAdapterOptions,
 ): GjcTerminalNotificationAdapter {
@@ -169,9 +175,17 @@ export function createGjcTerminalNotificationAdapter(
       const jobs: JobSnapshot[] = [];
       let afterCursor: string | undefined;
       for (;;) {
-        const page = snapshots(await options.authority.list({ provider: 'gjc', afterCursor, limit: 100 }));
+        const response = await options.authority.list({ provider: 'gjc', afterCursor, limit: 100 });
+        const page = snapshots(response);
         jobs.push(...page);
-        if (page.length < 100) break;
+        const nextCursor = listNextCursor(response);
+        if (nextCursor) {
+          afterCursor = nextCursor;
+          continue;
+        }
+        // Legacy array responses carry no cursor; fall back to length-based
+        // termination for that shape only.
+        if (!Array.isArray(response) || page.length < 100) break;
         afterCursor = page[page.length - 1]?.jobId;
         if (!afterCursor) break;
       }

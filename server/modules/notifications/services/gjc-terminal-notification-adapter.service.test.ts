@@ -117,3 +117,34 @@ test('failed and claimed dispatches are not retried by replay', async () => {
   const row = getConnection().prepare('SELECT status FROM gjc_terminal_notification_dispatches WHERE job_id = ?').get('job-3') as { status: string };
   assert.equal(row.status, 'failed');
 });
+
+test('startup catch-up follows nextCursor across budget-truncated short pages', async () => {
+  await prepareDatabase();
+  const listCalls: Array<string | undefined> = [];
+  const scanned: string[] = [];
+  const authority = {
+    // Budget-truncated pages: 2 short pages (length < limit) chained by
+    // nextCursor; page length must NOT terminate the loop.
+    async list(params?: Record<string, unknown>) {
+      const afterCursor = params?.afterCursor as string | undefined;
+      listCalls.push(afterCursor);
+      if (!afterCursor) return { items: [{ jobId: 'job-a', lastSequence: 0 }], nextCursor: 'job-a' };
+      if (afterCursor === 'job-a') return { items: [{ jobId: 'job-b', lastSequence: 0 }], nextCursor: 'job-b' };
+      return { items: [], nextCursor: null };
+    },
+    async replayEvents(params: Record<string, unknown>) {
+      scanned.push(String(params.jobId));
+      return { events: [], nextCursor: undefined };
+    },
+  };
+  const adapter = createGjcTerminalNotificationAdapter({
+    authority,
+    resolveUserId: () => 1,
+    notifications: { createNotificationEvent(event) { return event; }, notifyUserIfEnabled() {} },
+  });
+
+  await adapter.startupCatchUp(); // baseline over every page
+  assert.deepEqual(listCalls, [undefined, 'job-a', 'job-b']);
+  const baseline = getConnection().prepare('SELECT COUNT(*) AS count FROM gjc_terminal_notification_scan_cursors').get() as { count: number };
+  assert.equal(baseline.count, 2);
+});
