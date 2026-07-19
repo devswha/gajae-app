@@ -75,15 +75,6 @@
   "notifications": {
     "title": "알림",
     "description": "수신할 알림 이벤트를 설정합니다.",
-    "webPush": {
-      "title": "웹 푸시 알림",
-      "enable": "푸시 알림 활성화",
-      "disable": "푸시 알림 비활성화",
-      "enabled": "푸시 알림이 활성화되었습니다",
-      "loading": "업데이트 중...",
-      "unsupported": "이 브라우저에서는 푸시 알림이 지원되지 않습니다.",
-      "denied": "푸시 알림이 차단되었습니다. 브라우저 설정에서 허용해 주세요."
-    },
     "sound": {
       "title": "소리",
       "description": "채팅 실행이 완료되면 짧은 알림음을 재생합니다.",

@@ -75,15 +75,6 @@
   "notifications": {
     "title": "Notifiche",
     "description": "Controlla quali notifiche ricevere.",
-    "webPush": {
-      "title": "Notifiche push web",
-      "enable": "Abilita notifiche push",
-      "disable": "Disabilita notifiche push",
-      "enabled": "Le notifiche push sono abilitate",
-      "loading": "Aggiornamento...",
-      "unsupported": "Le notifiche push non sono supportate in questo browser.",
-      "denied": "Le notifiche push sono bloccate. Abilitale nelle impostazioni del browser."
-    },
     "sound": {
       "title": "Suono",
       "description": "Riproduci un breve tono quando termina un'esecuzione della chat.",

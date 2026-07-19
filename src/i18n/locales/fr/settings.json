@@ -75,15 +75,6 @@
   "notifications": {
     "title": "Notifications",
     "description": "Contrôlez les événements de notification que vous recevez.",
-    "webPush": {
-      "title": "Notifications push web",
-      "enable": "Activer les notifications push",
-      "disable": "Désactiver les notifications push",
-      "enabled": "Les notifications push sont activées",
-      "loading": "Mise à jour...",
-      "unsupported": "Les notifications push ne sont pas prises en charge dans ce navigateur.",
-      "denied": "Les notifications push sont bloquées. Veuillez les autoriser dans les paramètres de votre navigateur."
-    },
     "sound": {
       "title": "Son",
       "description": "Jouer un court son lorsqu'une exécution de chat se termine.",

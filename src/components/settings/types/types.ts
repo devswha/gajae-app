@@ -7,7 +7,6 @@ export type ProjectSortOrder = 'name' | 'date';
 export type NotificationPreferencesState = {
   channels: {
     inApp: boolean;
-    webPush: boolean;
     desktop: boolean;
     sound: boolean;
   };

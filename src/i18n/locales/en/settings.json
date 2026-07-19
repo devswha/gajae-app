@@ -93,15 +93,6 @@
   "notifications": {
     "title": "Notifications",
     "description": "Control which notification events you receive.",
-    "webPush": {
-      "title": "Notify this browser",
-      "enable": "Enable notifications",
-      "disable": "Disable notifications",
-      "enabled": "Notifications are enabled for this browser",
-      "loading": "Updating...",
-      "unsupported": "Push notifications are not supported in this browser.",
-      "denied": "Push notifications are blocked. Please allow them in your browser settings."
-    },
     "desktop": {
       "title": "Notify this desktop app",
       "enable": "Enable notifications",

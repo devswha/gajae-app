@@ -76,15 +76,6 @@
   "notifications": {
     "title": "通知",
     "description": "控制你希望接收的通知事件。",
-    "webPush": {
-      "title": "Web 推播通知",
-      "enable": "啟用推播通知",
-      "disable": "關閉推播通知",
-      "enabled": "推播通知已啟用",
-      "loading": "更新中...",
-      "unsupported": "此瀏覽器不支援推播通知。",
-      "denied": "推播通知已被封鎖，請在瀏覽器設定中允許。"
-    },
     "sound": {
       "title": "聲音",
       "description": "聊天執行完成時播放短提示音。",

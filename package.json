@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "desktopVersion": "0.2.0",
   "productName": "Gajae App",
-"description": "A self-hosted web and desktop interface for GJC",
+  "description": "A self-hosted web and desktop interface for GJC",
   "type": "module",
   "main": "dist-server/server/index.js",
   "bin": {
@@ -151,7 +151,6 @@
     "node": ">=22.22.2 <23 || >=24.15.0 <25"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.165",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.9",
     "@codemirror/lang-javascript": "^6.2.4",
@@ -163,7 +162,6 @@
     "@gajae-code/coding-agent": "0.11.1",
     "@iarna/toml": "^2.2.5",
     "@octokit/rest": "^22.0.0",
-    "@openai/codex-sdk": "^0.141.0",
     "@replit/codemirror-minimap": "^0.5.2",
     "@tailwindcss/typography": "^0.5.16",
     "@uiw/react-codemirror": "^4.23.13",
@@ -209,7 +207,6 @@
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
     "tailwind-merge": "^3.3.1",
-    "web-push": "^3.6.7",
     "ws": "^8.14.2"
   },
   "devDependencies": {

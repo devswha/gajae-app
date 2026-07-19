@@ -1,4 +1,4 @@
-import { Bell, BellOff, BellRing, Loader2, Play, Volume2 } from 'lucide-react';
+import { Bell, BellOff, BellRing, Play, Volume2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../../../shared/view/ui';
@@ -8,11 +8,6 @@ import type { NotificationPreferencesState } from '../../types/types';
 type NotificationsSettingsTabProps = {
   notificationPreferences: NotificationPreferencesState;
   onNotificationPreferencesChange: (value: NotificationPreferencesState) => void;
-  pushPermission: NotificationPermission | 'unsupported';
-  isPushSubscribed: boolean;
-  isPushLoading: boolean;
-  onEnablePush: () => void;
-  onDisablePush: () => void;
   isDesktop?: boolean;
   desktopNotifications?: {
     enabled: boolean;
@@ -28,20 +23,12 @@ type NotificationsSettingsTabProps = {
 export default function NotificationsSettingsTab({
   notificationPreferences,
   onNotificationPreferencesChange,
-  pushPermission,
-  isPushSubscribed,
-  isPushLoading,
-  onEnablePush,
-  onDisablePush,
   isDesktop = false,
   desktopNotifications = null,
   onEnableDesktopNotifications,
   onDisableDesktopNotifications,
 }: NotificationsSettingsTabProps) {
   const { t } = useTranslation('settings');
-
-  const pushSupported = pushPermission !== 'unsupported';
-  const pushDenied = pushPermission === 'denied';
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -101,53 +88,7 @@ export default function NotificationsSettingsTab({
             </div>
           )}
         </div>
-      ) : (
-        <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-          <h4 className="font-medium text-foreground">{t('notifications.webPush.title')}</h4>
-          {!pushSupported ? (
-            <p className="text-sm text-muted-foreground">{t('notifications.webPush.unsupported')}</p>
-          ) : pushDenied ? (
-            <p className="text-sm text-muted-foreground">{t('notifications.webPush.denied')}</p>
-          ) : (
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                disabled={isPushLoading}
-                onClick={() => {
-                  if (isPushSubscribed) {
-                    onDisablePush();
-                  } else {
-                    onEnablePush();
-                  }
-                }}
-                className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  isPushSubscribed
-                    ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50'
-                    : 'bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600'
-                }`}
-              >
-                {isPushLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : isPushSubscribed ? (
-                  <BellOff className="h-4 w-4" />
-                ) : (
-                  <BellRing className="h-4 w-4" />
-                )}
-                {isPushLoading
-                  ? t('notifications.webPush.loading')
-                  : isPushSubscribed
-                    ? t('notifications.webPush.disable')
-                    : t('notifications.webPush.enable')}
-              </button>
-              {isPushSubscribed && (
-                <span className="text-sm text-green-600 dark:text-green-400">
-                  {t('notifications.webPush.enabled')}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      ) : null}
 
       <div className="space-y-4 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

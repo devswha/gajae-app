@@ -1,6 +1,4 @@
-import webPush from 'web-push';
-
-import { notificationPreferencesDb, pushSubscriptionsDb, sessionsDb } from '@/modules/database/index.js';
+import { notificationPreferencesDb, sessionsDb } from '@/modules/database/index.js';
 import { sendDesktopNotification as sendDesktopNotificationToClients } from '@/modules/notifications/services/desktop-notification-clients.service.js';
 
 const KIND_TO_PREF_KEY = {
@@ -185,44 +183,7 @@ function buildNotificationPayload(event) {
   };
 }
 
-function sendWebPushPayload(userId, payload) {
-  const subscriptions = pushSubscriptionsDb.getSubscriptions(userId);
-  if (!subscriptions.length) return Promise.resolve();
-
-  const serializedPayload = JSON.stringify(payload);
-  return Promise.allSettled(
-    subscriptions.map((sub) =>
-      webPush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.keys_p256dh,
-            auth: sub.keys_auth
-          }
-        },
-        serializedPayload
-      )
-    )
-  ).then((results) => {
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        const statusCode = result.reason?.statusCode;
-        if (statusCode === 410 || statusCode === 404) {
-          pushSubscriptionsDb.removeSubscription(subscriptions[index].endpoint);
-        }
-      }
-    });
-  });
-}
-
 const notificationChannels = [
-  {
-    id: 'webPush',
-    // TODO: Web push still uses push_subscriptions. Do not remove that table until
-    // browser push subscriptions are migrated into notification_channel_endpoints.
-    isEnabled: (preferences) => Boolean(preferences?.channels?.webPush),
-    send: ({ userId, payload }) => sendWebPushPayload(userId, payload)
-  },
   {
     id: 'desktop',
     isEnabled: (preferences) => Boolean(preferences?.channels?.desktop),

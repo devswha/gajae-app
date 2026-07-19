@@ -48,27 +48,6 @@ CREATE TABLE IF NOT EXISTS user_notification_preferences (
 );
 `;
 
-export const VAPID_KEYS_TABLE_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS vapid_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_key TEXT NOT NULL,
-    private_key TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-`;
-
-export const PUSH_SUBSCRIPTIONS_TABLE_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    endpoint TEXT NOT NULL UNIQUE,
-    keys_p256dh TEXT NOT NULL,
-    keys_auth TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-`;
-
 export const NOTIFICATION_CHANNEL_ENDPOINTS_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS notification_channel_endpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,12 +169,6 @@ CREATE INDEX IF NOT EXISTS idx_user_credentials_active ON user_credentials(is_ac
 
 ${USER_NOTIFICATION_PREFERENCES_TABLE_SCHEMA_SQL}
 CREATE INDEX IF NOT EXISTS idx_user_notification_preferences_user_id ON user_notification_preferences(user_id);
-
-${VAPID_KEYS_TABLE_SCHEMA_SQL}
-
-${PUSH_SUBSCRIPTIONS_TABLE_SCHEMA_SQL}
-CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
-
 ${NOTIFICATION_CHANNEL_ENDPOINTS_TABLE_SCHEMA_SQL}
 CREATE INDEX IF NOT EXISTS idx_notification_channel_endpoints_user_channel ON notification_channel_endpoints(user_id, channel);
 CREATE INDEX IF NOT EXISTS idx_notification_channel_endpoints_enabled ON notification_channel_endpoints(enabled);

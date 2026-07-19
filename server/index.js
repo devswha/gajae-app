@@ -49,7 +49,6 @@ import voiceRoutes from './voice-proxy.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
 import { startLiveTurnMonitor } from './modules/notifications/index.js';
-import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket, AUTH_MODE } from './middleware/auth.js';
 import { c } from './utils/colors.js';
 import { evaluateExposure } from './utils/exposure-guard.js';
@@ -1600,9 +1599,6 @@ async function startServer() {
         if (exposure.level === 'warn') {
             console.warn(`${c.warn('[SECURITY]')} ${exposure.message}`);
         }
-
-        // Configure Web Push (VAPID keys)
-        configureWebPush();
 
         // Check if running in production mode (dist folder exists)
         const distIndexPath = path.join(APP_ROOT, 'dist', 'index.html');
