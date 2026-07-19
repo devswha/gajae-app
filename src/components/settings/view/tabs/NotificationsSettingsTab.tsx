@@ -180,24 +180,6 @@ export default function NotificationsSettingsTab({
           <label className="flex items-center gap-2 text-sm text-foreground">
             <input
               type="checkbox"
-              checked={notificationPreferences.events.liveStop}
-              onChange={(event) =>
-                onNotificationPreferencesChange({
-                  ...notificationPreferences,
-                  events: {
-                    ...notificationPreferences.events,
-                    liveStop: event.target.checked,
-                  },
-                })
-              }
-              className="h-4 w-4"
-            />
-            {t('notifications.events.liveStop', { defaultValue: 'tmux 라이브 세션 응답 완료' })}
-          </label>
-
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
               checked={notificationPreferences.events.error}
               onChange={(event) =>
                 onNotificationPreferencesChange({

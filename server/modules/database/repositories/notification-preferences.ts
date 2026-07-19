@@ -16,8 +16,6 @@ type NotificationPreferences = {
   events: {
     actionRequired: boolean;
     stop: boolean;
-    // tmux 라이브(외부 구동) gjc 세션 턴 완료 — 웹 구동 stop과 별도 토글.
-    liveStop: boolean;
     error: boolean;
   };
 };
@@ -31,7 +29,6 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   events: {
     actionRequired: true,
     stop: true,
-    liveStop: true,
     error: true,
   },
 };
@@ -56,7 +53,6 @@ function normalizeNotificationPreferences(value: unknown): NotificationPreferenc
     events: {
       actionRequired: source.events?.actionRequired !== false,
       stop: source.events?.stop !== false,
-      liveStop: source.events?.liveStop !== false,
       error: source.events?.error !== false,
     },
   };

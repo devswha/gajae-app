@@ -111,49 +111,6 @@ export const api = {
     }),
   },
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
-  // Session ids currently live in a tmux gjc pane (tmux+lsof; [] when no tmux).
-  liveSessions: () => authenticatedFetch('/api/providers/sessions/live'),
-  // Relay a message into a live tmux gjc session via the control tower (POST /send).
-  // `tmuxId` ($N generation token) makes the server refuse a same-named session
-  // that replaced the one this client saw.
-  /**
-   * @param {string} tmuxName
-   * @param {string} message
-   * @param {string | null} [tmuxId]
-   */
-  liveSessionSend: (tmuxName, message, tmuxId = null) =>
-    authenticatedFetch('/api/providers/sessions/live/send', {
-      method: 'POST',
-      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId, message } : { tmuxName, message }),
-    }),
-  // Spawn a new tmux gjc session via the control tower (POST /spawn).
-  liveSessionSpawn: (name, cwd) =>
-    authenticatedFetch('/api/providers/sessions/live/spawn', {
-      method: 'POST',
-      body: JSON.stringify({ name, cwd }),
-    }),
-  // Kill a live tmux session via the control tower (POST /kill). The tower is
-  // the fleet-lifecycle authority — protected sessions are refused there.
-  /**
-   * @param {string} tmuxName
-   * @param {string | null} [tmuxId]
-   */
-  liveSessionKill: (tmuxName, tmuxId = null) =>
-    authenticatedFetch('/api/providers/sessions/live/kill', {
-      method: 'POST',
-      body: JSON.stringify(tmuxId ? { tmuxName, tmuxId } : { tmuxName }),
-    }),
-  // Slash commands a live tmux gjc session can execute (native + project +
-  // skills) — powers the live relay composer's command palette.
-  /**
-   * @param {string} [workspacePath]
-   */
-  liveSessionCommands: (workspacePath) => {
-    const params = new URLSearchParams();
-    if (workspacePath) params.set('workspacePath', workspacePath);
-    const qs = params.toString();
-    return authenticatedFetch(`/api/providers/sessions/live/commands${qs ? `?${qs}` : ''}`);
-  },
   // Home-relative directory autocomplete ({ home, suggestions }).
   dirSuggestions: (prefix) =>
     authenticatedFetch(`/api/providers/fs/dir-suggestions?prefix=${encodeURIComponent(prefix)}`),

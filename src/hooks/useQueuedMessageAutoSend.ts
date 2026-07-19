@@ -12,12 +12,6 @@ interface UseQueuedMessageAutoSendArgs {
    * so this hook never touches it.
    */
   activeSessionId: string | null;
-  /**
-   * Sessions currently owned by an external driver (tmux gjc). Auto-sending a
-   * queued draft into one would inject a second driver invisibly (리뷰 HIGH) —
-   * the draft stays stored until the session is no longer externally owned.
-   */
-  liveSessionIds?: ReadonlySet<string>;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   markSessionProcessing: MarkSessionProcessing;
@@ -36,7 +30,6 @@ interface UseQueuedMessageAutoSendArgs {
 export function useQueuedMessageAutoSend({
   processingSessions,
   activeSessionId,
-  liveSessionIds,
   ws,
   sendMessage,
   markSessionProcessing,
@@ -49,7 +42,7 @@ export function useQueuedMessageAutoSend({
     prevProcessingRef.current = current;
 
     for (const sessionId of prev) {
-      if (current.has(sessionId) || sessionId === activeSessionId || liveSessionIds?.has(sessionId)) {
+      if (current.has(sessionId) || sessionId === activeSessionId) {
         continue;
       }
 
@@ -73,5 +66,5 @@ export function useQueuedMessageAutoSend({
       });
       markSessionProcessing(sessionId, { statusText: null, canInterrupt: true });
     }
-  }, [processingSessions, activeSessionId, liveSessionIds, ws, sendMessage, markSessionProcessing]);
+  }, [processingSessions, activeSessionId, ws, sendMessage, markSessionProcessing]);
 }

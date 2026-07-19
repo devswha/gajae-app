@@ -14,7 +14,6 @@ import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { JobWorkspace, NewJobFlow } from '../jobs';
-import type { ExternalTerminalTarget } from '../../types/app';
 
 type RunningSessionApiItem = {
   sessionId?: unknown;
@@ -68,7 +67,6 @@ function AppContentInner() {
   const {
     selectedProject,
     selectedSession,
-    liveSessionModels,
     activeTab,
     sidebarOpen,
     isLoadingProjects,
@@ -90,39 +88,7 @@ function AppContentInner() {
     activeSessions: processingSessions,
   });
 
-  // External CLI (claude/codex) tmux terminal shown in the main area. Lives
-  // here (not in useProjectsState) so the gjc session flow stays untouched;
-  // selecting any project/session or starting a new chat clears it via the
-  // wrapped sidebar handlers below.
-  const [externalTerminal, setExternalTerminal] = useState<ExternalTerminalTarget | null>(null);
-
-  const openExternalTerminal = useCallback((target: ExternalTerminalTarget) => {
-    setExternalTerminal(target);
-    setSidebarOpen(false);
-  }, [setSidebarOpen]);
-
-  const closeExternalTerminal = useCallback(() => {
-    setExternalTerminal(null);
-  }, []);
-
-  // Wrap navigation-ish sidebar handlers so leaving for a session/project/new
-  // chat drops the terminal takeover — without modifying the originals.
-  const sidebarProps = useMemo(() => ({
-    ...sidebarSharedProps,
-    onProjectSelect: (...args: Parameters<typeof sidebarSharedProps.onProjectSelect>) => {
-      setExternalTerminal(null);
-      return sidebarSharedProps.onProjectSelect(...args);
-    },
-    onSessionSelect: (...args: Parameters<typeof sidebarSharedProps.onSessionSelect>) => {
-      setExternalTerminal(null);
-      return sidebarSharedProps.onSessionSelect(...args);
-    },
-    onNewSession: (...args: Parameters<typeof sidebarSharedProps.onNewSession>) => {
-      setExternalTerminal(null);
-      return sidebarSharedProps.onNewSession(...args);
-    },
-    onExternalTerminalOpen: openExternalTerminal,
-  }), [sidebarSharedProps, openExternalTerminal]);
+  const sidebarProps = sidebarSharedProps;
 
   // Queued messages for sessions that finish while another session (or none)
   // is being viewed are sent from here; the viewed session's composer handles
@@ -130,8 +96,6 @@ function AppContentInner() {
   useQueuedMessageAutoSend({
     processingSessions,
     activeSessionId: selectedSession?.id ?? sessionId ?? null,
-    // tmux-owned sessions must never receive an invisible background send.
-    liveSessionIds: sidebarSharedProps.liveSessionIds,
     ws,
     sendMessage,
     markSessionProcessing,
@@ -200,7 +164,6 @@ function AppContentInner() {
         localStorage.setItem('selected-provider', message.provider);
       }
 
-      setExternalTerminal(null);
       setActiveTab('chat');
       setSidebarOpen(false);
       void refreshProjectsSilently();
@@ -288,18 +251,6 @@ function AppContentInner() {
           <MainContent
             selectedProject={selectedProject}
             selectedSession={selectedSession}
-            isSessionReadOnly={Boolean(selectedSession && sidebarSharedProps.liveSessionIds.has(selectedSession.id))}
-            liveSessionTmuxName={
-              selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
-                ? (sidebarSharedProps.liveSessionNames.get(selectedSession.id) ?? null)
-                : null
-            }
-            liveSessionTmuxId={
-              selectedSession && sidebarSharedProps.liveSessionLineage.has(selectedSession.id)
-                ? (sidebarSharedProps.liveSessionTmuxIds.get(selectedSession.id) ?? null)
-                : null
-            }
-            liveSessionModel={selectedSession ? (liveSessionModels.get(selectedSession.id) ?? null) : null}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             ws={ws}
@@ -320,23 +271,15 @@ function AppContentInner() {
             onShowSettings={openSettings}
             externalMessageUpdate={externalMessageUpdate}
             newSessionTrigger={newSessionTrigger}
-            externalTerminal={externalTerminal}
-            onExternalTerminalClose={closeExternalTerminal}
           />
         )}
       </div>
 
       <CommandPalette
         selectedProject={selectedProject}
-        onStartNewChat={(...args: Parameters<typeof handleNewSession>) => {
-          setExternalTerminal(null);
-          return handleNewSession(...args);
-        }}
+        onStartNewChat={handleNewSession}
         onOpenSettings={() => openSettings()}
-        onShowTab={(tab: Parameters<typeof setActiveTab>[0]) => {
-          setExternalTerminal(null);
-          setActiveTab(tab);
-        }}
+        onShowTab={setActiveTab}
       />
     </div>
   );

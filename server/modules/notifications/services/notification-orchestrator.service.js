@@ -4,9 +4,6 @@ import { sendDesktopNotification as sendDesktopNotificationToClients } from '@/m
 const KIND_TO_PREF_KEY = {
   action_required: 'actionRequired',
   stop: 'stop',
-  // tmux 라이브(외부 구동) gjc 세션의 턴 완료 — 웹 구동 완료(stop)와 분리
-  // 토글: tmux 옆에서 작업 중일 땐 이것만 끌 수 있어야 한다.
-  live_stop: 'liveStop',
   error: 'error'
 };
 
@@ -160,9 +157,6 @@ function buildNotificationPayload(event) {
       : 'Action Required: A tool needs your approval',
     'run.stopped': normalizedEvent.meta?.stopReason || 'Run Stopped: The run has stopped',
     'run.failed': normalizedEvent.meta?.error ? `Run Failed: ${normalizedEvent.meta.error}` : 'Run Failed: The run encountered an error',
-    'live.turn_end': normalizedEvent.meta?.stopReason === 'error'
-      ? 'Turn ended with an error in the tmux session'
-      : 'Reply ready — the tmux session finished its turn',
     'agent.notification': normalizedEvent.meta?.message ? String(normalizedEvent.meta.message) : 'You have a new notification',
     'push.enabled': 'Push notifications are now enabled!'
   };
@@ -248,34 +242,11 @@ function notifyRunFailed({ userId, provider, sessionId = null, error, sessionNam
   });
 }
 
-/**
- * Turn completion of a tmux-driven (externally owned) gjc session, detected by
- * the live turn monitor from the transcript's assistant stopReason. Separate
- * kind (`live_stop` → prefs.events.liveStop) from web-run `stop` so the two
- * lanes toggle independently.
- *
- * @param {{ userId: number, sessionId: string | null, tmuxName?: string | null, stopReason?: string }} args
- */
-function notifyLiveTurnEnded({ userId, sessionId, tmuxName = null, stopReason = 'stop' }) {
-  notifyUserIfEnabled({
-    userId,
-    event: createNotificationEvent({
-      provider: 'gjc',
-      sessionId,
-      kind: 'live_stop',
-      code: 'live.turn_end',
-      meta: { sessionName: tmuxName, stopReason },
-      severity: stopReason === 'error' ? 'error' : 'info',
-      dedupeKey: `gjc:live:turn:${sessionId || 'none'}`
-    })
-  });
-}
 
 export {
   buildNotificationPayload,
   createNotificationEvent,
   notifyUserIfEnabled,
   notifyRunStopped,
-  notifyRunFailed,
-  notifyLiveTurnEnded
+notifyRunFailed
 };

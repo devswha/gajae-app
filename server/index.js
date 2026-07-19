@@ -48,7 +48,6 @@ import providerRoutes from './modules/providers/provider.routes.js';
 import voiceRoutes from './voice-proxy.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { initializeDatabase, projectsDb, sessionsDb, userDb } from './modules/database/index.js';
-import { startLiveTurnMonitor } from './modules/notifications/index.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket, AUTH_MODE } from './middleware/auth.js';
 import { c } from './utils/colors.js';
 import { evaluateExposure } from './utils/exposure-guard.js';
@@ -1646,10 +1645,6 @@ async function startServer() {
             // Start watching the projects folder for changes
             await initializeSessionsWatcher();
 
-            // Notify on tmux-driven gjc turn completions (transcript delta →
-            // assistant stopReason). Server-side so web push works with every
-            // tab closed. Kill switch: GAJAE_APP_LIVE_NOTIFY=0.
-            startLiveTurnMonitor();
 
         });
 

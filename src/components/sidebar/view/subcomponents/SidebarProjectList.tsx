@@ -28,7 +28,6 @@ export type SidebarProjectListProps = {
   loadingMoreProjects: Set<string>;
   activeSessions: SessionActivityMap;
   attentionSessionIds: ReadonlySet<string>;
-  liveSessionIds: ReadonlySet<string>;
   forceExpanded?: boolean;
   isProjectStarred: (projectName: string) => boolean;
   onEditingNameChange: (value: string) => void;
@@ -74,7 +73,6 @@ export default function SidebarProjectList({
   loadingMoreProjects,
   activeSessions,
   attentionSessionIds,
-  liveSessionIds,
   forceExpanded = false,
   isProjectStarred,
   onEditingNameChange,
@@ -151,7 +149,6 @@ export default function SidebarProjectList({
               onLoadMoreSessions={onLoadMoreSessions}
               activeSessions={activeSessions}
               attentionSessionIds={attentionSessionIds}
-              liveSessionIds={liveSessionIds}
               onNewSession={onNewSession}
               onEditingSessionNameChange={onEditingSessionNameChange}
               onStartEditingSession={onStartEditingSession}

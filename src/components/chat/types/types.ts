@@ -120,11 +120,6 @@ export type SessionEstablishedContext = {
 export interface ChatInterfaceProps {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
-  isSessionReadOnly: boolean;
-  liveSessionTmuxName: string | null;
-  // `$N` generation token of the tmux session backing the relay target (kill/send race guard).
-  liveSessionTmuxId: string | null;
-  liveSessionModel: string | null;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
   onFileOpen?: (filePath: string, diffInfo?: any) => void;

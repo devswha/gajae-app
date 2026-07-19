@@ -15,7 +15,6 @@ type SidebarSessionItemProps = {
   selectedSession: ProjectSession | null;
   isProcessing: boolean;
   needsAttention: boolean;
-  isLive: boolean;
   currentTime: Date;
   editingSession: string | null;
   editingSessionName: string;
@@ -68,7 +67,6 @@ export default function SidebarSessionItem({
   selectedSession,
   isProcessing,
   needsAttention,
-  isLive,
   currentTime,
   editingSession,
   editingSessionName,
@@ -87,7 +85,6 @@ export default function SidebarSessionItem({
   const compactSessionAge = formatCompactSessionAge(sessionView.sessionTime, currentTime);
   const editingContainerRef = useRef<HTMLDivElement>(null);
   const showAttentionIndicator = needsAttention && !isSelected;
-  const showLiveIndicator = isLive;
   const showRecentIndicator = !showAttentionIndicator && !isProcessing && sessionView.isActive;
 
   // The rename panel sits inside a group-hover opacity wrapper, so leaving the row
@@ -126,26 +123,22 @@ export default function SidebarSessionItem({
 
   return (
     <div className="group relative">
-      {(showLiveIndicator || showAttentionIndicator || showRecentIndicator) && (
+      {(showAttentionIndicator || showRecentIndicator) && (
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
           <Tooltip
-            content={showLiveIndicator
-              ? t('tooltips.liveSessionIndicator', { defaultValue: 'Live in a tmux gjc session (being driven elsewhere)' })
-              : showAttentionIndicator
+            content={showAttentionIndicator
               ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
               : t('tooltips.activeSessionIndicator')}
             position="right"
           >
             <div
               role="status"
-              aria-label={showLiveIndicator
-                ? t('tooltips.liveSessionIndicator', { defaultValue: 'Live in a tmux gjc session (being driven elsewhere)' })
-                : showAttentionIndicator
+              aria-label={showAttentionIndicator
                 ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
                 : t('tooltips.activeSessionIndicator')}
               className={cn(
                 'h-2 w-2 animate-pulse rounded-full',
-                showLiveIndicator ? 'bg-blue-500' : showAttentionIndicator ? 'bg-amber-500' : 'bg-green-500',
+                showAttentionIndicator ? 'bg-amber-500' : 'bg-green-500',
               )}
             />
           </Tooltip>

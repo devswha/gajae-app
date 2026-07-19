@@ -20,12 +20,6 @@ function Sidebar({
   selectedSession,
   activeSessions,
   attentionSessionIds,
-  liveSessionIds,
-  liveSessionNames,
-  liveSessionLineage,
-  liveSessionTmuxIds,
-  liveSessionKinds,
-  liveSessionRunning,
   onProjectSelect,
   onSessionSelect,
   onNewSession,
@@ -154,7 +148,6 @@ function Sidebar({
     loadingMoreProjects,
     activeSessions,
     attentionSessionIds,
-    liveSessionIds,
     forceExpanded: searchMode === 'running',
     isProjectStarred,
     onEditingNameChange: setEditingName,
@@ -282,11 +275,6 @@ function Sidebar({
             currentVersion={currentVersion}
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
-            liveSessionNames={liveSessionNames}
-            liveSessionLineage={liveSessionLineage}
-            liveSessionTmuxIds={liveSessionTmuxIds}
-            liveSessionKinds={liveSessionKinds}
-            liveSessionRunning={liveSessionRunning}
             t={t}
           />
         </>

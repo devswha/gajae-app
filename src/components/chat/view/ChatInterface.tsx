@@ -14,16 +14,11 @@ import { useSessionStore } from '../../../stores/useSessionStore';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
-import LiveRelayComposer from './subcomponents/LiveRelayComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
 
 function ChatInterface({
   selectedProject,
   selectedSession,
-  isSessionReadOnly,
-  liveSessionTmuxName,
-  liveSessionTmuxId,
-  liveSessionModel,
   ws,
   sendMessage,
   onFileOpen,
@@ -206,7 +201,6 @@ function ChatInterface({
     currentProviderEffort,
     opencodeModel,
     isLoading: isProcessing,
-    isSessionReadOnly,
     canAbortSession,
     tokenBudget,
     sendMessage,
@@ -240,23 +234,6 @@ function ChatInterface({
     });
   }, [selectedProject, selectedSession, sendMessage, sessionStore]);
 
-  // A live (tmux-driven) session grows from an EXTERNAL gjc process, so Gajae App
-  // gets no realtime WS push for it — the open read-only view would otherwise stay
-  // frozen until the user leaves and re-enters. While such a session is open, poll
-  // a bounded refresh (same reconcile as the reconnect/external path) so a relayed
-  // reply shows up in place. Ref keeps refreshFromServer out of the effect deps.
-  const refreshFromServerRef = useRef(sessionStore.refreshFromServer);
-  refreshFromServerRef.current = sessionStore.refreshFromServer;
-  const liveOpenSessionId = isSessionReadOnly ? (selectedSession?.id ?? null) : null;
-  useEffect(() => {
-    if (!liveOpenSessionId) {
-      return;
-    }
-    const timer = setInterval(() => {
-      void refreshFromServerRef.current(liveOpenSessionId);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [liveOpenSessionId]);
 
   useChatRealtimeHandlers({
     subscribe,
@@ -405,20 +382,6 @@ function ChatInterface({
             </div>
           )}
 
-          {isSessionReadOnly ? (
-            liveSessionTmuxName ? (
-              // key: remount per tmux target — a draft/in-flight status typed
-              // for session A must never survive a switch to target B (리뷰 반영).
-              <LiveRelayComposer key={liveSessionTmuxName} tmuxName={liveSessionTmuxName} tmuxId={liveSessionTmuxId} model={liveSessionModel} workspacePath={selectedProject.fullPath || selectedProject.path} />
-            ) : (
-              <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-3 pt-2 sm:px-4">
-                <div className="mx-auto flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-                  <span className="inline-flex h-2 w-2 shrink-0 animate-pulse rounded-full bg-blue-500" aria-hidden />
-                  <span>tmux의 gjc에서 작동 중 — 열람 전용입니다. 실시간으로 갱신되며, 조작은 tmux 쪽에서 하세요.</span>
-                </div>
-              </div>
-            )
-          ) : (
           <ChatComposer
           pendingPermissionRequests={pendingPermissionRequests}
           handlePermissionDecision={handlePermissionDecision}
@@ -489,7 +452,6 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
-          )}
         </div>
       </div>
 

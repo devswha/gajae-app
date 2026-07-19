@@ -1,5 +1,4 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
-import { Menu, SquareTerminal, X } from 'lucide-react';
 
 import type { MainContentProps } from '../types/types';
 import { usePaletteOpsRegister } from '../../../contexts/PaletteOpsContext';
@@ -12,17 +11,12 @@ import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
 
 const ChatInterface = lazy(() => import('../../chat/view/ChatInterface'));
-const StandaloneShell = lazy(() => import('../../standalone-shell/view/StandaloneShell'));
 const EditorSidebar = lazy(() => import('../../code-editor/view/EditorSidebar'));
 const FilesPanel = lazy(() => import('./subcomponents/FilesPanel'));
 
 function MainContent({
   selectedProject,
   selectedSession,
-  isSessionReadOnly,
-  liveSessionTmuxName,
-  liveSessionTmuxId,
-  liveSessionModel,
   activeTab,
   setActiveTab,
   ws,
@@ -39,8 +33,6 @@ function MainContent({
   onShowSettings,
   externalMessageUpdate,
   newSessionTrigger,
-  externalTerminal,
-  onExternalTerminalClose,
 }: MainContentProps) {
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
@@ -104,64 +96,6 @@ function MainContent({
     return <MainContentStateView mode="loading" isMobile={isMobile} onMenuClick={onMenuClick} />;
   }
 
-  // External CLI (claude/codex) tmux terminal takes over the whole main area —
-  // same footprint as a gjc session. Rendered before the no-project empty state
-  // because the target carries its own project (PTY cwd only).
-  if (externalTerminal) {
-    const safeName = /^[A-Za-z0-9._-]{1,64}$/.test(externalTerminal.tmuxName) ? externalTerminal.tmuxName : null;
-    return (
-      <div className="flex h-full flex-col">
-        <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            {isMobile && (
-              <button
-                type="button"
-                onClick={onMenuClick}
-                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                aria-label="Open sidebar"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-            )}
-            <SquareTerminal className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
-            <span className="truncate text-sm font-semibold text-foreground">tmux: {externalTerminal.tmuxName}</span>
-            <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-              {externalTerminal.kind} · 분리(detach): Ctrl+B → D
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onExternalTerminalClose}
-            title="터미널 닫기"
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {safeName && (
-            <Suspense fallback={null}>
-              <StandaloneShell
-                // key: switching targets must remount the Shell — its websocket
-                // does NOT reconnect when only initialCommand changes, so without
-                // this the previous session's terminal keeps showing (stock→test).
-                key={safeName}
-                project={externalTerminal.project}
-                command={`tmux attach-session -t '=${safeName}'`}
-                isActive
-                // minimal: drop the Shell's own status bar ("New Session" +
-                // Disconnect/Restart) — our header above already names the
-                // target and closes the view; minimal also auto-connects.
-                minimal
-                onComplete={() => onExternalTerminalClose()}
-              />
-            </Suspense>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   if (!selectedProject) {
     return <MainContentStateView mode="empty" isMobile={isMobile} onMenuClick={onMenuClick} />;
   }
@@ -187,10 +121,6 @@ function MainContent({
                 <ChatInterface
                   selectedProject={selectedProject}
                   selectedSession={selectedSession}
-                  isSessionReadOnly={isSessionReadOnly}
-                  liveSessionTmuxName={liveSessionTmuxName}
-                  liveSessionTmuxId={liveSessionTmuxId}
-                  liveSessionModel={liveSessionModel}
                   ws={ws}
                   sendMessage={sendMessage}
                   onFileOpen={handleFileOpen}

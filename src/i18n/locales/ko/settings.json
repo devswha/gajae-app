@@ -85,7 +85,6 @@
       "title": "이벤트 유형",
       "actionRequired": "작업 필요",
       "stop": "실행 중지",
-      "liveStop": "tmux 라이브 세션 응답 완료",
       "error": "실행 실패"
     }
   },
