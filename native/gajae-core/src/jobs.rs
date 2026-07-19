@@ -9,6 +9,7 @@ use serde_json::Value;
 
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 const DEFAULT_REPLAY_BUDGET: u64 = 60 * 1024;
+const DEFAULT_LIST_BUDGET: u64 = 48 * 1024;
 const DEFAULT_CAPACITY: u64 = 4;
 
 const MAX_RECONCILE_JOB_IDS: usize = 100;
@@ -144,6 +145,12 @@ struct BindingResolution {
 struct Replay {
     events: Vec<JobEvent>,
     next_cursor: Option<u64>,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobList {
+    items: Vec<JobSnapshot>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -507,7 +514,8 @@ impl PersistentAuthority {
         provider: Option<&str>,
         after: Option<&str>,
         limit: u64,
-    ) -> Result<Vec<JobSnapshot>, AuthorityError> {
+        budget: u64,
+    ) -> Result<JobList, AuthorityError> {
         if !(1..=100).contains(&limit) {
             return Err(AuthorityError::InvalidIdentifier);
         }
@@ -519,15 +527,32 @@ impl PersistentAuthority {
         }
         let state_value = state_filter.map(JobState::as_str);
         let after = after.unwrap_or("");
-        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,j.prompt FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
-        let rows = statement
-            .query_map(
-                params![state_value, provider, after, limit],
-                snapshot_from_row,
-            )
+        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,SUBSTR(j.prompt,1,256) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
+        let mut rows = statement
+            .query(params![state_value, provider, after, limit + 1])
             .map_err(|_| AuthorityError::Storage)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| AuthorityError::Storage)
+        let mut list = JobList {
+            items: Vec::new(),
+            next_cursor: None,
+        };
+        let mut item_bytes = 0;
+        while let Some(row) = rows.next().map_err(|_| AuthorityError::Storage)? {
+            if list.items.len() == limit as usize {
+                list.next_cursor = list.items.last().map(|item| item.job_id.clone());
+                break;
+            }
+            let item = snapshot_from_row(row).map_err(|_| AuthorityError::Storage)?;
+            let item_size = serde_json::to_vec(&item)
+                .map_err(|_| AuthorityError::Storage)?
+                .len() as u64;
+            if !list.items.is_empty() && item_bytes + item_size > budget {
+                list.next_cursor = list.items.last().map(|item| item.job_id.clone());
+                break;
+            }
+            item_bytes += item_size;
+            list.items.push(item);
+        }
+        Ok(list)
     }
     fn reserve(
         &mut self,
@@ -1598,12 +1623,18 @@ fn dispatch(
                 &request.id,
             )?,
         ),
-        "job.list" => serde_json::to_value(authority.list(
-            request.state,
-            request.provider.as_deref(),
-            request.after_cursor.as_deref(),
-            request.limit.unwrap_or(50),
-        )?),
+        "job.list" => serde_json::to_value(
+            authority.list(
+                request.state,
+                request.provider.as_deref(),
+                request.after_cursor.as_deref(),
+                request.limit.unwrap_or(50),
+                request
+                    .byte_budget
+                    .unwrap_or(DEFAULT_LIST_BUDGET)
+                    .min(DEFAULT_LIST_BUDGET),
+            )?,
+        ),
         "job.readmit" => serde_json::to_value(
             authority.readmit(
                 id()?,
@@ -2028,6 +2059,72 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
+    fn list_budget_bounds_frames_and_cursor_reaches_all_jobs() {
+        let (d, p) = db();
+        let mut authority = PersistentAuthority::open(&p).unwrap();
+        let prompt = "🦀".repeat(4096);
+        for number in 0..64 {
+            authority
+                .reserve_start(
+                    &format!("job-{number:03}"),
+                    "p",
+                    &format!("app-{number:03}"),
+                    "owner",
+                    Some(&prompt),
+                    64,
+                )
+                .unwrap();
+        }
+        drop(authority);
+
+        let mut after = None;
+        let mut job_ids = Vec::new();
+        loop {
+            let request = json!({
+                "protocolVersion": 1,
+                "id": "list",
+                "method": "job.list",
+                "afterCursor": after.as_deref(),
+                "limit": 64,
+            });
+            let mut output = Vec::new();
+            assert!(run(
+                &p,
+                std::io::Cursor::new(format!("{request}\n").into_bytes()),
+                &mut output,
+            ));
+            assert_eq!(output.last(), Some(&b'\n'));
+            let frame = &output[..output.len() - 1];
+            assert!(frame.len() <= MAX_FRAME_BYTES);
+            let response: Value = serde_json::from_slice(frame).unwrap();
+            let items = response["result"]["items"].as_array().unwrap();
+            assert!(!items.is_empty());
+            job_ids.extend(
+                items
+                    .iter()
+                    .map(|item| item["jobId"].as_str().unwrap().to_owned()),
+            );
+            after = match response["result"]["nextCursor"].as_str() {
+                Some(cursor) => {
+                    assert_eq!(
+                        Some(cursor),
+                        items.last().and_then(|item| item["jobId"].as_str())
+                    );
+                    Some(cursor.to_owned())
+                }
+                None => break,
+            };
+        }
+        assert_eq!(
+            job_ids,
+            (0..64)
+                .map(|number| format!("job-{number:03}"))
+                .collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
     fn list_capacity_and_reopen_reconcile() {
         let (d, p) = db();
         let mut a = PersistentAuthority::open(&p).unwrap();
@@ -2047,9 +2144,16 @@ mod tests {
             .unwrap();
         a.reserve("j4", "p", "o", 4).unwrap();
         assert_eq!(
-            a.list(Some(JobState::Reserved), Some("p"), Some("j0"), 10)
-                .unwrap()
-                .len(),
+            a.list(
+                Some(JobState::Reserved),
+                Some("p"),
+                Some("j0"),
+                10,
+                DEFAULT_LIST_BUDGET,
+            )
+            .unwrap()
+            .items
+            .len(),
             4
         );
         a.reserve("run", "p", "o", 64).unwrap();
@@ -2149,12 +2253,26 @@ mod tests {
         );
         assert_eq!(
             authority
-                .list(Some(JobState::Reserved), None, None, 10)
+                .list(
+                    Some(JobState::Reserved),
+                    None,
+                    None,
+                    10,
+                    DEFAULT_LIST_BUDGET,
+                )
                 .unwrap()
+                .items
                 .len(),
             4
         );
-        assert_eq!(authority.list(None, None, None, 10).unwrap().len(), 5);
+        assert_eq!(
+            authority
+                .list(None, None, None, 10, DEFAULT_LIST_BUDGET)
+                .unwrap()
+                .items
+                .len(),
+            5
+        );
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
@@ -2183,12 +2301,60 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(responses[2]["result"][0]["prompt"], json!("draft"));
+        assert_eq!(responses[2]["result"]["items"][0]["prompt"], json!("draft"));
         assert!(
-            !responses[2]["result"][0]["createdAt"]
+            !responses[2]["result"]["items"][0]["createdAt"]
                 .as_str()
                 .unwrap()
                 .is_empty()
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn list_truncates_prompts_but_get_retains_them() {
+        let (d, p) = db();
+        let prompt = "🦀".repeat(257);
+        let input = format!(
+            "{}\n{}\n{}\n",
+            json!({
+                "protocolVersion": 1,
+                "id": "reserve",
+                "method": "job.reserveStart",
+                "jobId": "job",
+                "provider": "p",
+                "appSessionId": "app",
+                "owner": "owner",
+                "cap": 1,
+                "prompt": prompt,
+            }),
+            json!({
+                "protocolVersion": 1,
+                "id": "get",
+                "method": "job.get",
+                "jobId": "job",
+            }),
+            json!({
+                "protocolVersion": 1,
+                "id": "list",
+                "method": "job.list",
+            }),
+        );
+        let mut output = Vec::new();
+        assert!(run(
+            &p,
+            std::io::Cursor::new(input.into_bytes()),
+            &mut output
+        ));
+        let responses: Vec<Value> = output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect();
+
+        assert_eq!(responses[1]["result"]["prompt"], json!(prompt));
+        assert_eq!(
+            responses[2]["result"]["items"][0]["prompt"],
+            json!("🦀".repeat(256))
         );
         std::fs::remove_dir_all(d).unwrap();
     }
@@ -2229,7 +2395,13 @@ mod tests {
             serde_json::to_value(snapshot).unwrap()["prompt"],
             json!(null)
         );
-        assert_eq!(a.list(None, None, None, 1).unwrap()[0].prompt, None);
+        assert_eq!(
+            a.list(None, None, None, 1, DEFAULT_LIST_BUDGET)
+                .unwrap()
+                .items[0]
+                .prompt,
+            None
+        );
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
@@ -2262,11 +2434,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(prompt, None);
-        let jobs = a.list(None, None, None, 1).unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].job_id, "legacy");
-        assert!(jobs[0].created_at.len() == 19);
-        assert_eq!(jobs[0].prompt, None);
+        let jobs = a.list(None, None, None, 1, DEFAULT_LIST_BUDGET).unwrap();
+        assert_eq!(jobs.items.len(), 1);
+        assert_eq!(jobs.items[0].job_id, "legacy");
+        assert!(jobs.items[0].created_at.len() == 19);
+        assert_eq!(jobs.items[0].prompt, None);
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
@@ -2713,9 +2885,16 @@ mod tests {
         assert_eq!(result.changed_count, (MAX_RECONCILE_JOB_IDS + 1) as u64);
         assert_eq!(result.job_ids.len(), MAX_RECONCILE_JOB_IDS);
         assert_eq!(
-            a.list(Some(JobState::Reserved), None, None, 100)
-                .unwrap()
-                .len(),
+            a.list(
+                Some(JobState::Reserved),
+                None,
+                None,
+                100,
+                DEFAULT_LIST_BUDGET,
+            )
+            .unwrap()
+            .items
+            .len(),
             0
         );
         std::fs::remove_dir_all(d).unwrap();

@@ -120,9 +120,11 @@ test('capacity rejects the fifth bound start without creating a conflicting bind
   const results = await Promise.allSettled(Array.from({ length: 5 }, (_, index) =>
     f.orchestrator.start('gjc', `capacity-session-${index}`, f.root, `message-${index}`, { ...workerOptions, cap: 4 }),
   ));
-  const list = await f.jobs.list({});
+  const listed = await f.jobs.list({}) as { items: unknown[]; nextCursor: string | null };
+  const list = listed.items;
   assert.ok(Array.isArray(list));
   assert.equal(list.length, 4);
+  assert.equal(listed.nextCursor, null);
   assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
   assert.match(String((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason), /waiting for capacity/u);
   assert.equal(list.filter((job) => ['queued', 'running'].includes(String((job as { state: string }).state))).length, 4);
@@ -196,7 +198,7 @@ test('a closed jobs client rejects admission without creating state or a worktre
 
   const inspector = new GjcJobsClient({ database: join(f.root, 'jobs.sqlite3'), corePath });
   t.after(() => inspector.close());
-  assert.deepEqual(await inspector.list({}), []);
+  assert.deepEqual(await inspector.list({}), { items: [], nextCursor: null });
 });
 test('oversized worker events are rejected without interrupting other active jobs', async (t) => {
   const f = await fixture(t);
