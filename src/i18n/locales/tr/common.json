@@ -87,7 +87,7 @@
     "loading": "가재코드 Yükleniyor",
     "settingUpWorkspace": "Çalışma alanın hazırlanıyor...",
     "chooseProject": "Projeni Seç",
-    "selectProjectDescription": "Claude ile kodlamaya başlamak için kenar çubuğundan bir proje seç. Her proje kendi sohbet oturumlarını ve dosya geçmişini içerir.",
+    "selectProjectDescription": "Gajae Code ile kodlamaya başlamak için kenar çubuğundan bir proje seç. Her proje kendi sohbet oturumlarını ve dosya geçmişini içerir.",
     "tip": "İpucu",
     "createProjectMobile": "Projelere erişmek için yukarıdaki menü düğmesine dokun",
     "createProjectDesktop": "Kenar çubuğundaki klasör simgesine tıklayarak yeni bir proje oluştur",
@@ -185,9 +185,9 @@
       "usingProvidedToken": "Girilen token kullanılıyor",
       "noAuthentication": "Kimlik doğrulama yok",
       "sshKey": "SSH Anahtarı",
-      "existingInfo": "Çalışma alanı proje listene eklenecek ve Claude/Cursor oturumları için kullanılabilir olacak.",
+      "existingInfo": "Çalışma alanı proje listene eklenecek ve Gajae Code oturumları için kullanılabilir olacak.",
       "newWithClone": "Depo bu klasöre klonlanacak.",
-      "newEmpty": "Çalışma alanı proje listene eklenecek ve Claude/Cursor oturumları için kullanılabilir olacak.",
+      "newEmpty": "Çalışma alanı proje listene eklenecek ve Gajae Code oturumları için kullanılabilir olacak.",
       "cloningRepository": "Depo klonlanıyor..."
     },
     "buttons": {

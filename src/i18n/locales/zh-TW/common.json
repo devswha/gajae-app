@@ -87,7 +87,7 @@
     "loading": "正在載入 Gajae App",
     "settingUpWorkspace": "正在設定您的工作區...",
     "chooseProject": "選擇您的專案",
-    "selectProjectDescription": "從側邊欄選擇一個專案以開始使用 Claude 進行程式開發。每個專案包含您的聊天紀錄和檔案歷史。",
+    "selectProjectDescription": "從側邊欄選擇一個專案以開始使用 Gajae Code 進行程式開發。每個專案包含您的聊天紀錄和檔案歷史。",
     "tip": "提示",
     "createProjectMobile": "點擊上方的選單按鈕以存取專案",
     "createProjectDesktop": "點擊側邊欄中的資料夾圖示以建立新專案",
@@ -185,9 +185,9 @@
       "usingProvidedToken": "使用提供的權杖",
       "noAuthentication": "無身分驗證",
       "sshKey": "SSH 金鑰",
-      "existingInfo": "工作區將加入您的專案列表，並可用於 Claude/Cursor 工作階段。",
+      "existingInfo": "工作區將加入您的專案列表，並可用於 Gajae Code 工作階段。",
       "newWithClone": "儲存庫將從此資料夾複製。",
-      "newEmpty": "工作區將加入您的專案列表，並可用於 Claude/Cursor 工作階段。",
+      "newEmpty": "工作區將加入您的專案列表，並可用於 Gajae Code 工作階段。",
       "cloningRepository": "正在複製儲存庫..."
     },
     "buttons": {

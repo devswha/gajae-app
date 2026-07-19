@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { api } from '../../../utils/api';
 import type { JobGitDiffResponse } from '../../../../shared/gjc-job-projection-protocol';
@@ -6,32 +6,42 @@ import GitDiffViewer from '../../git-panel/view/shared/GitDiffViewer';
 
 type DiffResponse = JobGitDiffResponse;
 
-export default function JobGitChanges({ jobId }: { jobId: string }) {
+export default function JobGitChanges({ jobId, revision }: { jobId: string; revision?: number | string }) {
   const [diff, setDiff] = useState<string | null>(null);
   const [paths, setPaths] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Request generation: only the newest refresh may paint (an older slow
+  // response must not overwrite a newer diff).
+  const generationRef = useRef(0);
+  // Once the user curates the commit selection, refreshes must not undo it:
+  // keep the intersection with the new path set and leave newly discovered
+  // paths unselected. Before any manual toggle, everything stays selected.
+  const userTouchedSelectionRef = useRef(false);
+  useEffect(() => { userTouchedSelectionRef.current = false; }, [jobId]);
 
   useEffect(() => {
-    let cancelled = false;
+    const generation = ++generationRef.current;
     void api.gjcJobs.diff(jobId).then(async (response) => {
       const body = await response.json() as DiffResponse;
       if (!response.ok) throw new Error('Unable to load changes');
       const nextPaths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : [];
-      if (!cancelled) {
-        setDiff(typeof body.text === 'string' ? body.text : '');
-        setPaths(nextPaths);
-        setSelectedPaths(nextPaths);
-        setError(null);
-      }
+      if (generation !== generationRef.current) return;
+      setDiff(typeof body.text === 'string' ? body.text : '');
+      setPaths(nextPaths);
+      setSelectedPaths((current) => userTouchedSelectionRef.current
+        ? current.filter((path) => nextPaths.includes(path))
+        : nextPaths);
+      setError(null);
     }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : 'Unable to load changes');
+      if (generation !== generationRef.current) return;
+      setError(cause instanceof Error ? cause.message : 'Unable to load changes');
     });
-    return () => { cancelled = true; };
-  }, [jobId]);
+  }, [jobId, revision]);
 
   const togglePath = (path: string) => {
+    userTouchedSelectionRef.current = true;
     setSelectedPaths((current) => current.includes(path) ? current.filter((value) => value !== path) : [...current, path]);
   };
   const commit = async () => {

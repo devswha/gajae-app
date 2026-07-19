@@ -87,7 +87,7 @@
     "loading": "Loading 가재코드",
     "settingUpWorkspace": "Setting up your workspace...",
     "chooseProject": "Choose Your Project",
-    "selectProjectDescription": "Select a project from the sidebar to start coding with Claude. Each project contains your chat sessions and file history.",
+    "selectProjectDescription": "Select a project from the sidebar to start coding with Gajae Code. Each project contains your chat sessions and file history.",
     "tip": "Tip",
     "createProjectMobile": "Tap the menu button above to access projects",
     "createProjectDesktop": "Create a new project by clicking the folder icon in the sidebar",
@@ -185,9 +185,9 @@
       "usingProvidedToken": "Using provided token",
       "noAuthentication": "No authentication",
       "sshKey": "SSH Key",
-      "existingInfo": "The workspace will be added to your project list and will be available for Claude/Cursor sessions.",
+      "existingInfo": "The workspace will be added to your project list and will be available for Gajae Code sessions.",
       "newWithClone": "The repository will be cloned from this folder.",
-      "newEmpty": "The workspace will be added to your project list and will be available for Claude/Cursor sessions.",
+      "newEmpty": "The workspace will be added to your project list and will be available for Gajae Code sessions.",
       "cloningRepository": "Cloning repository..."
     },
     "buttons": {
