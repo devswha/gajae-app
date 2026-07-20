@@ -5,6 +5,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, ProtectedRoute } from './components/auth';
 import { WebSocketProvider } from './contexts/WebSocketContext';
 import AppContent from './components/app/AppContent';
+import DesktopDeepLinkBridge from './components/app/DesktopDeepLinkBridge';
 import i18n from './i18n/config.js';
 
 const DEPLOYMENT_ASSET_DIRECTORIES = new Set(['assets', 'static', 'icons', 'images']);
@@ -107,6 +108,7 @@ export default function App() {
           <WebSocketProvider>
             <ProtectedRoute>
               <Router basename={routerBasename}>
+                <DesktopDeepLinkBridge />
                 <Routes>
                   <Route path="/" element={<AppContent />} />
                   <Route path="/session/:sessionId" element={<AppContent />} />

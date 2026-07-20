@@ -6,6 +6,7 @@
     "frontendDist": "recovery"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
