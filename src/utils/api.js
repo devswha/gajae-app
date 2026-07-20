@@ -54,6 +54,10 @@ export const api = {
       body: JSON.stringify(input),
     }),
     abort: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/abort`, { method: 'POST' }),
+    turn: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/turns`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
     resume: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/resume`, {
       method: 'POST',
       body: JSON.stringify(input),
