@@ -70,7 +70,8 @@ Implementation progress:
     OpenCode), the web-push/PWA stack, the tmux mirror lane, and the
     multi-user auth stack (desktop-key auth only). v1 users are served by the
     frozen snapshot repository `devswha/gajae-app-v1` (cut at v1.0.0).
-  - Remaining human gate: Developer ID signing + notarization only.
+  - Remaining: Developer ID signing + notarization (human gate), and a Linux
+    x64 verify rerun for this session's commits (gated on macOS arm64 only).
 
 ## Purpose
 

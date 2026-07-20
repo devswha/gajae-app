@@ -32,8 +32,9 @@ Executed against the DMG-installed `/Applications/Gajae App.app` at HEAD
       launch; one sidecar tree, loopback ephemeral port, key bootstrap,
       `/health` identity, React UI (not recovery). (screenshot 01)
 - [x] **Job (GJC web execution)**: create job → live human-readable timeline →
-      diff (`+C7-SMOKE-OK`) → commit (`7142761`) in the managed worktree;
-      sidebar rows show the live prompt snippet and relative `createdAt`.
+      diff (`+C7-SMOKE-OK`) → commit `7142761` landed in the smoke target
+      repository's managed worktree (`~/gjc-c7-test`, not this repo); sidebar
+      rows show the live prompt snippet and relative `createdAt`.
       (screenshots 02–07)
 - [x] **Abort**: mid-stream abort → terminal event `jobState=aborted`, durable
       run `aborted/aborted`, job returns to `ready`. (screenshots 08–09)

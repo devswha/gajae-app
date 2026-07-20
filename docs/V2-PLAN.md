@@ -8,7 +8,8 @@ v1.0.0 릴리스 컷(2026-07-17) 이후의 실행 순서를 정의한다.
 > **상태 (2026-07-20): v2 완료.** Phase 0–6 전부 착지(릴리스 1.1.0–1.3.0),
 > Tauri 셸 C7 실기 GUI 스모크까지 통과(`docs/DESKTOP-TAURI-VERIFICATION.md`,
 > `artifacts/g002/`). Electron은 wave1(C9)에서 제거. 남은 항목은
-> **notarization(휴먼 게이트, Apple 자격증명)** 뿐이다.
+> **notarization(휴먼 게이트, Apple 자격증명)** 과 **이번 런 커밋들의 Linux
+> x64 verify 레인 재실행**(본 세션은 macOS arm64에서만 게이트를 돌렸다) 뿐이다.
 >
 > **v1 격리 불변식 은퇴 (2026-07-20):** wave1–6에서 v1 전용 레인(비-GJC
 > provider, web-push/PWA, tmux 미러, 멀티유저 인증)을 제거하면서 원칙 1은
