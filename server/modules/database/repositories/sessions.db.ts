@@ -84,9 +84,10 @@ export const sessionsDb = {
     const updatedAtValue = normalizeTimestamp(updatedAt);
     const normalizedProjectPath = normalizeProjectPathForProvider(provider, projectPath);
 
-    // First, ensure the project path is recorded in the projects table,
-    // since it's a foreign key in the sessions table.
-    projectsDb.createProjectPath(normalizedProjectPath);
+    // First, ensure the project path is recorded in the projects table, since
+    // it's a foreign key in the sessions table. Background sync must never
+    // reactivate a project the user archived.
+    projectsDb.ensureProjectPathForSession(normalizedProjectPath);
 
     const existing = db
       .prepare(
@@ -156,7 +157,7 @@ export const sessionsDb = {
     const db = getConnection();
     const normalizedProjectPath = normalizeProjectPathForProvider(provider, projectPath);
 
-    projectsDb.createProjectPath(normalizedProjectPath);
+    projectsDb.ensureProjectPathForSession(normalizedProjectPath);
 
     db.prepare(
       `INSERT INTO sessions (session_id, provider, provider_session_id, custom_name, project_path, jsonl_path, isArchived, created_at, updated_at)

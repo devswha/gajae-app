@@ -55,6 +55,23 @@ export const projectsDb = {
         };
     },
 
+    /**
+     * FK-satisfying upsert for background session sync. Unlike
+     * `createProjectPath` (user-facing create, which reactivates an archived
+     * row on purpose), this NEVER un-archives: a project the user archived
+     * stays archived even when new sessions keep landing in that directory.
+     */
+    ensureProjectPathForSession(projectPath: string): void {
+        const db = getConnection();
+        const normalizedProjectPath = normalizeProjectPath(projectPath);
+        const normalizedProjectName = normalizeProjectDisplayName(normalizedProjectPath, null);
+        db.prepare(`
+        INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
+            VALUES (?, ?, ?, 0)
+            ON CONFLICT(project_path) DO NOTHING
+        `).run(randomUUID(), normalizedProjectPath, normalizedProjectName);
+    },
+
     getProjectPath(projectPath: string): ProjectRepositoryRow | null {
         const db = getConnection();
         const normalizedProjectPath = normalizeProjectPath(projectPath);

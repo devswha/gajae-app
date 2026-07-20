@@ -45,3 +45,20 @@ test('managed worktree rows satisfy the FK but never surface in project listings
   const archived = projectsDb.getArchivedProjectPaths().map((row) => row.project_path);
   assert.deepEqual(archived, ['/home/user/archived-project']);
 });
+
+test('session-sync ensure never reactivates an archived project', () => {
+  projectsDb.createProjectPath('/home/user/parked-project');
+  projectsDb.updateProjectIsArchived('/home/user/parked-project', true);
+
+  // Background sync keeps landing sessions in the archived directory…
+  projectsDb.ensureProjectPathForSession('/home/user/parked-project');
+  assert.equal(projectsDb.getProjectPath('/home/user/parked-project')?.isArchived, 1);
+
+  // …while a genuinely new directory still gets an active row.
+  projectsDb.ensureProjectPathForSession('/home/user/fresh-project');
+  assert.equal(projectsDb.getProjectPath('/home/user/fresh-project')?.isArchived, 0);
+
+  // The user-facing create path intentionally keeps its reactivation contract.
+  const reactivated = projectsDb.createProjectPath('/home/user/parked-project');
+  assert.equal(reactivated.outcome, 'reactivated_archived');
+});
