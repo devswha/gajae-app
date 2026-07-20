@@ -54,6 +54,16 @@ impl SidecarLifecycle {
             .await
             .map_err(|_| "desktop server did not complete its graceful shutdown".to_owned())
     }
+
+    fn wait_for_exit_blocking(&self, pid: u32, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if !self.has_sidecar() || !process_alive(pid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -72,6 +82,47 @@ pub fn terminate_sidecar(pid: u32) -> Result<(), String> {
 #[cfg(not(unix))]
 pub fn terminate_sidecar(_pid: u32) -> Result<(), String> {
     Err("graceful sidecar termination is unavailable on this platform".to_owned())
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    unsafe { kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn process_alive(_pid: u32) -> bool {
+    false
+}
+
+/// Last-resort synchronous shutdown for exit paths that cannot be prevented.
+/// macOS delivers Quit Apple events (Cmd-Q, `osascript quit`) through
+/// `applicationShouldTerminate`, which this Tauri version answers YES without
+/// emitting a preventable ExitRequested — the process then exits without ever
+/// signalling the sidecar, orphaning the server tree. Called from
+/// `RunEvent::Exit`, this blocks the exiting thread until the sidecar's
+/// graceful SIGTERM shutdown finishes (bounded at 30s).
+pub fn blocking_shutdown(app: &AppHandle) {
+    let lifecycle = app.state::<SidecarLifecycle>();
+    match lifecycle.begin_shutdown() {
+        Some(pid) => {
+            let _ = terminate_sidecar(pid);
+            lifecycle.wait_for_exit_blocking(pid, Duration::from_secs(30));
+        }
+        None => {
+            // A graceful shutdown is already in flight; wait for it to settle
+            // so exiting cannot outrun the sidecar's shutdown fence.
+            let pid = *lifecycle
+                .pid
+                .lock()
+                .expect("sidecar lifecycle lock poisoned");
+            if let Some(pid) = pid {
+                lifecycle.wait_for_exit_blocking(pid, Duration::from_secs(30));
+            }
+        }
+    }
 }
 
 pub fn hide_on_close(window: &Window, event: &tauri::WindowEvent) {

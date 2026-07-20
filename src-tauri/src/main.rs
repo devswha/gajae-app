@@ -89,6 +89,12 @@ fn main() {
                 api.prevent_exit();
                 lifecycle::graceful_quit(app.clone());
             }
+            tauri::RunEvent::Exit => {
+                // macOS Quit Apple events (Cmd-Q, AppleScript quit) bypass a
+                // preventable ExitRequested in this Tauri version; guarantee
+                // the sidecar's graceful shutdown on every exit path.
+                lifecycle::blocking_shutdown(app);
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
                 has_visible_windows: false,
