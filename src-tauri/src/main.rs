@@ -30,6 +30,26 @@ fn is_gajae_deep_link(url: &tauri::Url) -> bool {
     url.scheme() == "gajae-app"
 }
 
+/// `gajae-app://open/job/<id>` -> `/jobs/<id>`; anything else routes nowhere.
+fn deep_link_route(url: &tauri::Url) -> Option<String> {
+    if !is_gajae_deep_link(url) || url.host_str() != Some("open") {
+        return None;
+    }
+    let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
+    match segments.as_slice() {
+        ["job", id]
+            if !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-')) =>
+        {
+            Some(format!("/jobs/{id}"))
+        }
+        _ => None,
+    }
+}
+
 fn route_deep_link(app: &tauri::AppHandle, url: tauri::Url) {
     use tauri::{Emitter, Manager};
 
@@ -38,6 +58,14 @@ fn route_deep_link(app: &tauri::AppHandle, url: tauri::Url) {
     }
     let _ = app.emit_to("main", "desktop://deep-link", url.as_str());
     if let Some(window) = app.get_webview_window("main") {
+        // The served UI is a remote loopback origin where Tauri IPC event
+        // injection is not guaranteed, so navigate the SPA directly; the id
+        // is validated above and contains no characters needing escaping.
+        if let Some(path) = deep_link_route(&url) {
+            let _ = window.eval(format!(
+                "window.history.pushState({{}},'','{path}');window.dispatchEvent(new PopStateEvent('popstate'));"
+            ));
+        }
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -121,5 +149,27 @@ mod tests {
         assert!(!is_gajae_deep_link(
             &"https://example.com/".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn deep_link_route_maps_only_validated_job_urls() {
+        assert_eq!(
+            deep_link_route(&"gajae-app://open/job/job-7fb9426de036".parse().unwrap()),
+            Some("/jobs/job-7fb9426de036".to_owned())
+        );
+        for rejected in [
+            "gajae-app://open/job/",
+            "gajae-app://open/session/x",
+            "gajae-app://other/job/x",
+            "gajae-app://open/job/bad%20id",
+            "gajae-app://open/job/a/b",
+            "https://example.com/open/job/x",
+        ] {
+            assert_eq!(
+                deep_link_route(&rejected.parse().unwrap()),
+                None,
+                "{rejected}"
+            );
+        }
     }
 }
