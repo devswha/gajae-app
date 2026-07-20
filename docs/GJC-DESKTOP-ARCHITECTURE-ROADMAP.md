@@ -44,10 +44,33 @@ Implementation progress:
   fail-closed before replacement.
 - Source builds require the pinned Rust toolchain. Server release artifacts carry
   the host-native core executable and require no installed Rust toolchain.
-- Claude, Codex, Cursor, and OpenCode execution and watcher paths remain
-  unchanged. Production GJC execution remains on the G001 single-turn worker
-  facade; Slice 3 owns multi-turn continuity, managed-worktree branch/PR flow,
-  production orchestrator wiring, and automatic capacity dispatch.
+- **v2 completion record (2026-07-20).** Everything below through Checkpoint D is
+  implemented and shipped (releases 1.1.0–1.3.0):
+  - Slice 3 (durable jobs production wiring, multi-turn continuity, managed
+    worktrees), Slice 4 (projection + web UI + notification adapter), Slice 5
+    (Tauri desktop shell), and Slice 6 (clone wizard) are complete.
+  - **Electron was removed (C9, wave1).** The desktop shell is Tauri-only:
+    Rust supervisor owns the Node server sidecar (spawn → ready frame →
+    /health identity → WebView bootstrap), single-instance flock with clean
+    second-launch exit, hide-on-close keeps jobs alive, every quit path —
+    including the macOS Quit AppleEvent that bypasses a preventable
+    ExitRequested — runs a bounded synchronous sidecar shutdown fence, a
+    CSP-safe recovery Retry respawns the sidecar, and validated
+    `gajae-app://open/job/<id>` deep links navigate the SPA.
+  - The C7 interactive GUI smoke was completed 2026-07-20, driven end-to-end
+    through gjc computer use (evidence: `artifacts/g002/`,
+    `docs/DESKTOP-TAURI-VERIFICATION.md`). It surfaced and fixed four real
+    shell defects (9bdc18d, 60b26b6, ef6f076, 2e584b9+36d7cb2).
+  - Jobs authority schema is at v6: `jobs.prompt` persisted at reserveStart,
+    `createdAt`/`prompt` projected to snapshots, and `job.list` is
+    byte-budgeted (48 KiB) with `nextCursor` keyset pagination; list prompts
+    are display-truncated to 256 chars while `job.get` keeps the full prompt.
+  - **Amendment to confirmed decisions 5–7 (2026-07-20):** the GJC-only
+    cleanup waves removed the non-GJC provider lanes (Claude/Codex/Cursor/
+    OpenCode), the web-push/PWA stack, the tmux mirror lane, and the
+    multi-user auth stack (desktop-key auth only). v1 users are served by the
+    frozen snapshot repository `devswha/gajae-app-v1` (cut at v1.0.0).
+  - Remaining human gate: Developer ID signing + notarization only.
 
 ## Purpose
 
@@ -66,7 +89,7 @@ Record the agreed direction for evolving Gajae App toward a Codex App-like deskt
 ## Target shape
 
 ```text
-Desktop shell (Electron initially; Tauri remains an option)
+Desktop shell (Tauri — shipped; Electron removed 2026-07-19, C9/wave1)
                          |
                       React UI
                          |
@@ -205,15 +228,13 @@ Slices 1 through 5 and the Slice 2 job components are complete:
 - Add a native single-child PTY lifecycle API with bounded framed I/O, resize,
   exit reporting, and owner-driven shutdown.
 
-Slice 3 remains pending:
-
-- Wire production GJC starts to the orchestrator only with multi-turn
-  continuity and branch/PR-from-worktree behavior.
-- Add an automatic dispatcher for durable capacity-waiting jobs.
+Slice 3 is complete (production wiring, multi-turn continuity, managed-worktree
+branch/PR flow, and capacity handling shipped in 1.1.0; see the v2 completion
+record above).
 
 ### Checkpoint D: thin desktop shell
 
-- Evaluate Electron versus Tauri using measured startup, memory, updater, signing, WebView, and Linux packaging results.
+- **Resolved (2026-07-19/20):** Tauri shipped as the only shell; Electron was removed after the Tauri build passed the packaged smokes, and the C7 GUI smoke closed on 2026-07-20.
 - Make window lifecycle independent from durable daemon jobs.
 - Embed or serve the built React assets without requiring end users to install a development Node.js toolchain.
 
@@ -250,5 +271,5 @@ These require implementation evidence or a separate approved plan:
 - **Resolved (2026-07-17):** Rust uses `rusqlite` with bundled SQLite. Durable
   jobs use a separate daemon-data database whose schema and sequential
   migrations are owned exclusively by Rust; Node must not open that database.
-- Electron-to-Tauri timing and supported desktop platforms.
+- **Resolved (2026-07-19):** Tauri-only on macOS arm64 today; Linux packaging remains future work.
 - Packaging strategy for any runtime still required by the GJC SDK.

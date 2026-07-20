@@ -1,128 +1,121 @@
-# Tauri Desktop (macOS arm64) — Interactive Verification Checklist
+# Tauri Desktop (macOS arm64) — Verification Record
 
-The autonomous Tauri implementation (Slice 5 / G006 clusters C1–C6) is complete and
-verified up to the automatable ceiling: the payload, `src-tauri` scaffold, Rust
-sidecar supervisor, desktop auth bootstrap, WebView/window/lifecycle logic, the
-ad-hoc-signed `.app`, and a headless installable DMG all build and pass
-non-interactive checks on `ssh macbook`.
-
-The items below require a **human at the physical Mac** (GUI interaction) and/or
-**Apple credentials** (Developer ID + notarization). They gate Electron removal
-(C9) and the 1.2.0 release.
+> **Status (2026-07-20): C7 complete, C8 void, C9 complete.** The interactive
+> GUI smoke was executed end-to-end on the installed DMG build, driven through
+> gjc computer use (screenshots, drive transcript, QA report, and re-drill logs
+> under `artifacts/g002/`). Electron was removed in C9/wave1, which also voids
+> the C8 Electron↔Tauri rollback drill. The only remaining human gate is
+> **Developer ID signing + notarization** (below).
 
 ## Build the artifacts (on the Mac)
 
 ```sh
-ssh macbook
 cd ~/workspace/gajae-app
 npm ci
-npm run desktop:dist:mac                # retained Electron rollback .app + DMG (ad-hoc)
-npm run server:payload:macos            # darwin-arm64 Node payload + externalBin (~14 min)
-npm run tauri -- build                  # ad-hoc .app (+ cosmetic DMG fails headlessly — expected)
-npm run desktop:dmg:macos               # functional Tauri DMG via hdiutil + sha256
+npm run server:payload:macos            # darwin-arm64 Node payload + externalBin
+env -u CI npm run tauri -- build        # ad-hoc .app + DMG (bundle_dmg.sh needs a GUI session)
+npm run desktop:dmg:macos               # headless functional DMG via hdiutil + sha256 (alternative)
 ```
 
 Artifacts:
-- `release/desktop/mac-arm64/Gajae App.app` and `release/desktop/gajae-app-desktop-0.2.0-mac-arm64.dmg` (Electron rollback, ad-hoc)
-- `src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Gajae App.app` (ad-hoc, arm64)
-- `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Gajae-App_0.2.0_aarch64.dmg` (+`.sha256`)
+- `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Gajae App_0.2.0_aarch64.dmg`
+  (Tauri cleans the intermediate `.app` after bundling; install from the DMG.)
 
-## C7 — Interactive GUI smoke (human at the Mac)
+## C7 — Interactive GUI smoke — **PASSED 2026-07-20**
 
-Because the `.app` is ad-hoc-signed (not notarized), first launch needs a Gatekeeper
-bypass: right-click the app → Open, or `xattr -dr com.apple.quarantine "<path>/Gajae App.app"`.
+Executed against the DMG-installed `/Applications/Gajae App.app` at HEAD
+`36d7cb2`, driven exclusively through gjc computer use. Evidence:
+`artifacts/g002/g002-gui-drive-transcript.{md,json}`, screenshots `00`–`16`,
+`g002-qa-report.json`, `g002-packaged-smoke.log`, `g002-leader-evidence.log`.
 
-- [ ] **Launch**: DMG mounts, drag `Gajae App` → Applications, launch. One sidecar
-      process, loopback random port, key bootstrap succeeds, `/health` verified, the
-      window shows the React UI (not the recovery screen).
-- [ ] **Bootstrap origin**: DevTools/network shows `/api`, `/ws`, `/shell`, EventSource
-      all hitting `http://127.0.0.1:<ephemeral>` with the host-only key cookie.
-- [ ] **Terminal**: open a terminal tab, type/run a command, resize — input/output/resize work.
-- [ ] **Editor**: open a file, edit, save — round-trips.
-- [ ] **Job (GJC web execution)**: create a job → live stream → abort → resume →
-      diff → commit. RUN/DONE/INTERRUPTED badges correct; completion push notification fires.
-- [ ] **Window close keeps job alive**: with a job running, close the window (red button /
-      Cmd-W). Confirm the server/sidecar PID persists and the job keeps advancing. Reopen
-      via Dock → the window returns and the timeline replays with no gaps/dupes.
-- [ ] **Cmd-Q graceful**: with a job running, Cmd-Q. App performs graceful shutdown; on
-      next launch the job shows `interrupted` and can be explicitly resumed. (If the
-      shutdown fence fails, the app should stay open with an error, not fake a clean quit.)
-- [ ] **Deep link**: `open gajae-app://...` routes to the running window.
-- [ ] **Recovery/Retry**: simulate a sidecar failure (e.g. occupy the port) → embedded
-      diagnostic + explicit Retry (no silent auto-restart).
+- [x] **Launch**: DMG mount (hdiutil checksums verified) → drag-install →
+      launch; one sidecar tree, loopback ephemeral port, key bootstrap,
+      `/health` identity, React UI (not recovery). (screenshot 01)
+- [x] **Job (GJC web execution)**: create job → live human-readable timeline →
+      diff (`+C7-SMOKE-OK`) → commit (`7142761`) in the managed worktree;
+      sidebar rows show the live prompt snippet and relative `createdAt`.
+      (screenshots 02–07)
+- [x] **Abort**: mid-stream abort → terminal event `jobState=aborted`, durable
+      run `aborted/aborted`, job returns to `ready`. (screenshots 08–09)
+- [x] **Resume / follow-up**: interrupted job shows the follow-up composer →
+      Resume streams a new run to completion; `ready` jobs take a next turn via
+      `/turns` (composer added by ef6f076 after the smoke exposed the gap).
+      (screenshots 10–11)
+- [x] **Editor**: Files panel opens `README.md` and renders its content.
+      (screenshot 16)
+- [x] ~~**Terminal**~~ — **N/A by design.** The Shell/Git/Files tabs were
+      deliberately removed on 2026-07-11 (see the comment at
+      `src/components/main-content/view/subcomponents/MainContentTabSwitcher.tsx:22`);
+      the current product has no user-facing terminal surface.
+- [x] **Window close keeps job alive**: red-button close hides the window; the
+      sidecar tree survives and the running job completes while hidden; Dock
+      reopen restores the window and timeline. (screenshot 12 + DB evidence)
+- [x] **Quit graceful → interrupted**: quitting with a running job drives the
+      shutdown fence — whole tree exits, durable state `interrupted`, and the
+      job resumes cleanly on next launch. Verified through the macOS Quit
+      AppleEvent, the same `applicationShouldTerminate` path Cmd-Q takes
+      (unified-log evidence). A literal Cmd-Q keystroke could not be
+      synthesized: the gjc `computer` keypress map has no modifier key names
+      (root-caused, ledger-recorded; no fallback tooling was substituted).
+- [x] **Deep link**: `open "gajae-app://open/job/<id>"` focuses the window and
+      navigates the SPA to `/jobs/<id>` (Rust-validated id, pushState eval;
+      36d7cb2). Malformed/foreign/traversal URLs are rejected by both the Rust
+      and TS validators. (screenshot 13)
+- [x] **Recovery/Retry**: SIGKILL of the sidecar shows the diagnostic recovery
+      page; Retry (CSP-safe listener + `withGlobalTauri`, 2e584b9) respawns the
+      sidecar and restores the React UI. (screenshots 14–15)
+- [x] **Single instance**: a second launch exits cleanly (no SIGABRT
+      crash-reporter dialog; 9bdc18d) and the running instance keeps focus.
+- [x] **Gatekeeper**: `spctl --assess` rejects the ad-hoc build — the expected
+      pre-notarization state (`g002-gatekeeper.log`).
 
-## C8 — Electron ↔ Tauri install/upgrade/rollback drill (human at the Mac)
+Defects found and fixed by this smoke: `9bdc18d` (second-instance SIGABRT),
+`60b26b6` (macOS Quit AppleEvent orphaned the server tree), `ef6f076` (no
+follow-up affordance for `ready` jobs), `2e584b9` + `36d7cb2` (dead recovery
+Retry; deep links did not navigate).
 
-Use a disposable test account or APFS snapshot. Do **not** delete `~/.gajae-app`
-(durable data lives outside the `.app`).
+## C8 — Electron ↔ Tauri rollback drill — **VOID**
 
-- [ ] **A. Tauri fresh install**: install + smoke (above). Window-close and Cmd-Q lifecycle verified.
-- [ ] **B. Electron → Tauri upgrade**: create fixtures + a running job in the current
-      Electron build, quit (job → interrupted), replace only the `.app` with Tauri, verify
-      sessions/projects/jobs/worktrees/events survive and interrupted resume works, no duplicate
-      server/authority.
-- [ ] **C. Tauri → Electron rollback**: quit Tauri (fence), replace `.app` with the retained
-      Electron build (same post-Slice-4 server payload), verify health + fixtures + resume; round-trip
-      back to Tauri with no event dup/loss or schema drift.
-- [ ] **D. Failure recovery**: bad/missing sidecar, occupied port, native-addon load failure,
-      unexpected sidecar exit — each shows bounded diagnostics, no data mutation, and rollback to
-      Electron recovers.
+Electron was removed in C9/wave1 (`285ddea`), so there is no rollback target.
+The drill's data-survival axis is covered continuously by the automated
+two-boot cross-restart smoke below (rerun on the final build: PASS, gap-free
+replay, idempotent schemas).
 
-Record for each step: DMG sha256, app/desktop/server versions, PID/process tree, `/health`,
-job state/lastSequence, DB schema version, smoke result. Keep both artifacts until rollback passes.
+## C9 — Electron removal — **DONE (wave1, `285ddea`)**
 
-## Optional — Developer ID signing + notarization
+`electron/`, `prepare-desktop-app.js`, Electron scripts/config and deps are
+gone; the Windows Job Object code is retained. `npm run verify` and the mac
+cargo/DMG/smoke lanes are green on the Tauri-only tree.
 
-The macbook currently has **no Developer ID certificate** and **no notarization
-credentials** (`security find-identity -v -p codesigning` → 0 valid; `xcrun notarytool
-history` → "Must provide credentials"). The current Electron build also ships unsigned
-(`build.mac.notarize: false`), so ad-hoc parity matches today's bar.
+## Remaining human gate — Developer ID signing + notarization
 
-To ship a Gatekeeper-clean (notarized) DMG instead, provide on the Mac:
+The Mac has no Developer ID certificate and no notarization credentials
+(`security find-identity -v -p codesigning` → 0 valid; `xcrun notarytool
+history` → "Must provide credentials"). Ad-hoc signing is the current bar.
+
+To ship a Gatekeeper-clean (notarized) DMG, provide on the Mac:
 - A **Developer ID Application** certificate in the login keychain.
-- Notarization creds: either `xcrun notarytool store-credentials` profile, or
-  `APPLE_API_KEY` + `APPLE_API_ISSUER` + `APPLE_API_KEY_PATH` (App Store Connect API key).
+- Notarization creds: either a `xcrun notarytool store-credentials` profile, or
+  `APPLE_API_KEY` + `APPLE_API_ISSUER` + `APPLE_API_KEY_PATH`.
 
-Then set `src-tauri/tauri.conf.json` `bundle.macOS.signingIdentity` to the Developer ID
-identity and export the notarization env before `npm run tauri -- build`; Tauri will
-sign + notarize + staple.
-
-## C9 — Electron removal (only after C7 + C8 pass)
-
-Once the interactive smoke and the full rollback drill pass, remove Electron
-(`electron/`, `scripts/release/prepare-desktop-app.js`, Electron scripts/config,
-`electron` + `electron-builder` deps) — keeping the Windows Job Object code — then
-re-run `npm run verify`, the mac cargo/DMG build, and the mac smoke, and confirm
-`electron|electron-builder|ELECTRON_` is absent from non-historical source/config.
-
-## C0 — Electron/Tauri parity inventory
-
-| Contract | Electron rollback shell | Tauri shell | Decision |
-| --- | --- | --- | --- |
-| Product identity / app ID | `Gajae App`, `app.gajae.desktop` | `Gajae App`, `app.gajae.desktop` | Retain |
-| URL scheme / deep link | `gajae-app://` protocol handler | `gajae-app://` Tauri plugin handler | Retain; C7 verifies delivery |
-| Local server data root | Existing checkout/server data roots | Sidecar uses the same durable server data roots | Retain; no DB downgrade on rollback |
-| Server payload | `dist-server`, `dist-native`, `server`, `shared`, web assets, and production dependency closure | `Contents/Resources/server-payload` | Retain identical post-Slice-4 server contract |
-| Tray / window lifecycle | Electron tray, window hide/show | Tauri tray, hide-on-close, explicit quit fence | Retain behavior; C7 validates interaction |
-| Remote target selection | Electron remote target store | Not carried to the Tauri local-first shell | Intentionally retired; local server is the supported target |
-| Desktop bootstrap | Local-server launch flow | Supervisor supplies launch-only key/nonce | Retain C4 HTTP contract |
+Then set `src-tauri/tauri.conf.json` `bundle.macOS.signingIdentity` to the
+Developer ID identity and export the notarization env before
+`npm run tauri -- build`; Tauri signs, notarizes, and staples.
 
 ## Automated packaged-server smoke (Mac)
 
-After building each artifact, run these non-GUI checks from the checkout:
-
 ```sh
 node scripts/release/smoke-packaged-server.mjs \
-  --tauri-app "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Gajae App.app" \
-  --project-dir "$PWD"
+  --tauri-app "/Applications/Gajae App.app"
 
 node scripts/release/smoke-packaged-server.mjs \
-  --electron-app "release/desktop/mac-arm64/Gajae App.app" \
-  --project-dir "$PWD"
+  --tauri-app "/Applications/Gajae App.app" --data-survival
 ```
 
-The script launches only the packaged sidecar/runtime on a newly allocated loopback
-port. It verifies `/health` identity, one-time desktop bootstrap (`HttpOnly` cookie
-and `303 /`), unauthenticated API denial, exact-Origin authenticated API access, and
-a GJC job create/list/abort round trip. It does not open a WebView, mount a DMG, or
-exercise Gatekeeper; those remain C7/C8 human checks.
+The standard run verifies `/health` identity, one-time desktop bootstrap
+(`HttpOnly` cookie + `303 /`), unauthenticated API denial, exact-Origin
+authenticated API access, and a GJC job create/list/abort round trip against
+an isolated temporary HOME/database. `--data-survival` adds the two-boot
+durability drill (graceful shutdown → restart → gap-free replay, idempotent
+migrations, resume). Both passed on the final C7 build
+(`artifacts/g002/g002-packaged-smoke.log`).

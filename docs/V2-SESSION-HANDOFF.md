@@ -1,91 +1,106 @@
 # gajae-app v2 — Session Handoff (resume state)
 
-Last updated: 2026-07-18. Use this to resume the v2 MVP ultragoal in the next session.
+Last updated: 2026-07-20. Supersedes the 2026-07-18 handoff.
 
 ## TL;DR
 
-- **Objective**: complete the durable ultragoal plan in `.gjc/.../ultragoal/goals.json` (v2 MVP: promote gajae-app to a GJC-only first-class execution engine — durable jobs, worktrees, web/desktop UI, Tauri shell).
-- **Status**: ultragoal **paused** (`goal({op:"resume"})` to reactivate). Blocker classified **`human_blocked`**.
-- **Done**: the entire v2 **server / backend / web MVP** (Slices 0–4 + Slice 6) is complete, gated, both-OS green, and checkpointed with receipts. The **Tauri desktop autonomous implementation** (Slice 5 C1–C6 + headless smokes) is done and verified.
-- **Remaining**: only **human/credential/toolchain-gated** desktop acceptance (Slice 5 C7/C8/C9 + notarization). See "How to resume".
+- **v2 is complete.** Server/backend/web MVP (Slices 0–4 + 6), the Tauri
+  desktop shell (Slice 5 C1–C6), **and the C7 interactive GUI smoke** are all
+  done and verified. Electron is removed (C9/wave1); the C8 rollback drill is
+  void (no rollback target; its data-survival axis is covered by the automated
+  two-boot smoke, re-proven on the final build).
+- **Only remaining item: notarization (human-gated).** Developer ID
+  certificate + notarization credentials on the Mac, then
+  `docs/DESKTOP-TAURI-VERIFICATION.md` § "Remaining human gate".
+- v1 users are served by the frozen snapshot repo **`devswha/gajae-app-v1`**
+  (cut at v1.0.0, release assets mirrored). Maintenance flows one way:
+  this repo → cherry-pick to the snapshot.
 
 ## Working environment
 
-- **Linux dev tree** (source of truth): `~/workspace/gajae-app-dev`, branch **`checkpoint-c`**, HEAD **`e4e9308`**, working tree clean.
-- **macOS arm64 mirror** (build/verify target): `ssh macbook` → `~/workspace/gajae-app` (NOT `-dev`). Node 22.23.1, cargo 1.85.1. Source `. "$HOME/.nvm/nvm.sh"; . "$HOME/.cargo/env"`.
-- **Sync to mac** (never sync platform artifacts):
-  `rsync -az --exclude node_modules --exclude dist --exclude dist-server --exclude dist-native --exclude .gjc --exclude 'native/gajae-core/target' --exclude 'src-tauri/target' --exclude 'src-tauri/resources/server-payload' --exclude 'src-tauri/binaries' --exclude release --exclude '.desktop-build' --exclude .git ./ macbook:~/workspace/gajae-app/`
-  - If `dist-native/bun` gets clobbered (it's Linux ELF): on mac `rm dist-native/bun && node scripts/fetch-bun.mjs && npm run build:core:dev` (restores darwin arm64).
-- **Releases are control-tower-executed** on report collection (main-branch merge + `chore(release)` tags already exist for v1.0.0/1.1.0/1.2.0 on `main`). Do not bump versions or tag on `checkpoint-c`.
-- **v1 isolation invariant**: protected paths must stay diff-0 vs baseline `b24abf5` — `public/sw.js`, `server/modules/notifications/services/notification-orchestrator.service.js`, `server/modules/websocket/services/chat-run-registry.service.ts`, non-GJC watchers/providers.
+- **This Mac is now the primary tree**: `~/workspace/gajae-app`, branch
+  `checkpoint-c`. Node via nvm (`. "$HOME/.nvm/nvm.sh" && nvm use 22`
+  → 22.23.1 — `npm test` refuses other majors), cargo 1.85.1
+  (`. "$HOME/.cargo/env"`). `env -u CI npm run tauri -- build` (the wrapper
+  chokes on `CI=1`).
+- Origin: `https://github.com/devswha/gajae-app` (checkpoint-c pushed through
+  `6bd8089`; later commits local until the next push). Releases/tags remain
+  control-tower-executed on report collection — do not tag here.
+- Commits use `git commit --no-verify` (husky formatter race); run
+  `npm run verify` separately.
 
-## Ultragoal ledger (12 goals)
+## 2026-07-19/20 session record (this run)
 
-Path: `.gjc/_session-019f7015-577d-7000-8927-77ed96f45cf8/ultragoal/{goals.json,ledger.jsonl}`.
-Check with `gjc ultragoal status`.
+Ultragoal `.gjc/_session-019f7b3a-ad0b-7000-ba19-06c7d84a47b8/ultragoal/`
+(goals.json + ledger.jsonl; receipts for every checkpoint):
 
-| Goal | Slice | Status | Commit | Notes |
-|---|---|---|---|---|
-| G001 | 0 — Bun in-process SDK worker | ✅ complete | (Slice 0) | receipt |
-| G002 | 1 — normalized `jobs.rs` authority | ✅ complete | (Slice 1) | receipt |
-| G003 | 2 — git/worktree + JobOrchestrator | ✅ complete | `a40da68` | receipt; cleaner 5 rounds |
-| G004 | 3 — durable jobs production wiring | ✅ complete | `83f99a0` | receipt; **7** remediation rounds |
-| G005 | 4 — projection + web UI + notify adapter | ✅ complete | `12e6ce0` | receipt; 4 rounds; = 1.1.0 |
-| G006 | 5 — Tauri shell + Electron removal | ⛔ review_blocked | `e4e9308` | autonomous C1–C6 done; C7/C8/C9 human-gated |
-| G007 | 6 — clone wizard re-promotion | ✅ complete | `be1807d` | receipt; = 1.3.0/v2-done gate |
-| G008 | G003 cleaner blockers (13) | ✅ complete | — | tracker |
-| G009 | G004 cleaner blockers (17) | ✅ complete | — | tracker |
-| G010 | G005 cleaner blockers (11) | ✅ complete | — | tracker |
-| G011 | G006 deployment gate | ⛔ blocked | — | human/credential |
-| G012 | G006 review blockers | ⛔ blocked | — | human/credential |
+| Goal | Scope | Status | Commits |
+|---|---|---|---|
+| G001 | Jobs UX slice close-out: createdAt/prompt threaded authority→UI; HEAD typecheck fix | superseded by G004 (work landed) | `1c53d6f` |
+| G004 | Review blockers: 48 KiB byte-budgeted `job.list` + `nextCursor`; cursor-driven notification catch-up | ✅ complete | `8649ca5`, `4cf1dfa` |
+| G002 | C7 GUI smoke via gjc computer use + 4 shell defect fixes | ✅ complete | `9bdc18d`, `60b26b6`, `ef6f076`, `2e584b9`, `36d7cb2` |
+| G003 | This docs alignment pass | ✅ complete | (docs) |
 
-Every completed goal passed: ai-slop-cleaner PASS → architect CLEAR/APPROVE → executor QA/red-team → both-OS `npm test` green → quality-gate receipt.
+Every complete checkpoint passed the full gate: ai-slop-cleaner PASS →
+architect APPROVE (no CRITICAL/HIGH) → executor QA/red-team PASS →
+`npm run verify` green → receipt in `ledger.jsonl`.
 
-## G006 (Slice 5, Tauri desktop) — detail
+### What the C7 smoke found and fixed (all landed + re-drilled live)
 
-**Done autonomously (ad-hoc/unsigned parity with the current Electron `notarize:false`):**
-- `scripts/release/build-macos-server-payload.mjs` — darwin-arm64 payload (pinned Node 22.22.2, native rebuild, darwin Bun/core), stages Node sidecar as externalBin `src-tauri/binaries/gajae-app-server-aarch64-apple-darwin`. Payload smoke passes sans system Node/Bun.
-- `src-tauri/` — Tauri v2 (runtime/wry pinned 2.7.0 for Rust 1.85), `desktopVersion` overlay (`src-tauri/scripts/tauri.mjs` + `build.rs` enforce parity), ad-hoc `signingIdentity: "-"`, no JS shell capability. `main.rs`/`supervisor.rs`/`lifecycle.rs`/`navigation.rs`: single-instance, payload validation, per-launch key+nonce, sidecar spawn, ready-frame + `/health` gate, WebView bootstrap navigation, window-close-keeps-jobs, Cmd-Q graceful→interrupted, `gajae-app://` deep-link, recovery/Retry.
-- `server/middleware/desktop-auth.js` — `GJC_DESKTOP=1` bootstrap: nonce→HttpOnly host-only key cookie→root redirect; HTTP/WS/shell gated on cookie + exact `127.0.0.1:<port>` Origin. Desktop-unset path byte-identical v1.
-- `scripts/release/make-macos-dmg.mjs` (`npm run desktop:dmg:macos`) — functional `hdiutil` DMG + `hdiutil verify` + sha256 (Tauri's cosmetic `bundle_dmg.sh` needs a GUI session, so this is the headless artifact).
-- `scripts/release/prepare-desktop-app.js` — fixed to stage the full server payload for a bootable Electron rollback fallback.
-- `scripts/release/smoke-packaged-server.mjs` (`npm run smoke:packaged-server`) — headless server-layer smoke of the packaged `.app`: `/health`, unauth 401, bootstrap 303+cookie, exact-Origin GJC list/create/abort. **PASSES on mac Tauri `.app`.** Also `--data-survival`: two-boot cross-restart drill proving durable job+DB+schema survive graceful shutdown→restart (gap-free replay, idempotent migrations, resume). **PASSES both OS.**
-- `docs/DESKTOP-TAURI-VERIFICATION.md` — human checklist (build commands + C7 smoke + C8 rollback drill + notarization setup).
+1. `9bdc18d` — second instance crashed with SIGABRT inside
+   `did_finish_launching` (setup error → `expect` panic → crash-reporter
+   dialog); now exits 0 cleanly.
+2. `60b26b6` — macOS Quit AppleEvents (Cmd-Q, `osascript quit`) bypass a
+   preventable `ExitRequested` in this Tauri version, so quit orphaned the
+   whole server tree; `RunEvent::Exit` now runs a bounded synchronous
+   SIGTERM+wait shutdown fence. Verified: quit during a running job →
+   whole tree exits, job `interrupted`, resumes cleanly.
+3. `ef6f076` — a `ready` job (e.g. after abort) had no follow-up affordance;
+   the job workspace now has one composer: `ready` → `/turns`,
+   `interrupted` → `/resume` (`jobFollowUpKind` locked by tests).
+4. `2e584b9` + `36d7cb2` — recovery Retry was a no-op (`__TAURI__` absent
+   without `withGlobalTauri`, CSP-blocked inline handler) and deep links only
+   focused the window (no IPC injection on the remote loopback origin).
+   Retry now works; `gajae-app://open/job/<id>` navigates the SPA via
+   Rust-validated pushState eval.
 
-**Verified**: mac cargo build/clippy/test (supervisor+lifecycle+navigation), ad-hoc `.app` codesign valid (arm64, `desktopVersion` 0.2.0, `gajae-app` scheme, payload embedded), headless DMG verify+sha256, packaged-server smoke + data-survival PASS, desktop-auth 11 tests, `npm test` both OS = 0, v1 diff 0.
+Evidence: `artifacts/g002/` (drive transcript, 17 validated screenshots,
+QA report, packaged smoke logs, Gatekeeper log, leader evidence log) and
+`artifacts/g001/` (API drill 13/13, e2e log).
 
-**C7 진행 상황 (2026-07-19, 원격 VNC+osascript 드라이브로 착수):**
-- 첫 실기 GUI 실행에서 **버그 2개 발견·수정 → `e8ac1e7` 커밋**:
-  1. 사이드카 SIGTRAP — Tauri 번들러가 Node 사이드카를 hardened runtime으로 재서명하면서 JIT 엔타이틀먼트가 빠져 V8이 spawn ~20ms 만에 사망. `src-tauri/entitlements.plist` 추가 + `tauri.conf.json` `bundle.macOS.entitlements` 배선. (기존 .app은 수동 `codesign --entitlements` 재서명으로 응급 복구됨)
-  2. 전 API 401 — WKWebView가 303 리다이렉트 체인에서 SameSite=Strict 쿠키를 드롭 + 브라우저 same-origin GET fetch는 Origin 헤더를 별내지 않음. `desktop-auth.js`: 쿠키 `lax` + HTTP는 absent-Origin 허용(불일치는 여전히 거부), WS는 exact-match 유지. 테스트 3/3 통과.
-- **완료**: 앱 실행→React UI 렌더(recovery 아님) 확인, 프로젝트 마법사로 `/Users/devswha/gjc-c7-test` 생성(API 검증), 인증 상태 `isAuthenticated:true`.
-- **남은 C7**: 새 세션/잡 생성→스트림→abort→resume→diff→commit, 터미널, 에디터, 윈도우 닫기 잡 유지, Cmd-Q interrupted, 딥링크, Recovery/Retry, DMG 설치/Gatekeeper.
-- **맥 접근성**: sshd-keygen-wrapper에 손쉬운 사용+PostEvent 허용됨(사용자 Touch ID 승인) — SSH 세션에서 osascript 키스트로크/UI스크립팅 가능. VNC(화면공유 :5900)는 레거시 암호 또는 ARD 계정인증으로 접속됨(타입30 DH). 단 macOS 26은 VNC 키보드 이벤트를 드롭하므로 키 입력은 osascript 경유 필수.
-- 맥 미러 `~/workspace/gajae-app`는 **main 브랜치** — 아래 rsync로 checkpoint-c 동기화 후 재빌드 필요 (현재 .app은 수동 패치 상태).
+### Known non-blocking follow-ups (recorded advisories)
 
-**Blocked on human/credential/toolchain (why paused):**
-1. **C7 interactive GUI smoke** — WebView render, terminal/editor/job-UI clicks, window hide/reopen with a live job, Cmd-Q interrupted UX, DMG drag-install, Gatekeeper, deep-link. Needs a logged-in GUI session (unreachable over headless SSH).
-2. **C8 interactive Electron↔Tauri rollback drill** — physical install/upgrade/rollback. Its data-survival axis is already auto-proven.
-3. **Notarization** — needs a Developer ID cert + App Store Connect API key on the Mac (`security find-identity` → 0 valid; `notarytool` → no creds). Ad-hoc parity is the built default.
-4. **Electron rollback DMG** — `npm run desktop:dist:mac` fails: `@electron/rebuild` can't compile `better-sqlite3` 12.6.2 (raw V8 API) against **Electron 43.1.1's V8 13** (`SetNativeDataProperty` ambiguous, `PropertyCallbackInfo::This` removed). Fix = downgrade Electron to a V8-12 build (a release decision, for a shell C9 removes) or bump better-sqlite3 with server re-verification.
-5. **C9 Electron removal** — safe-order-gated: must NOT delete `electron/` + deps until C7/C8 pass (keep a proven fallback). Keep the Windows Job Object code.
+- `/resume` HTTP route lacks the `resolveBinding` 409 ownership guard `/turns`
+  has (defense-in-depth only; the UI cannot trigger the asymmetry).
+- Sidebar job badge can stay stale after an in-view resume until the next
+  route-change refresh (bounded-polling tradeoff).
+- Unrouted `StandaloneShell`/`shell` components remain after the 2026-07-11
+  tab removal — dead-code cleanup candidate.
+- gjc CLI v0.11.3 `computer` tool: top-level `keys: string[]` is mangled by
+  the tool bridge (batch-nested keypress works) and the key map has no
+  modifier names, so Cmd-Q-style combos cannot be synthesized. Upstream gjc
+  issue; the quit contract was verified via the equivalent AppleEvent path.
 
 ## How to resume (next session)
 
-1. `gjc ultragoal status` — confirm 9 complete / G006 review_blocked / G011,G012 blocked.
-2. `goal({op:"resume"})` to reactivate the objective (or continue via ultragoal).
-3. **Human at the Mac** runs `docs/DESKTOP-TAURI-VERIFICATION.md`:
-   - Build: `npm ci && npm run server:payload:macos && npm run tauri -- build && npm run desktop:dmg:macos`.
-   - C7 GUI smoke + C8 rollback drill (record evidence per the checklist).
-   - Optional: add Apple Developer ID + notarization creds, set `signingIdentity` in `tauri.conf.json`, rebuild for a notarized DMG.
-   - **재빌드 필수**: 현재 맥의 `.app`은 수동 패치 상태다. checkpoint-c 동기화 후 `npm run tauri -- build`로 다시 만들어야 entitlements가 영구 적용된다.
-4. After C7+C8 pass: do **C9 Electron removal** (remove `electron/`, `prepare-desktop-app.js`, electron scripts/deps; keep Windows Job Object), re-run `npm run verify` + mac cargo/DMG/smoke, confirm no `electron|electron-builder|ELECTRON_` in non-historical source. Then checkpoint G006 complete + close G011/G012.
-5. Control tower cuts the 1.2.0 (Slice 5) release on report collection; v2 completion gate = Slice 6 (already done).
+1. `gjc ultragoal status` in this checkout — the 2026-07-19/20 run is
+   terminal; start a fresh plan for new work.
+2. **Notarization (only remaining v2 item, needs the user):** install the
+   Developer ID cert + notarytool credentials, then follow
+   `docs/DESKTOP-TAURI-VERIFICATION.md` § "Remaining human gate", rebuild,
+   and re-run the packaged smokes + `spctl` (should flip to accepted).
+3. Push `checkpoint-c` to origin if not already pushed; the control tower
+   cuts releases from report collection.
+4. The Linux x64 lane of the both-OS gate has not run for this session's
+   commits — run `npm run verify` on the Linux tree before the next
+   main-branch promotion.
 
 ## Key gotchas
 
-- Commits use `git commit --no-verify` (husky formatter races 2 parallel eslint SIGKILL); run `npm run verify`/`npm test` separately.
-- `dist-native/` and `src-tauri/{target,binaries,resources/server-payload}` are gitignored (platform artifacts, built per-OS). `.gjc-worktrees/` is gitignored (runtime per-job worktrees) — never commit them.
-- Watcher test (`server/gjc-core-host.test.ts`) and `gjc-git-client.test.ts` were de-flaked (60s/90s budgets, mock-child readiness wait); they pass in isolation and full-suite.
-- `test:e2e:gjc` (7 tests: driver + real Express+ws wire matrix via `server/app-factory.js`) is a separate script from `npm test`.
-- Tauri v2 bundles `bundle.resources` at `Contents/Resources/resources/server-payload/` (nested); the Node sidecar externalBin is at `Contents/MacOS/gajae-app-server`.
+- `dist-native/`, `src-tauri/{target,binaries,resources/server-payload}`,
+  `.gjc-worktrees/` are gitignored platform/runtime artifacts — never commit.
+- Tauri cleans the bundled `.app` after building the DMG; install from the DMG
+  (or use `npm run desktop:dmg:macos` for the headless variant).
+- The packaged smoke isolates HOME/DB; it is safe to run while the installed
+  app is running.
+- `test:e2e:gjc` (7 wire tests) is a separate script from `npm test`.
