@@ -15,6 +15,17 @@ function normalizeProjectDisplayName(projectPath: string, customProjectName: str
     return directoryName || projectPath;
 }
 
+/**
+ * Managed job worktrees live under `<repo>/.gjc-worktrees/<job-id>`. They are
+ * runtime execution directories: their project rows exist only to satisfy the
+ * sessions foreign key and must never surface as user-facing projects.
+ */
+export function isManagedWorktreePath(projectPath: string): boolean {
+    return normalizeProjectPath(projectPath).split(/[\\/]/).includes('.gjc-worktrees');
+}
+
+const isUserFacingProject = (row: ProjectRepositoryRow): boolean => !isManagedWorktreePath(row.project_path);
+
 export const projectsDb = {
     createProjectPath(projectPath: string, customProjectName: string | null = null): CreateProjectPathResult {
         const db = getConnection();
@@ -88,11 +99,12 @@ export const projectsDb = {
 
     getProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
-        return db.prepare(`
+        const rows = db.prepare(`
             SELECT project_id, project_path, custom_project_name, isStarred, isArchived
             FROM projects
             WHERE isArchived = 0
         `).all() as ProjectRepositoryRow[];
+        return rows.filter(isUserFacingProject);
     },
 
     /**
@@ -101,11 +113,12 @@ export const projectsDb = {
      */
     getArchivedProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
-        return db.prepare(`
+        const rows = db.prepare(`
             SELECT project_id, project_path, custom_project_name, isStarred, isArchived
             FROM projects
             WHERE isArchived = 1
         `).all() as ProjectRepositoryRow[];
+        return rows.filter(isUserFacingProject);
     },
 
     getCustomProjectName(projectPath: string): string | null {

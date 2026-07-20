@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { projectsDb } from '@/modules/database/index.js';
+import { isManagedWorktreePath, projectsDb } from '@/modules/database/index.js';
 import type {
   CreateProjectPathResult,
   ProjectRepositoryRow,
@@ -93,6 +93,13 @@ export async function createProject(
   if (!normalizedPath) {
     throw new AppError('path is required', {
       code: 'PROJECT_PATH_REQUIRED',
+      statusCode: 400,
+    });
+  }
+
+  if (isManagedWorktreePath(normalizedPath)) {
+    throw new AppError('Managed job worktrees cannot be registered as projects', {
+      code: 'PROJECT_PATH_IS_MANAGED_WORKTREE',
       statusCode: 400,
     });
   }

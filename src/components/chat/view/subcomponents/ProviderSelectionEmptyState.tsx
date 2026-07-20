@@ -22,11 +22,10 @@ import {
   Card,
 } from "../../../../shared/view/ui";
 
+// GJC is the only selectable agent since the wave2+3 GJC-only cleanup removed
+// the non-GJC execution lanes; historical sessions still render their original
+// provider marks, but new work can only target Gajae Code.
 const PROVIDER_META: { id: LLMProvider; name: string }[] = [
-  { id: "claude", name: "Anthropic" },
-  { id: "codex", name: "OpenAI" },
-  { id: "cursor", name: "Cursor" },
-  { id: "opencode", name: "OpenCode" },
   { id: "gjc", name: "Gajae Code" },
 ];
 

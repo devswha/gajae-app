@@ -24,13 +24,15 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   gjc: 'default',
 };
 
-const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode', 'gjc'];
+// New sessions can only target GJC after the GJC-only cleanup; stored legacy
+// selections (claude/cursor/codex/opencode) coerce back to gjc.
+const SELECTABLE_PROVIDERS: LLMProvider[] = ['gjc'];
 
 const readStoredProvider = (): LLMProvider => {
   const storedProvider = localStorage.getItem('selected-provider');
-  return PROVIDERS.includes(storedProvider as LLMProvider)
+  return SELECTABLE_PROVIDERS.includes(storedProvider as LLMProvider)
     ? storedProvider as LLMProvider
-    : 'claude';
+    : 'gjc';
 };
 
 /**
@@ -103,7 +105,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     return localStorage.getItem('codex-model') || FALLBACK_DEFAULT_MODEL.codex;
   });
   const [providerEfforts, setProviderEfforts] = useState<Partial<Record<LLMProvider, string>>>(() => {
-    return PROVIDERS.reduce<Partial<Record<LLMProvider, string>>>((acc, targetProvider) => {
+    return SELECTABLE_PROVIDERS.reduce<Partial<Record<LLMProvider, string>>>((acc, targetProvider) => {
       acc[targetProvider] = localStorage.getItem(`${targetProvider}-effort`) || DEFAULT_EFFORT_VALUE;
       return acc;
     }, {});
@@ -179,7 +181,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
     try {
       const results = await Promise.all(
-        PROVIDERS.map(async (p) => {
+        SELECTABLE_PROVIDERS.map(async (p) => {
           const params = new URLSearchParams();
           if (options.bypassCache) {
             params.set('bypassCache', 'true');
@@ -203,7 +205,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       const nextCatalog: Partial<Record<LLMProvider, ProviderModelsDefinition>> = {};
       const nextCacheCatalog: Partial<Record<LLMProvider, ProviderModelsCacheInfo>> = {};
 
-      PROVIDERS.forEach((p, i) => {
+      SELECTABLE_PROVIDERS.forEach((p, i) => {
         const entry = results[i];
         if (!entry) {
           return;
@@ -416,7 +418,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     const nextEfforts: Partial<Record<LLMProvider, string>> = {};
     let hasUpdates = false;
 
-    for (const targetProvider of PROVIDERS) {
+    for (const targetProvider of SELECTABLE_PROVIDERS) {
       const currentEffort = providerEfforts[targetProvider] ?? DEFAULT_EFFORT_VALUE;
       const nextEffort = reconcileStoredEffort(targetProvider, providerModels[targetProvider], currentEffort);
       if (nextEffort === currentEffort) {
