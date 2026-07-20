@@ -58,8 +58,17 @@ fn main() {
         .on_window_event(lifecycle::hide_on_close)
         .invoke_handler(tauri::generate_handler![retry_desktop_server])
         .setup(|app| {
-            let lock =
-                acquire_single_instance_lock().map_err(Box::<dyn std::error::Error>::from)?;
+            // A held lock means another instance is running. Setup errors
+            // abort inside did_finish_launching (panic_cannot_unwind ->
+            // SIGABRT -> crash-reporter dialog), so exit cleanly instead;
+            // LaunchServices already focuses the running instance on reopen.
+            let lock = match acquire_single_instance_lock() {
+                Ok(lock) => lock,
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(0);
+                }
+            };
             app.manage(lock);
             app.manage(navigation::LoopbackOrigin::default());
             app.manage(lifecycle::SidecarLifecycle::default());
