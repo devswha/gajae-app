@@ -81,10 +81,12 @@ function getCurrentModel(
   cu: string,
   co: string,
   o: string,
+  g: string,
 ) {
   if (p === "claude") return c;
   if (p === "codex") return co;
   if (p === "opencode") return o;
+  if (p === "gjc") return g;
   return cu;
 }
 
@@ -93,7 +95,7 @@ function getProviderDisplayName(p: LLMProvider) {
   if (p === "cursor") return "Cursor";
   if (p === "codex") return "Codex";
   if (p === "opencode") return "OpenCode";
-  return "Claude";
+  return "Gajae Code";
 }
 
 export default function ProviderSelectionEmptyState({
@@ -115,6 +117,9 @@ export default function ProviderSelectionEmptyState({
 }: ProviderSelectionEmptyStateProps) {
   const { t } = useTranslation("chat");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [gjcModel, setGjcModel] = useState<string>(() => (
+    typeof localStorage !== "undefined" ? localStorage.getItem("gjc-model") || "default" : "default"
+  ));
 
   const visibleProviderGroups = useMemo<ProviderGroup[]>(() => {
     return PROVIDER_META.map((p) => ({
@@ -131,6 +136,7 @@ export default function ProviderSelectionEmptyState({
     cursorModel,
     codexModel,
     opencodeModel,
+    gjcModel,
   );
 
   const currentModelLabel = useMemo(() => {
@@ -152,12 +158,15 @@ export default function ProviderSelectionEmptyState({
       } else if (providerId === "opencode") {
         setOpenCodeModel(modelValue);
         localStorage.setItem("opencode-model", modelValue);
+      } else if (providerId === "gjc") {
+        setGjcModel(modelValue);
+        localStorage.setItem("gjc-model", modelValue);
       } else {
         setCursorModel(modelValue);
         localStorage.setItem("cursor-model", modelValue);
       }
     },
-    [setClaudeModel, setCursorModel, setCodexModel, setOpenCodeModel],
+    [setClaudeModel, setCursorModel, setCodexModel, setOpenCodeModel, setGjcModel],
   );
 
   const handleModelSelect = useCallback(
