@@ -27,7 +27,7 @@ import {
   DialogTitle,
 } from '../../shared/view/ui';
 import { useTheme } from '../../contexts/ThemeContext';
-import { usePaletteOps } from '../../contexts/PaletteOpsContext';
+import { usePaletteOps, usePaletteOpsRegister } from '../../contexts/PaletteOpsContext';
 import { SETTINGS_MAIN_TABS } from '../settings/constants/constants';
 import type { AppTab, Project } from '../../types/app';
 
@@ -74,6 +74,12 @@ export default function CommandPalette({
   const { toggleDarkMode } = useTheme();
   const navigate = useNavigate();
   const ops = usePaletteOps();
+
+  const openCommandPalette = React.useCallback(() => {
+    setOpen(true);
+  }, []);
+
+  usePaletteOpsRegister({ openCommandPalette });
 
   const page = pages.at(-1);
 

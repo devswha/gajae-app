@@ -12,8 +12,9 @@ import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
-import { useSessionStore } from '../../stores/useSessionStore';
-import { JobWorkspace, NewJobFlow } from '../jobs';
+
+import { parseStartedAt } from './appContentUtils';
+
 
 type RunningSessionApiItem = {
   sessionId?: unknown;
@@ -28,19 +29,6 @@ type RunningSessionsApiPayload = {
   };
 };
 
-const parseStartedAt = (value: unknown): number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
 export default function AppContent() {
   return (
     <PaletteOpsProvider>
@@ -51,12 +39,10 @@ export default function AppContent() {
 
 function AppContentInner() {
   const navigate = useNavigate();
-  const { sessionId, jobId } = useParams<{ sessionId?: string; jobId?: string }>();
+  const { sessionId } = useParams<{ sessionId?: string }>();
   const { t } = useTranslation('common');
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { ws, sendMessage, subscribe } = useWebSocket();
-  const jobStore = useSessionStore();
-
   const {
     processingSessions,
     markSessionProcessing,
@@ -89,7 +75,6 @@ function AppContentInner() {
   });
 
   const sidebarProps = sidebarSharedProps;
-
   // Queued messages for sessions that finish while another session (or none)
   // is being viewed are sent from here; the viewed session's composer handles
   // its own queue.
@@ -148,40 +133,6 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
-
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
-      return undefined;
-    }
-
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      const message = event.data;
-      if (!message || message.type !== 'notification:navigate') {
-        return;
-      }
-
-      if (typeof message.provider === 'string' && message.provider.trim()) {
-        localStorage.setItem('selected-provider', message.provider);
-      }
-
-      setActiveTab('chat');
-      setSidebarOpen(false);
-      void refreshProjectsSilently();
-
-      if (typeof message.sessionId === 'string' && message.sessionId) {
-        navigate(`/session/${message.sessionId}`);
-        return;
-      }
-
-      navigate('/');
-    };
-
-    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
-
-    return () => {
-      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
-    };
-  }, [navigate, refreshProjectsSilently, setActiveTab, setSidebarOpen]);
 
   // Pending tool permissions are recovered through the `chat.subscribe` flow:
   // the `chat_subscribed` ack carries them on session open and on reconnect,
@@ -243,36 +194,30 @@ function AppContentInner() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {jobId ? (
-          <JobWorkspace jobId={jobId} store={jobStore} />
-        ) : window.location.pathname.endsWith('/jobs/new') ? (
-          <NewJobFlow projects={sidebarSharedProps.projects ?? []} onCreated={(createdJobId) => navigate(`/jobs/${createdJobId}`)} />
-        ) : (
-          <MainContent
-            selectedProject={selectedProject}
-            selectedSession={selectedSession}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            ws={ws}
-            sendMessage={sendMessage}
-            isMobile={isMobile}
-            onMenuClick={() => setSidebarOpen(true)}
-            isLoading={isLoadingProjects}
-            onInputFocusChange={setIsInputFocused}
-            onSessionProcessing={markSessionProcessing}
-            onSessionIdle={markSessionIdle}
-            processingSessions={processingSessions}
-            onNavigateToSession={(targetSessionId: string, options) =>
-              navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
-            }
-            onSessionEstablished={(targetSessionId, context) =>
-              registerOptimisticSession({ sessionId: targetSessionId, ...context })
-            }
-            onShowSettings={openSettings}
-            externalMessageUpdate={externalMessageUpdate}
-            newSessionTrigger={newSessionTrigger}
-          />
-        )}
+        <MainContent
+          selectedProject={selectedProject}
+          selectedSession={selectedSession}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          ws={ws}
+          sendMessage={sendMessage}
+          isMobile={isMobile}
+          onMenuClick={() => setSidebarOpen(true)}
+          isLoading={isLoadingProjects}
+          onInputFocusChange={setIsInputFocused}
+          onSessionProcessing={markSessionProcessing}
+          onSessionIdle={markSessionIdle}
+          processingSessions={processingSessions}
+          onNavigateToSession={(targetSessionId: string, options) =>
+            navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
+          }
+          onSessionEstablished={(targetSessionId, context) =>
+            registerOptimisticSession({ sessionId: targetSessionId, ...context })
+          }
+          onShowSettings={openSettings}
+          externalMessageUpdate={externalMessageUpdate}
+          newSessionTrigger={newSessionTrigger}
+        />
       </div>
 
       <CommandPalette

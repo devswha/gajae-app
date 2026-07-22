@@ -202,5 +202,9 @@
     "providers": {
       "assistant": "Assistant"
     }
+  },
+  "newSession": {
+    "greeting": "今日は何を作りましょうか？",
+    "subtitle": "Gajae Code は {{project}} で作業する準備ができています。"
   }
 }

@@ -178,8 +178,7 @@ export function useSlashCommands({
       }
 
       try {
-        const workspacePath = selectedProject.fullPath || selectedProject.path || '';
-        const response = await authenticatedFetch('/api/commands/list', {
+        const commandsRequest = authenticatedFetch('/api/commands/list', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -188,20 +187,17 @@ export function useSlashCommands({
             projectId: selectedProject.projectId,
           }),
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch commands');
-        }
-
-        const data = await response.json();
         const skillsParams = new URLSearchParams();
-        if (workspacePath) {
-          skillsParams.set('workspacePath', workspacePath);
+        if (selectedProject.projectId) {
+          skillsParams.set('projectId', selectedProject.projectId);
         }
-
-        const skillsResponse = await authenticatedFetch(
+        const skillsRequest = authenticatedFetch(
           `/api/providers/${encodeURIComponent(provider)}/skills${skillsParams.toString() ? `?${skillsParams.toString()}` : ''}`,
         );
+        const [commandsResponse, skillsResponse] = await Promise.all([commandsRequest, skillsRequest]);
+        const data = commandsResponse.ok
+          ? await commandsResponse.json()
+          : { builtIn: [], custom: [] };
         const skillsData = skillsResponse.ok
           ? ((await skillsResponse.json()) as ProviderSkillsResponse)
           : null;

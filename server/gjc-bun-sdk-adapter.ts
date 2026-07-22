@@ -1,6 +1,7 @@
 import { createAgentSession, discoverAuthStorage } from '@gajae-code/coding-agent/sdk/session';
 import { ModelRegistry } from '@gajae-code/coding-agent/config/model-registry';
 import { mergeModelProfiles, resolveProfileBindings } from '@gajae-code/coding-agent/config/model-profiles';
+import { activateModelProfile } from '@gajae-code/coding-agent/config/model-profile-activation';
 import { parseModelString } from '@gajae-code/coding-agent/config/model-resolver';
 import { Settings } from '@gajae-code/coding-agent/config/settings';
 import { AuthStorage } from '@gajae-code/coding-agent/session/auth-storage';
@@ -20,6 +21,7 @@ export type SdkRunConfig = {
   sessionRoot: string;
   credential: ExactCredentialRef;
   modelId: string;
+  modelProfile?: string;
   toolNames: string[];
   spawns: string;
   bashPolicy: AppBashPolicy;
@@ -69,6 +71,7 @@ function configFromOptions(value: Record<string, unknown>): SdkRunConfig {
     || typeof candidate.sessionRoot !== 'string' || !candidate.sessionRoot
     || !exactCredentialRef(candidate.credential)
     || typeof candidate.modelId !== 'string' || !candidate.modelId
+    || (candidate.modelProfile !== undefined && (typeof candidate.modelProfile !== 'string' || !candidate.modelProfile))
     || !Array.isArray(candidate.toolNames) || candidate.toolNames.some((name) => typeof name !== 'string' || !name)
     || typeof candidate.spawns !== 'string'
     || !object(candidate.bashPolicy) || !Array.isArray(candidate.bashPolicy.allowedPrefixes)
@@ -80,9 +83,23 @@ function configFromOptions(value: Record<string, unknown>): SdkRunConfig {
   return candidate as unknown as SdkRunConfig;
 }
 
-function configuredDefaultModelId(settings: Settings, modelRegistry: ModelRegistry): string {
+function modelIdFromSelector(selector: string): string {
+  const parsed = parseModelString(selector);
+  if (!parsed || !parsed.provider || !parsed.id) throw new Error(FAILURE);
+  return `${parsed.provider}/${parsed.id}`;
+}
+
+function configuredDefaultModelId(settings: Settings, modelRegistry: ModelRegistry, modelProfile?: string): string {
+  if (modelProfile) {
+    const profile = modelRegistry.getModelProfile(modelProfile) ?? mergeModelProfiles().get(modelProfile);
+    const selector = profile && resolveProfileBindings(profile).defaultSelector;
+    if (typeof selector !== 'string' || !selector) throw new Error(FAILURE);
+    return modelIdFromSelector(selector);
+  }
   const roleModelId = settings.getModelRole('default');
-  if (typeof roleModelId === 'string' && roleModelId) return roleModelId;
+  if (typeof roleModelId === 'string' && roleModelId) {
+    return roleModelId.includes('/') ? modelIdFromSelector(roleModelId) : roleModelId;
+  }
 
   const profileName = settings.get('modelProfile.default');
   if (typeof profileName !== 'string' || !profileName) throw new Error(FAILURE);
@@ -92,10 +109,7 @@ function configuredDefaultModelId(settings: Settings, modelRegistry: ModelRegist
   const selector = profile && resolveProfileBindings(profile).defaultSelector;
   if (typeof selector !== 'string' || !selector) throw new Error(FAILURE);
 
-  // parseModelString handles the provider/id[:thinking] selector form.
-  const parsed = parseModelString(selector);
-  if (!parsed || !parsed.provider || !parsed.id) throw new Error(FAILURE);
-  return `${parsed.provider}/${parsed.id}`;
+  return modelIdFromSelector(selector);
 }
 
 function modelFor(registry: ModelRegistry, modelId: string): Model {
@@ -248,7 +262,7 @@ export class GjcBunSdkAdapter implements GjcWorkerRuntime {
         process.env.GJC_WORKER_AGENT_DIR ? { agentDir: process.env.GJC_WORKER_AGENT_DIR } : {},
       );
       const configuredModelId = config.modelId === 'default'
-        ? configuredDefaultModelId(globalSettings, this.modelRegistry)
+        ? configuredDefaultModelId(globalSettings, this.modelRegistry, config.modelProfile)
         : config.modelId;
       const settings = await globalSettings.cloneForCwd(config.cwd);
       const askController = new GjcBunAskController(writer);
@@ -272,6 +286,14 @@ export class GjcBunSdkAdapter implements GjcWorkerRuntime {
           ...(config.bashPolicy.restrictionProfile ? { bashRestrictionProfile: config.bashPolicy.restrictionProfile } : {}),
           hasUI: true,
         });
+        if (config.modelProfile) {
+          await activateModelProfile({
+            session: result.session,
+            modelRegistry: this.modelRegistry,
+            settings,
+            profileName: config.modelProfile,
+          });
+        }
         if (resolvedCredential.credential) writer.setCredential?.(resolvedCredential.credential);
         writer.setModel?.(model.id);
         if (result.modelFallbackMessage) throw new Error(FAILURE);

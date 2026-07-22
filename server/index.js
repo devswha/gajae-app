@@ -22,12 +22,15 @@ import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/provi
 import { getConnectableHost } from '../shared/networkHosts.js';
 
 import { GjcJobProjectionService } from './modules/websocket/services/gjc-job-projection.service.js';
+import { drainWebSocketClients } from './modules/websocket/services/websocket-drain.service.js';
 import { createGjcTerminalNotificationAdapter } from './modules/notifications/services/gjc-terminal-notification-adapter.service.js';
 import { findAppRoot, getModuleDir } from './utils/runtime-paths.js';
 import {
+    abortGjcRun,
     getPendingGjcApprovalsForSession,
     resolveGjcToolApproval,
     shutdownGjcWorker,
+    spawnGjcRun,
 } from './gjc-worker-client.js';
 import { getProductionJobAuthority, getProductionJobOrchestrator } from './services/gjc-job-orchestrator.js';
 import { getProductionGjcJobGitService } from './services/gjc-job-git.service.js';
@@ -83,7 +86,6 @@ function getPendingProviderApprovalsForSession(sessionId) {
     return getPendingGjcApprovalsForSession(sessionId);
 }
 
-
 const gjcJobAuthority = getProductionJobAuthority();
 const gjcJobOrchestrator = getProductionJobOrchestrator();
 const gjcJobProjection = new GjcJobProjectionService({
@@ -93,63 +95,16 @@ const gjcJobProjection = new GjcJobProjectionService({
 const gjcTerminalNotificationAdapter = createGjcTerminalNotificationAdapter({
     authority: gjcJobAuthority,
 });
-let gjcJobAuthorityAvailable = false;
-
-function gjcJobAuthorityError() {
-    const error = new Error('GJC job authority is unavailable.');
-    error.code = 'GJC_JOB_AUTHORITY_UNAVAILABLE';
-    return error;
-}
-
-function gjcRoutingError(code, message) {
-    const error = new Error(message);
-    error.code = code;
-    return error;
-}
-
 function gjcSpawn(message, options, writer) {
-    const appSessionId = writer.getAppSessionId?.();
-    const completion = (async () => {
-        if (!gjcJobAuthorityAvailable) {
-            throw gjcJobAuthorityError();
-        }
-
-        const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
-        const state = String(binding?.state || '').toLowerCase();
-        const reusableBinding = !binding || state === 'closed' || state === 'released';
-        const run = reusableBinding
-            ? await gjcJobOrchestrator.start('gjc', appSessionId, options.projectPath ?? options.cwd, message, { ...options, writer })
-            : state === 'ready'
-                ? await gjcJobOrchestrator.turnStart('gjc', appSessionId, message, { ...options, writer })
-                : state === 'interrupted'
-                    ? (() => { throw gjcRoutingError('JOB_INTERRUPTED', `Session "${appSessionId}" has an interrupted GJC job. Resume it explicitly.`); })()
-                    : (() => { throw gjcRoutingError('RUN_IN_PROGRESS', `Session "${appSessionId}" already has a GJC job in progress.`); })();
-        return run.completion;
-    })();
-
-    completion.abortHandle = appSessionId;
-    return completion;
+    return spawnGjcRun(message, {
+        ...options,
+        cwd: options.projectPath ?? options.cwd,
+    }, writer);
 }
 
-async function gjcResume(appSessionId, message, options, writer) {
-    if (!gjcJobAuthorityAvailable) {
-        throw gjcJobAuthorityError();
-    }
-
-    const binding = await gjcJobOrchestrator.resolveBinding('gjc', appSessionId);
-    if (!binding || String(binding.state).toLowerCase() !== 'interrupted') {
-        throw gjcRoutingError('JOB_NOT_INTERRUPTED', `Session "${appSessionId}" has no interrupted GJC job to resume.`);
-    }
-
-    const run = await gjcJobOrchestrator.resume(binding.jobId, appSessionId, message, { ...options, writer, provider: 'gjc' });
-    return run.completion;
-}
-
-async function abortGjcJob(appSessionId) {
-    if (!gjcJobAuthorityAvailable) {
-        throw gjcJobAuthorityError();
-    }
-    return gjcJobOrchestrator.abort({ provider: 'gjc', appSessionId });
+async function abortGjcChatRun(runId) {
+    const result = await abortGjcRun(runId);
+    return result === 'not_started' || result === 'aborted';
 }
 
 const { app, server, wss } = createGjcAppFactory({
@@ -169,11 +124,10 @@ const { app, server, wss } = createGjcAppFactory({
             gjc: gjcSpawn,
         },
         abortFns: {
-            gjc: abortGjcJob,
+            gjc: abortGjcChatRun,
         },
         resolveToolApproval: resolveProviderToolApproval,
         getPendingApprovalsForSession: getPendingProviderApprovalsForSession,
-        gjcResume,
         gjcProjection: gjcJobProjection,
     },
     shell: {
@@ -1084,7 +1038,9 @@ app.get('/api/projects/:projectId/sessions/:sessionId/token-usage', authenticate
             return res.status(404).json({ error: 'Session not found', sessionId: safeSessionId });
         }
 
-        const provider = sessionRow.provider || 'claude';
+        // Historical non-GJC sessions keep their provider value; the
+        // transcript branches below only serve those read-only rows.
+        const provider = sessionRow.provider || 'gjc';
         const providerNativeSessionId = sessionRow?.provider_session_id || safeSessionId;
 
         // Handle Cursor sessions - they use SQLite and don't have token usage info
@@ -1575,9 +1531,8 @@ async function startServer() {
         await initializeDatabase();
         try {
             await gjcJobOrchestrator.reconcile();
-            gjcJobAuthorityAvailable = true;
         } catch (error) {
-            console.error('[GJC Jobs] Authority unavailable; GJC runs are disabled:', error?.message || error);
+            console.error('[GJC Jobs] Authority reconciliation failed:', error?.message || error);
         }
 
 
@@ -1599,8 +1554,6 @@ async function startServer() {
         const distIndexPath = path.join(APP_ROOT, 'dist', 'index.html');
         const isProduction = fs.existsSync(distIndexPath);
 
-        // Log Claude implementation mode
-        console.log(`${c.info('[INFO]')} Using Claude Agents SDK for Claude integration`);
         console.log('');
 
         if (isProduction) {
@@ -1652,7 +1605,6 @@ async function startServer() {
             }
             shutdownStarted = true;
 
-            gjcJobAuthorityAvailable = false;
             let gjcShutdownFenced = false;
             try {
                 await gjcJobOrchestrator.interruptForShutdown();
@@ -1661,10 +1613,8 @@ async function startServer() {
                 console.error('[GJC Jobs] Shutdown fence failed; forcing worker tree reap while preserving authority failure evidence:', err?.message || err);
             }
 
+            await drainWebSocketClients(wss.clients);
             server.close();
-            for (const client of wss.clients) {
-                client.terminate();
-            }
             wss.close();
             server.closeAllConnections?.();
 

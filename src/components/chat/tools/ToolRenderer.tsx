@@ -2,6 +2,7 @@ import React, { memo, useMemo, useCallback } from 'react';
 
 import type { Project } from '../../../types/app';
 import type { SubagentChildTool } from '../types/types';
+import type { CodeEditorDiffInfo } from '../../code-editor/types/types';
 
 import { getToolConfig } from './configs/toolConfigs';
 import { OneLineDisplay, BashCommandDisplay, CollapsibleDisplay, ToolDiffViewer, MarkdownContent, FileListContent, TodoListContent, TaskListContent, TextContent, QuestionAnswerContent, SubagentContainer } from './components';
@@ -21,7 +22,7 @@ interface ToolRendererProps {
   toolResult?: any;
   toolId?: string;
   mode: 'input' | 'result';
-  onFileOpen?: (filePath: string, diffInfo?: any) => void;
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null) => void;
   createDiff?: (oldStr: string, newStr: string) => DiffLine[];
   selectedProject?: Project | null;
   showRawParameters?: boolean;

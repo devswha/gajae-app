@@ -13,7 +13,7 @@ import { useDropzone } from 'react-dropzone';
 
 import { authenticatedFetch } from '../../../utils/api';
 import type { MarkSessionProcessing } from '../../../hooks/useSessionProtection';
-import { grantClaudeToolPermission } from '../utils/chatPermissions';
+import type { CodeEditorDiffInfo } from '../../code-editor/types/types';
 import {
   clearQueuedMessage,
   readQueuedMessage,
@@ -24,7 +24,6 @@ import {
 import type {
   ChatMessage,
   PendingPermissionRequest,
-  PermissionMode,
   SessionEstablishedContext,
 } from '../types/types';
 import type { Project, ProjectSession, LLMProvider, ProviderModelsCacheInfo } from '../../../types/app';
@@ -37,15 +36,7 @@ interface UseChatComposerStateArgs {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
-  provider: LLMProvider;
-  permissionMode: PermissionMode | string;
-  cyclePermissionMode: () => void;
-  resolvePermissionModeForProvider: (provider: LLMProvider, requestedMode: PermissionMode | string) => PermissionMode;
-  cursorModel: string;
-  claudeModel: string;
-  codexModel: string;
-  currentProviderEffort: string;
-  opencodeModel: string;
+  gjcModel: string;
   isLoading: boolean;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
@@ -61,7 +52,7 @@ interface UseChatComposerStateArgs {
    */
   onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext) => void;
   onInputFocusChange?: (focused: boolean) => void;
-  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null) => void;
   onShowSettings?: () => void;
   scrollToBottom: () => void;
   addMessage: (msg: ChatMessage) => void;
@@ -189,15 +180,7 @@ export function useChatComposerState({
   selectedProject,
   selectedSession,
   currentSessionId,
-  provider,
-  permissionMode,
-  cyclePermissionMode,
-  resolvePermissionModeForProvider,
-  cursorModel,
-  claudeModel,
-  codexModel,
-  currentProviderEffort,
-  opencodeModel,
+  gjcModel,
   isLoading,
   canAbortSession,
   tokenBudget,
@@ -367,14 +350,8 @@ export function useChatComposerState({
         const context = {
           projectId: selectedProject.projectId,
           sessionId: currentSessionId,
-          provider,
-          model: provider === 'cursor'
-            ? cursorModel
-            : provider === 'codex'
-              ? codexModel
-              : provider === 'opencode'
-                  ? opencodeModel
-                  : claudeModel,
+          provider: 'gjc',
+          model: gjcModel,
           tokenUsage: tokenBudget,
         };
 
@@ -423,15 +400,11 @@ export function useChatComposerState({
       }
     },
     [
-      claudeModel,
-      codexModel,
       currentSessionId,
-      cursorModel,
-      opencodeModel,
+      gjcModel,
       handleBuiltInCommand,
       handleCustomCommand,
       input,
-      provider,
       selectedProject,
       addMessage,
       tokenBudget,
@@ -466,7 +439,7 @@ export function useChatComposerState({
     handleCommandMenuKeyDown,
   } = useSlashCommands({
     selectedProject,
-    provider,
+    provider: 'gjc',
     input,
     setInput,
     textareaRef,
@@ -589,14 +562,7 @@ export function useChatComposerState({
   const buildSendOptions = useCallback((currentInput: string): QueuedSendOptions => {
     const getToolsSettings = () => {
       try {
-        const settingsKey =
-          provider === 'cursor'
-            ? 'cursor-tools-settings'
-            : provider === 'codex'
-              ? 'codex-settings'
-              : provider === 'opencode'
-                  ? 'opencode-settings'
-                : 'claude-settings';
+        const settingsKey = 'gjc-tools-settings';
         const savedSettings = safeLocalStorage.getItem(settingsKey);
         if (savedSettings) {
           return JSON.parse(savedSettings);
@@ -613,34 +579,15 @@ export function useChatComposerState({
     };
 
     const toolsSettings = getToolsSettings();
-    const model =
-      provider === 'cursor'
-        ? cursorModel
-        : provider === 'codex'
-          ? codexModel
-          : provider === 'opencode'
-            ? opencodeModel
-            : claudeModel;
-
     return {
-      model,
-      effort: currentProviderEffort,
-      permissionMode: resolvePermissionModeForProvider(provider, permissionMode),
+      model: gjcModel,
+      effort: 'default',
+      permissionMode: 'default',
       toolsSettings,
       skipPermissions: toolsSettings?.skipPermissions || false,
       sessionSummary: getNotificationSessionSummary(selectedSession, currentInput),
     };
-  }, [
-    claudeModel,
-    codexModel,
-    currentProviderEffort,
-    cursorModel,
-    opencodeModel,
-    permissionMode,
-    provider,
-    resolvePermissionModeForProvider,
-    selectedSession,
-  ]);
+  }, [gjcModel, selectedSession]);
 
   const handleSubmit = useCallback(
     async (
@@ -691,7 +638,7 @@ export function useChatComposerState({
           (commandName === '/help'
             ? ({
                 name: '/help',
-                description: 'Show help documentation for Claude Code',
+                description: 'Show Gajae Code help documentation',
                 namespace: 'builtin',
                 metadata: { type: 'builtin' },
               } as SlashCommand)
@@ -749,17 +696,18 @@ export function useChatComposerState({
       const resolvedProjectPath = selectedProject.fullPath || selectedProject.path || '';
       const sessionSummary = getNotificationSessionSummary(selectedSession, currentInput);
 
-      // The conversation always has a stable backend-allocated session id
-      // BEFORE the first websocket send: brand-new chats allocate one here
-      // via the session gateway. There is no client-visible session-id
-      // handoff later — this id stays valid for the conversation's lifetime.
-      let targetSessionId = selectedSession?.id || currentSessionId || null;
+      // Historical sessions remain readable, but only an existing GJC session
+      // may be resumed. Sending while viewing a legacy session starts a new GJC
+      // session through the gateway.
+      let targetSessionId = selectedSession
+        ? (selectedSession.__provider === 'gjc' ? selectedSession.id : null)
+        : currentSessionId;
       if (!targetSessionId) {
         try {
           const response = await authenticatedFetch('/api/providers/sessions', {
             method: 'POST',
             body: JSON.stringify({
-              provider,
+              provider: 'gjc',
               projectPath: resolvedProjectPath,
             }),
           });
@@ -789,7 +737,7 @@ export function useChatComposerState({
         }
 
         onSessionEstablished?.(targetSessionId, {
-          provider,
+          provider: 'gjc',
           project: selectedProject,
           summary: sessionSummary,
         });
@@ -814,9 +762,8 @@ export function useChatComposerState({
       setIsUserScrolledUp(false);
       setTimeout(() => scrollToBottom(), 100);
 
-      // One message shape for every provider. The backend resolves the
-      // provider, project path, and provider-native resume id from the
-      // session row; `options` only carries composer-level preferences.
+      // The GJC session gateway owns provider and resume state; options carry
+      // only GJC composer preferences.
       sendMessage({
         type: 'chat.send',
         sessionId: targetSessionId,
@@ -850,7 +797,6 @@ export function useChatComposerState({
       isLoading,
       onSessionProcessing,
       onSessionEstablished,
-      provider,
       resetCommandMenuState,
       scrollToBottom,
       selectedProject,
@@ -1042,11 +988,6 @@ export function useChatComposerState({
         return;
       }
 
-      if (event.key === 'Tab' && !showFileDropdown && !showCommandMenu) {
-        event.preventDefault();
-        cyclePermissionMode();
-        return;
-      }
 
       if (event.key === 'Enter') {
         if (event.nativeEvent.isComposing) {
@@ -1063,13 +1004,10 @@ export function useChatComposerState({
       }
     },
     [
-      cyclePermissionMode,
       handleCommandMenuKeyDown,
       handleFileMentionsKeyDown,
       handleSubmit,
       sendByCtrlEnter,
-      showCommandMenu,
-      showFileDropdown,
     ],
   );
 
@@ -1120,20 +1058,11 @@ export function useChatComposerState({
     });
   }, [canAbortSession, currentSessionId, selectedSession?.id, sendMessage]);
 
-  const handleGrantToolPermission = useCallback(
-    (suggestion: { entry: string; toolName: string }) => {
-      if (!suggestion || provider !== 'claude') {
-        return { success: false };
-      }
-      return grantClaudeToolPermission(suggestion.entry);
-    },
-    [provider],
-  );
 
   const handlePermissionDecision = useCallback(
     (
       requestIds: string | string[],
-      decision: { allow?: boolean; message?: string; rememberEntry?: string | null; updatedInput?: unknown },
+      decision: { allow?: boolean; message?: string; updatedInput?: unknown },
     ) => {
       const ids = Array.isArray(requestIds) ? requestIds : [requestIds];
       const validIds = ids.filter(Boolean);
@@ -1148,7 +1077,6 @@ export function useChatComposerState({
           allow: Boolean(decision?.allow),
           updatedInput: decision?.updatedInput,
           message: decision?.message,
-          rememberEntry: decision?.rememberEntry,
         });
       });
 
@@ -1211,7 +1139,6 @@ export function useChatComposerState({
     handleClearInput,
     handleAbortSession,
     handlePermissionDecision,
-    handleGrantToolPermission,
     handleInputFocusChange,
     isInputFocused,
     commandModalPayload,

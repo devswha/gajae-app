@@ -3,6 +3,7 @@ import express, { type Request, type Response } from 'express';
 import { providerAuthService } from '@/modules/providers/services/provider-auth.service.js';
 import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
+import { providerSkillsService } from '@/modules/providers/services/provider-skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { getHomeDir, getHomeDirSuggestions } from '@/modules/providers/services/home-dirs.service.js';
@@ -185,6 +186,16 @@ router.get(
     const bypassCache = parseOptionalBooleanQuery(req.query.bypassCache, 'bypassCache') ?? false;
     const result = await providerModelsService.getProviderModels(provider, { bypassCache });
     res.json(createApiSuccessResponse({ provider, models: result.models, cache: result.cache }));
+  }),
+);
+
+router.get(
+  '/:provider/skills',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const projectId = readOptionalQueryString(req.query.projectId);
+    const skills = await providerSkillsService.listProviderSkills(provider, projectId);
+    res.json(createApiSuccessResponse({ provider, skills }));
   }),
 );
 

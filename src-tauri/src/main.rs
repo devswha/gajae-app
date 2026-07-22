@@ -30,7 +30,6 @@ fn is_gajae_deep_link(url: &tauri::Url) -> bool {
     url.scheme() == "gajae-app"
 }
 
-/// `gajae-app://open/job/<id>` -> `/jobs/<id>`; anything else routes nowhere.
 fn deep_link_route(url: &tauri::Url) -> Option<String> {
     if !is_gajae_deep_link(url) || url.host_str() != Some("open") {
         return None;
@@ -44,7 +43,7 @@ fn deep_link_route(url: &tauri::Url) -> Option<String> {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-')) =>
         {
-            Some(format!("/jobs/{id}"))
+            Some("/".to_owned())
         }
         _ => None,
     }
@@ -152,10 +151,10 @@ mod tests {
     }
 
     #[test]
-    fn deep_link_route_maps_only_validated_job_urls() {
+    fn deep_link_route_returns_validated_job_urls_to_the_root_shell() {
         assert_eq!(
             deep_link_route(&"gajae-app://open/job/job-7fb9426de036".parse().unwrap()),
-            Some("/jobs/job-7fb9426de036".to_owned())
+            Some("/".to_owned())
         );
         for rejected in [
             "gajae-app://open/job/",

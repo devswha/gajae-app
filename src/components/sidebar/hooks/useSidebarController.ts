@@ -4,65 +4,21 @@ import type { TFunction } from 'i18next';
 import { api } from '../../../utils/api';
 import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
 import type { Project, ProjectSession, LLMProvider } from '../../../types/app';
-import type { SessionActivityMap } from '../../../hooks/useSessionProtection';
 import type {
   ArchivedProjectListItem,
   ArchivedSessionListItem,
   DeleteProjectConfirmation,
   ProjectSortOrder,
-  SidebarSearchMode,
   SessionDeleteConfirmation,
   SessionWithProvider,
 } from '../types/types';
 import {
   clearLegacyStarredProjectIds,
-  filterProjects,
   getAllSessions,
   readLegacyStarredProjectIds,
   readProjectSortOrder,
   sortProjects,
 } from '../utils/utils';
-
-type SnippetHighlight = {
-  start: number;
-  end: number;
-};
-
-type ConversationMatch = {
-  role: string;
-  snippet: string;
-  highlights: SnippetHighlight[];
-  timestamp: string | null;
-  provider?: string;
-  messageUuid?: string | null;
-};
-
-type ConversationSession = {
-  sessionId: string;
-  sessionSummary: string;
-  provider?: string;
-  matches: ConversationMatch[];
-};
-
-type ConversationProjectResult = {
-  // Emitted by the provider search service so the sidebar can map a
-  // match back to the Project in its current state by projectId.
-  projectId: string | null;
-  projectName: string;
-  projectDisplayName: string;
-  sessions: ConversationSession[];
-};
-
-export type ConversationSearchResults = {
-  results: ConversationProjectResult[];
-  totalMatches: number;
-  query: string;
-};
-
-export type SearchProgress = {
-  scannedProjects: number;
-  totalProjects: number;
-};
 
 type ArchivedSessionsApiPayload = {
   success?: boolean;
@@ -82,7 +38,6 @@ type UseSidebarControllerArgs = {
   projects: Project[];
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
-  activeSessions: SessionActivityMap;
   isLoading: boolean;
   isMobile: boolean;
   t: TFunction;
@@ -101,7 +56,6 @@ export function useSidebarController({
   projects,
   selectedProject,
   selectedSession: _selectedSession,
-  activeSessions,
   isLoading,
   isMobile,
   t,
@@ -125,29 +79,21 @@ export function useSidebarController({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [editingSession, setEditingSession] = useState<string | null>(null);
   const [editingSessionName, setEditingSessionName] = useState('');
-  const [searchFilter, setSearchFilter] = useState('');
   const [deletingProjects, setDeletingProjects] = useState<Set<string>>(new Set());
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteProjectConfirmation | null>(null);
   const [sessionDeleteConfirmation, setSessionDeleteConfirmation] = useState<SessionDeleteConfirmation | null>(null);
-  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('projects');
-  const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(null);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [archiveLoadError, setArchiveLoadError] = useState<string | null>(null);
   const [archivedProjects, setArchivedProjects] = useState<ArchivedProjectListItem[]>([]);
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSessionListItem[]>([]);
   const [isArchivedSessionsLoading, setIsArchivedSessionsLoading] = useState(false);
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [optimisticStarByProjectId, setOptimisticStarByProjectId] = useState<Map<string, boolean>>(new Map());
   const [loadingMoreProjects, setLoadingMoreProjects] = useState<Set<string>>(new Set());
-  const searchSeqRef = useRef(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
   const starToggleSequenceByProjectRef = useRef<Map<string, number>>(new Map());
   const migrationStartedRef = useRef(false);
   const onRefreshRef = useRef(onRefresh);
 
   const isSidebarCollapsed = !isMobile && !sidebarVisible;
-  const activeSessionIds = useMemo(() => new Set(activeSessions.keys()), [activeSessions]);
-  const runningSessionsCount = activeSessionIds.size;
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -225,6 +171,7 @@ export function useSidebarController({
 
   const fetchArchivedSessions = useCallback(async () => {
     setIsArchivedSessionsLoading(true);
+    setArchiveLoadError(null);
 
     try {
       const [archivedProjectsResponse, archivedSessionsResponse] = await Promise.all([
@@ -252,10 +199,11 @@ export function useSidebarController({
       setArchivedSessions(nextStandaloneSessions);
     } catch (error) {
       console.error('[Sidebar] Failed to load archived sessions:', error);
+      setArchiveLoadError(t('archived.loadError', 'Unable to load archive. Try again.'));
     } finally {
       setIsArchivedSessionsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (migrationStartedRef.current) {
@@ -284,20 +232,6 @@ export function useSidebarController({
   }, [onRefresh]);
 
   useEffect(() => {
-    void fetchArchivedSessions();
-  }, [fetchArchivedSessions]);
-
-  useEffect(() => {
-    if (searchMode !== 'archived') {
-      return;
-    }
-
-    // Refresh archive contents when the archived tab opens so restore actions
-    // and background synchronizer updates are reflected without a full reload.
-    void fetchArchivedSessions();
-  }, [fetchArchivedSessions, searchMode]);
-
-  useEffect(() => {
     setOptimisticStarByProjectId((previous) => {
       if (previous.size === 0) {
         return previous;
@@ -323,107 +257,6 @@ export function useSidebarController({
       return changed ? next : previous;
     });
   }, [projects]);
-
-  // Debounce search text updates so both project filtering and conversation
-  // SSE requests avoid running on every keypress.
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      setDebouncedSearchQuery(searchFilter.trim());
-    }, 300);
-
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [searchFilter]);
-
-  // Debounced conversation search with SSE streaming
-  useEffect(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-
-    const query = debouncedSearchQuery;
-    if (searchMode !== 'conversations' || query.length < 2) {
-      searchSeqRef.current += 1;
-      setConversationResults(null);
-      setSearchProgress(null);
-      setIsSearching(false);
-      return;
-    }
-
-    setIsSearching(true);
-    const seq = ++searchSeqRef.current;
-
-    if (seq !== searchSeqRef.current) {
-      return;
-    }
-
-    const url = api.searchConversationsUrl(query);
-    const es = new EventSource(url, { withCredentials: true });
-    eventSourceRef.current = es;
-
-    const accumulated: ConversationProjectResult[] = [];
-    let totalMatches = 0;
-
-    es.addEventListener('result', (evt) => {
-      if (seq !== searchSeqRef.current) { es.close(); return; }
-      try {
-        const data = JSON.parse(evt.data) as {
-          projectResult: ConversationProjectResult;
-          totalMatches: number;
-          scannedProjects: number;
-          totalProjects: number;
-        };
-        accumulated.push(data.projectResult);
-        totalMatches = data.totalMatches;
-        setConversationResults({ results: [...accumulated], totalMatches, query });
-        setSearchProgress({ scannedProjects: data.scannedProjects, totalProjects: data.totalProjects });
-      } catch {
-        // Ignore malformed SSE data
-      }
-    });
-
-    es.addEventListener('progress', (evt) => {
-      if (seq !== searchSeqRef.current) { es.close(); return; }
-      try {
-        const data = JSON.parse(evt.data) as { totalMatches: number; scannedProjects: number; totalProjects: number };
-        totalMatches = data.totalMatches;
-        setSearchProgress({ scannedProjects: data.scannedProjects, totalProjects: data.totalProjects });
-      } catch {
-        // Ignore malformed SSE data
-      }
-    });
-
-    es.addEventListener('done', () => {
-      if (seq !== searchSeqRef.current) { es.close(); return; }
-      es.close();
-      eventSourceRef.current = null;
-      setIsSearching(false);
-      setSearchProgress(null);
-      if (accumulated.length === 0) {
-        setConversationResults({ results: [], totalMatches: 0, query });
-      }
-    });
-
-    es.addEventListener('error', () => {
-      if (seq !== searchSeqRef.current) { es.close(); return; }
-      es.close();
-      eventSourceRef.current = null;
-      setIsSearching(false);
-      setSearchProgress(null);
-      if (accumulated.length === 0) {
-        setConversationResults({ results: [], totalMatches: 0, query });
-      }
-    });
-
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-    };
-  }, [debouncedSearchQuery, searchMode]);
 
   // All sidebar state keys (expanded, starred, loading, etc.) use the DB
   // `projectId` as their identifier after the migration.
@@ -584,87 +417,6 @@ export function useSidebarController({
     [projectSortOrder, projectsWithResolvedStarState],
   );
 
-  const runningProjects = useMemo(() => {
-    if (activeSessionIds.size === 0) {
-      return [];
-    }
-
-    return sortedProjects.reduce<Project[]>((acc, project) => {
-      const sessions = (project.sessions ?? []).filter((session) => activeSessionIds.has(String(session.id)));
-      const runningCount = sessions.length;
-
-      if (runningCount === 0) {
-        return acc;
-      }
-
-      acc.push({
-        ...project,
-        sessions,
-        sessionMeta: {
-          ...project.sessionMeta,
-          total: runningCount,
-          hasMore: false,
-        },
-      });
-      return acc;
-    }, []);
-  }, [activeSessionIds, sortedProjects]);
-
-  const filteredProjects = useMemo(
-    () => filterProjects(searchMode === 'running' ? runningProjects : sortedProjects, debouncedSearchQuery),
-    [debouncedSearchQuery, runningProjects, searchMode, sortedProjects],
-  );
-
-  const filteredArchivedSessions = useMemo(() => {
-    const normalizedSearch = debouncedSearchQuery.trim().toLowerCase();
-    if (!normalizedSearch) {
-      return archivedSessions;
-    }
-
-    return archivedSessions.filter((session) => {
-      const searchableFields = [
-        session.sessionTitle,
-        session.projectDisplayName,
-        session.projectPath ?? '',
-        session.provider,
-      ];
-
-      return searchableFields.some((value) => value.toLowerCase().includes(normalizedSearch));
-    });
-  }, [archivedSessions, debouncedSearchQuery]);
-
-  const filteredArchivedProjects = useMemo(() => {
-    const normalizedSearch = debouncedSearchQuery.trim().toLowerCase();
-    if (!normalizedSearch) {
-      return archivedProjects;
-    }
-
-    return archivedProjects.filter((project) => {
-      const projectMatches = [
-        project.displayName,
-        project.fullPath || '',
-      ].some((value) => value.toLowerCase().includes(normalizedSearch));
-
-      if (projectMatches) {
-        return true;
-      }
-
-      return getAllSessions(project).some((session) => {
-        const sessionSummary =
-          typeof session.summary === 'string' && session.summary.trim().length > 0
-            ? session.summary
-            : typeof session.name === 'string'
-              ? session.name
-              : '';
-
-        return [
-          sessionSummary,
-          session.__provider,
-        ].some((value) => value.toLowerCase().includes(normalizedSearch));
-      });
-    });
-  }, [archivedProjects, debouncedSearchQuery]);
-
   const startEditing = useCallback((project: Project) => {
     // `editingProject` is keyed by projectId so it stays stable across
     // display-name mutations that happen while the input is open.
@@ -705,7 +457,7 @@ export function useSidebarController({
       projectId: string | null,
       sessionId: string,
       sessionTitle: string,
-      provider: SessionDeleteConfirmation['provider'] = 'claude',
+      provider: SessionDeleteConfirmation['provider'] = 'gjc',
       options: {
         isArchived?: boolean;
       } = {},
@@ -873,6 +625,15 @@ export function useSidebarController({
     }
   }, [fetchArchivedSessions, onRefresh, t]);
 
+  const openArchive = useCallback(() => {
+    setIsArchiveOpen(true);
+    void fetchArchivedSessions();
+  }, [fetchArchivedSessions]);
+
+  const closeArchive = useCallback(() => {
+    setIsArchiveOpen(false);
+  }, []);
+
   const refreshProjects = useCallback(async () => {
     setIsRefreshing(true);
     try {
@@ -934,15 +695,15 @@ export function useSidebarController({
     isRefreshing,
     editingSession,
     editingSessionName,
-    searchFilter,
     deletingProjects,
     loadingMoreProjects,
     deleteConfirmation,
     sessionDeleteConfirmation,
-    filteredProjects,
-    runningSessionsCount,
-    archivedProjects: filteredArchivedProjects,
-    archivedSessions: filteredArchivedSessions,
+    filteredProjects: sortedProjects,
+    isArchiveOpen,
+    archiveLoadError,
+    archivedProjects,
+    archivedSessions,
     archivedSessionsCount: archivedProjects.length + archivedSessions.length,
     isArchivedSessionsLoading,
     toggleProject,
@@ -962,6 +723,8 @@ export function useSidebarController({
     openArchivedSession,
     restoreArchivedProject,
     restoreArchivedSession,
+    openArchive,
+    closeArchive,
     refreshProjects,
     updateSessionSummary,
     collapseSidebar,
@@ -970,22 +733,6 @@ export function useSidebarController({
     setEditingName,
     setEditingSession,
     setEditingSessionName,
-    searchMode,
-    setSearchMode,
-    conversationResults,
-    isSearching,
-    searchProgress,
-    clearConversationResults: useCallback(() => {
-      searchSeqRef.current += 1;
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      setIsSearching(false);
-      setSearchProgress(null);
-      setConversationResults(null);
-    }, []),
-    setSearchFilter,
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
   };

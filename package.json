@@ -52,6 +52,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
     "check:identity": "node scripts/check-identity.mjs",
     "audit": "npm audit --audit-level=high",
+    "audit:react": "npx react-doctor@latest",
     "check:core": "cargo fmt --manifest-path native/gajae-core/Cargo.toml -- --check && cargo clippy --locked --manifest-path native/gajae-core/Cargo.toml --all-targets -- -D warnings && cargo test --locked --manifest-path native/gajae-core/Cargo.toml",
     "fill:runtime-manifest": "node scripts/fill-runtime-manifest.mjs",
     "test": "node scripts/run-tests.mjs",
@@ -81,8 +82,7 @@
       "dist-native/",
       "shared/",
       "server/",
-      "package.json",
-      "!**/node_modules/@anthropic-ai/claude-agent-sdk-{darwin,linux,win32}-*/**"
+      "package.json"
     ],
     "protocols": [
       {
@@ -131,12 +131,6 @@
   },
   "keywords": [
     "gajae-app",
-    "claude code",
-    "claude-code",
-    "claude-code-ui",
-    "codex",
-    "cursor",
-    "cursor-cli",
     "anthropic",
     "openai",
     "google",
@@ -232,6 +226,8 @@
     "lint-staged": "^16.3.2",
     "node-gyp": "^13.0.1",
     "postcss": "^8.4.32",
+    "react-grab": "^0.1.48",
+    "react-scan": "^0.5.7",
     "release-it": "^20.2.1",
     "sharp": "^0.34.2",
     "tailwindcss": "^3.4.0",

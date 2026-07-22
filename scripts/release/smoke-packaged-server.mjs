@@ -139,25 +139,61 @@ async function sqliteSnapshot(target, database) {
   });
   return JSON.parse(output.trim());
 }
+async function createV6JobsFixture(target, database) {
+  const source = `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); const Database = require('better-sqlite3'); const db = new Database(process.argv[1]); db.pragma('foreign_keys = ON'); db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(5),(6); CREATE TABLE jobs (id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, state TEXT NOT NULL, lease_owner TEXT NULL, lease_generation INTEGER NOT NULL DEFAULT 0, next_lease_generation INTEGER NOT NULL DEFAULT 1, worktree_id TEXT NULL, branch TEXT NULL, base_commit TEXT NULL, repository_root TEXT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, prompt TEXT NULL); CREATE TABLE runs (run_id TEXT PRIMARY KEY NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, app_session_id TEXT NULL, provider_session_id TEXT NULL, state TEXT NOT NULL DEFAULT 'queued', outcome TEXT NULL, dispatched_at TEXT NULL); CREATE TABLE job_events (job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, event_id TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT NULL REFERENCES runs(run_id), UNIQUE(job_id,sequence), UNIQUE(job_id,event_id)); CREATE INDEX job_events_job_sequence ON job_events(job_id,sequence); CREATE TABLE session_job_bindings (provider TEXT NOT NULL, app_session_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id), provider_session_id TEXT NULL, bound_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, released_at TEXT NULL, UNIQUE(job_id)); CREATE UNIQUE INDEX active_session_job_bindings ON session_job_bindings(provider,app_session_id) WHERE released_at IS NULL;"); db.prepare("INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation,created_at,prompt) VALUES(?, 'gjc', 'succeeded', NULL, 0, 1, '2026-01-01T00:00:00.000Z', 'preserved packaged v6 job')").run(process.argv[2]); db.prepare("INSERT INTO runs(run_id,job_id,app_session_id,state,outcome,dispatched_at) VALUES('packaged-v6-run', ?, 'packaged-v6-session', 'succeeded', 'succeeded', '2026-01-01T00:00:01.000Z')").run(process.argv[2]); db.prepare("INSERT INTO job_events(job_id,sequence,event_id,payload,run_id) VALUES(?, 1, 'packaged-v6-event', '{\\"type\\":\\"completed\\"}', 'packaged-v6-run')").run(process.argv[2]); db.close();`;
+  await new Promise((resolve, reject) => {
+    const child = spawn(target.command, ['--input-type=module', '--eval', source, database, 'packaged-v6-preserved-job'], {
+      cwd: target.cwd, env: { ...process.env, ...target.extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve() : reject(new Error(`v6 jobs fixture creation failed (${code}): ${stderr}`)));
+  });
+}
+
+async function v7MigrationSnapshot(target, database) {
+  const source = `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); const Database = require('better-sqlite3'); const db = new Database(process.argv[1], { readonly: true }); const migrationVersion = db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version; const archivedAt = db.prepare('SELECT archived_at AS archivedAt FROM jobs WHERE id=?').get(process.argv[2])?.archivedAt; console.log(JSON.stringify({ migrationVersion, archivedAt })); db.close();`;
+  const output = await new Promise((resolve, reject) => {
+    const child = spawn(target.command, ['--input-type=module', '--eval', source, database, 'packaged-v6-preserved-job'], {
+      cwd: target.cwd, env: { ...process.env, ...target.extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = ''; let stderr = '';
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve(stdout) : reject(new Error(`v7 migration inspection failed (${code}): ${stderr}`)));
+  });
+  return JSON.parse(output.trim());
+}
 
 async function smoke(target) {
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'gajae-packaged-smoke-'));
   const projectDir = path.resolve(option('--project-dir') || rootDir);
-  const instance = await launch(target, temporaryDirectory, projectDir);
+  const jobsDatabase = path.join(temporaryDirectory, 'jobs.sqlite3');
+  let instance;
   try {
+    await createV6JobsFixture(target, jobsDatabase);
+    instance = await launch(target, temporaryDirectory, projectDir);
     const { health, headers } = await bootstrap(instance);
     const denied = await request(`${instance.baseUrl}/api/gjc/jobs`);
     if (denied.status !== 401) throw new Error(`Unauthenticated API status was ${denied.status}, expected 401.`);
     const jobs = await request(`${instance.baseUrl}/api/gjc/jobs`, { headers });
-    if (!Array.isArray((await json(jobs, 'Authenticated GJC job list')).items)) throw new Error('Authenticated GJC job list did not return a list.');
+    const listedJobs = await json(jobs, 'Authenticated GJC job list');
+    const preservedJob = Array.isArray(listedJobs.items) ? listedJobs.items.find(item => item?.jobId === 'packaged-v6-preserved-job') : null;
+    if (!preservedJob || preservedJob.state !== 'succeeded' || preservedJob.lastSequence !== 1 || listedJobs.nextCursor !== null || Object.hasOwn(preservedJob, 'archivedAt')) throw new Error(`v6 GJC job list was not preserved after migration: ${JSON.stringify(listedJobs)}`);
     const create = await request(`${instance.baseUrl}/api/gjc/jobs`, { headers: { ...headers, 'content-type': 'application/json' }, method: 'POST', body: JSON.stringify({ appSessionId: `smoke-${crypto.randomUUID()}`, projectPath: projectDir, message: 'packaged server smoke' }) });
     const job = await json(create, 'GJC job creation');
     if (create.status !== 202 || typeof job.jobId !== 'string') throw new Error(`GJC job creation returned an invalid response: ${JSON.stringify(job)}`);
     const abort = await request(`${instance.baseUrl}/api/gjc/jobs/${encodeURIComponent(job.jobId)}/abort`, { headers, method: 'POST' });
     if (abort.status !== 202) throw new Error(`GJC job abort failed (${abort.status}).`);
+    await stop(instance);
+    const migration = await v7MigrationSnapshot(target, jobsDatabase);
+    if (migration.migrationVersion !== 7 || migration.archivedAt !== null) throw new Error(`v6 jobs.sqlite3 did not migrate to v7 with archived_at NULL: ${JSON.stringify(migration)}`);
     console.log(`${target.label} packaged server smoke passed: ${JSON.stringify(health)}`);
   } finally {
-    await stop(instance);
+    if (instance) await stop(instance);
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
 }

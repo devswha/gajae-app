@@ -32,6 +32,7 @@ export type ProjectListItem = {
   path: string;
   displayName: string;
   fullPath: string;
+  origin: 'legacy' | 'explicit' | 'auto';
   isStarred: boolean;
   sessions: SessionSummary[];
   sessionMeta: {
@@ -206,6 +207,7 @@ export async function getProjectsWithSessions(
     project_id: string;
     project_path: string;
     custom_project_name?: string | null;
+    origin?: 'legacy' | 'explicit' | 'auto' | null;
     isStarred?: number;
   }>;
   const totalProjects = projectRows.length;
@@ -270,6 +272,7 @@ export async function getProjectsWithSessions(
       displayName,
       fullPath: projectPath,
       isStarred: Boolean(row.isStarred),
+      origin: row.origin ?? 'legacy',
       sessions: sessionsPage.sessions,
       sessionMeta: {
         hasMore: sessionsPage.hasMore,
@@ -304,6 +307,7 @@ export async function getArchivedProjectsWithSessions(
     project_id: string;
     project_path: string;
     custom_project_name?: string | null;
+    origin?: 'legacy' | 'explicit' | 'auto' | null;
     isStarred?: number;
   }>;
 
@@ -326,6 +330,7 @@ export async function getArchivedProjectsWithSessions(
       displayName,
       fullPath: row.project_path,
       isStarred: Boolean(row.isStarred),
+      origin: row.origin ?? 'legacy',
       isArchived: true,
       sessions: sessionsPage.sessions,
       sessionMeta: {

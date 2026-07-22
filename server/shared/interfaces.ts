@@ -1,4 +1,4 @@
-import type { FetchHistoryOptions, FetchHistoryResult, LLMProvider, NormalizedMessage, ProviderAuthStatus, ProviderChangeActiveModelInput, ProviderCurrentActiveModel, ProviderModelsDefinition, ProviderSessionActiveModelChange } from '@/shared/types.js';
+import type { FetchHistoryOptions, FetchHistoryResult, LLMProvider, NormalizedMessage, ProviderAuthStatus, ProviderChangeActiveModelInput, ProviderCurrentActiveModel, ProviderModelsDefinition, ProviderSessionActiveModelChange, ProviderSkill, ProviderSkillListOptions } from '@/shared/types.js';
 
 //----------------- PROVIDER CONTRACT INTERFACES ------------
 /**
@@ -10,9 +10,14 @@ import type { FetchHistoryOptions, FetchHistoryResult, LLMProvider, NormalizedMe
 export interface IProvider {
   readonly id: LLMProvider;
   readonly models: IProviderModels;
+  readonly skills: IProviderSkills;
   readonly auth: IProviderAuth;
   readonly sessions: IProviderSessions;
   readonly sessionSynchronizer: IProviderSessionSynchronizer;
+}
+
+export interface IProviderSkills {
+  listSkills(options?: ProviderSkillListOptions): Promise<ProviderSkill[]>;
 }
 
 // ---------------------------

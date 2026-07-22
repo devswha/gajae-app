@@ -74,6 +74,7 @@ export type ProviderModelOption = {
   value: string;
   label: string;
   description?: string;
+  roles?: Partial<Record<'default' | 'planner' | 'executor' | 'architect' | 'critic', string>>;
   effort?: {
     default?: string;
     values: {
@@ -114,6 +115,18 @@ export type ProviderModelsCacheInfo = {
 export type ProviderModelsResult = {
   models: ProviderModelsDefinition;
   cache: ProviderModelsCacheInfo;
+};
+
+export type ProviderSkill = {
+  name: string;
+  description: string;
+  command: string;
+  scope: 'project' | 'user' | 'bundled';
+  sourcePath: string;
+};
+
+export type ProviderSkillListOptions = {
+  workspacePath?: string;
 };
 
 // ---------------------------
@@ -379,6 +392,7 @@ export type ProjectRepositoryRow = {
   custom_project_name: string | null;
   isStarred: number;
   isArchived: number;
+  origin: 'legacy' | 'explicit' | 'auto';
 };
 
 /**

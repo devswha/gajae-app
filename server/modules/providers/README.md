@@ -1,69 +1,65 @@
-﻿# Providers Module Guide
+# Providers Module Guide
 
 This file documents the current provider contract in `server/modules/providers`.
-Keep it current whenever provider wiring, skill discovery, or session sync
-behavior changes. The goal is that a human or AI agent can add a new provider
+Keep it current whenever provider wiring or session sync behavior changes. The
+goal is that a human or AI agent can understand or extend the provider layer
 without guessing which files need to move.
 
 ## Current Provider Shape
 
-Every provider wrapper exposes five facets:
+The app is GJC-only: `gjc` is the only registered provider
+(`provider.registry.ts`). The legacy provider ids `claude`, `codex`, `cursor`,
+and `opencode` were removed as execution lanes in the fork-legacy-removal waves
+(v2 = GJC-only). They survive only as data:
 
+- historical `sessions` rows in the database keep their original `provider`
+  value and render read-only in the UI;
+- `session-conversations-search.service.ts` still searches historical
+  Claude/Codex transcripts on disk;
+- the token-usage endpoint in `server/index.js` still reads historical
+  provider artifacts.
+
+Do not re-add legacy ids to the registry; new work targets `gjc` only.
+
+Every provider wrapper exposes four facets:
+
+- `models`
 - `auth`
-- `mcp`
-- `skills`
 - `sessions`
 - `sessionSynchronizer`
 
 These correspond to the shared interfaces in `server/shared/interfaces.ts`:
 
+- `IProviderModels`
 - `IProviderAuth`
-- `IProviderMcp`
-- `IProviderSkills`
 - `IProviderSessions`
 - `IProviderSessionSynchronizer`
 
 The services that consume them are:
 
+- `providerModelsService`
 - `providerAuthService`
-- `providerMcpService`
-- `providerSkillsService`
 - `sessionsService`
 - `sessionSynchronizerService`
 
-Current provider ids in this repo are:
-
-- `claude`
-- `codex`
-- `cursor`
-- `opencode`
-
-Those ids are mirrored in backend unions and frontend provider constants. If
-adding a new provider, update every place that hardcodes this list.
-
 ## Current File Layout
 
-Each provider lives under its own folder in `server/modules/providers/list/`:
-
 ```text
-server/modules/providers/list/<provider>/
-  <provider>.provider.ts
-  <provider>-auth.provider.ts
-  <provider>-mcp.provider.ts
-  <provider>-skills.provider.ts
-  <provider>-sessions.provider.ts
-  <provider>-session-synchronizer.provider.ts
+server/modules/providers/list/gjc/
+  gjc.provider.ts
+  gjc-auth.provider.ts
+  gjc-models.provider.ts
+  gjc-sessions.provider.ts
+  gjc-session-synchronizer.provider.ts
+  GJC-PROVIDER-SPEC.md
 ```
-
-The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
 
 ## What Each Facet Does
 
 | Facet | Responsibility | Base / Service |
 | --- | --- | --- |
+| `models` | Report the provider's supported model catalog | `IProviderModels` -> `providerModelsService` |
 | `auth` | Report install/auth state for the provider runtime | `IProviderAuth` -> `providerAuthService` |
-| `mcp` | Read, list, write, and remove provider-native MCP config | `McpProvider` -> `providerMcpService` |
-| `skills` | Discover provider-native skill markdown files | `SkillsProvider` -> `providerSkillsService` |
 | `sessions` | Normalize live events and fetch session history | `IProviderSessions` -> `sessionsService` |
 | `sessionSynchronizer` | Scan transcript artifacts and upsert session metadata | `IProviderSessionSynchronizer` -> `sessionSynchronizerService` |
 
@@ -72,34 +68,15 @@ The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
 - `sessions` handles runtime event normalization and history fetches.
 - `sessionSynchronizer` handles file-backed session indexing into `sessionsDb`.
 
-## How To Add A Provider
+## Facet Contracts
 
-1. Add the provider id everywhere it is part of the contract.
-
-- Update `server/shared/types.ts` `LLMProvider`.
-- Update `src/types/app.ts` `LLMProvider` if the frontend should know about it.
-- Update `server/modules/providers/provider.routes.ts`.
-- Update `server/index.js` if the provider needs runtime boot or shutdown wiring.
-- Update the `PROVIDER_ORDER` list in `public/api-docs.html` if the provider should appear in the public API docs.
-- Update `src/components/chat/hooks/useChatProviderState.ts` and
-  `src/components/chat/view/subcomponents/ProviderSelectionEmptyState.tsx` if
-  the provider should be selectable in chat.
-
-2. Create the wrapper class.
-
-- Add `server/modules/providers/list/<provider>/<provider>.provider.ts`.
-- Extend `AbstractProvider`.
-- Expose readonly `auth`, `mcp`, `skills`, `sessions`, and `sessionSynchronizer`.
-- Call `super('<provider>')`.
-
-3. Implement auth.
+Auth:
 
 - Return a full `ProviderAuthStatus`.
 - Treat normal `not installed` / `not authenticated` states as data, not exceptions.
 - Keep provider-specific credential discovery inside the auth provider.
-- If the provider has no auth step, return a stable unauthenticated or not-installed status instead of omitting the facet.
 
-6. Implement sessions.
+Sessions:
 
 - Implement `normalizeMessage(raw, sessionId)` and `fetchHistory(sessionId, options)`.
 - Use `createNormalizedMessage(...)` and `generateMessageId(...)` for emitted messages.
@@ -110,9 +87,8 @@ The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
   - `limit: 0` means an empty page.
   - always return `total`, `hasMore`, `offset`, and `limit` when paginating.
 - Sanitize any filesystem-derived ids before using them in file or database paths.
-- Do not assume a provider's history format matches another provider's format.
 
-7. Implement session synchronization.
+Session synchronization:
 
 - Implement `synchronize(since?: Date)` to scan provider artifacts and upsert
   sessions into `sessionsDb`.
@@ -124,88 +100,21 @@ The existing provider folders are `claude`, `codex`, `cursor`, and `opencode`.
   - `normalizeSessionName(...)`
   - `readFileTimestamps(...)`
 - Make the sync resilient to partial, malformed, or missing provider files.
-- The orchestration service runs all provider synchronizers and only advances
-  `scan_state.last_scanned_at` when every provider succeeds.
+- The orchestration service runs the synchronizer and only advances
+  `scan_state.last_scanned_at` when it succeeds.
 
-Current session sync roots are:
+Current session sync roots:
 
 | Provider | Scan Roots | Metadata Helpers / Notes |
 | --- | --- | --- |
-| Claude | `~/.claude/projects/**/*.jsonl` | Uses `~/.claude/history.jsonl` for name lookup and the trailing `ai-title`, `last-prompt`, or `custom-title` entries for title recovery. |
-| Codex | `~/.codex/sessions/**/*.jsonl` | Uses `~/.codex/session_index.jsonl` for title lookup and the last `task_complete` message for a fallback title. |
-| Cursor | `~/.cursor/projects/**/*.jsonl` | Uses sibling `worker.log` to recover `workspacePath`, then derives the session title from the first user prompt. |
-| OpenCode | `~/.local/share/opencode/opencode.db` | Reads active sessions/messages/parts from OpenCode's shared SQLite database and stores `jsonl_path` as `null` so deleting one app session cannot remove the shared DB. |
+| GJC | `~/.gjc` session transcripts (see `GJC-PROVIDER-SPEC.md`) | No dedicated title field or session index; the title is derived from the first user message, streamed line-by-line. `~/.gjc/agent/*.db` files are auth/cache/usage stores, not sessions — read-only. |
 
-8. Register the provider.
-
-- Add the new provider class to `server/modules/providers/provider.registry.ts`.
-- Update `server/modules/providers/provider.routes.ts` provider parsing.
-- If the provider introduces a new service or lifecycle hook, export it from the module entrypoint that consumes providers.
-
-9. Wire runtime and UI surfaces outside the providers module when needed.
-
-If the provider can run live chat sessions, update the runtime entrypoints too:
-
-- `server/index.js`
-
-If the provider is visible in the UI, update:
-
-- provider model fallback files under `server/modules/providers/list/<provider>/`
-- `src/components/chat/hooks/useChatProviderState.ts`
-- `src/components/chat/view/subcomponents/ProviderSelectionEmptyState.tsx`
-
-## Minimal Wrapper Template
-
-```ts
-import { AbstractProvider } from '@/modules/providers/shared/base/abstract.provider.js';
-import { <Provider>ProviderAuth } from './<provider>-auth.provider.js';
-import { <Provider>McpProvider } from './<provider>-mcp.provider.js';
-import { <Provider>SkillsProvider } from './<provider>-skills.provider.js';
-import { <Provider>SessionsProvider } from './<provider>-sessions.provider.js';
-import { <Provider>SessionSynchronizer } from './<provider>-session-synchronizer.provider.js';
-import type {
-  IProviderAuth,
-  IProviderMcp,
-  IProviderSessionSynchronizer,
-  IProviderSessions,
-  IProviderSkills,
-} from '@/shared/interfaces.js';
-
-export class <Provider>Provider extends AbstractProvider {
-  readonly auth: IProviderAuth = new <Provider>ProviderAuth();
-  readonly mcp: IProviderMcp = new <Provider>McpProvider();
-  readonly skills: IProviderSkills = new <Provider>SkillsProvider();
-  readonly sessions: IProviderSessions = new <Provider>SessionsProvider();
-  readonly sessionSynchronizer: IProviderSessionSynchronizer =
-    new <Provider>SessionSynchronizer();
-
-  constructor() {
-    super('<provider>');
-  }
-}
-```
-
-
-## Minimal Session Sync Template
-
-```ts
-import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
-
-export class <Provider>SessionSynchronizer implements IProviderSessionSynchronizer {
-  async synchronize(since?: Date): Promise<number> {
-    return 0;
-  }
-
-  async synchronizeFile(filePath: string): Promise<string | null> {
-    return null;
-  }
-}
-```
-
+The Rust `gajae-core watch` supervisor is the primary GJC watcher lane; the
+TypeScript synchronizer stays as defense-in-depth (see `server/GJC-LIVE-SPEC.md`).
 
 ## Validation
 
-After adding or changing a provider, run the relevant checks:
+After changing the provider layer, run the relevant checks:
 
 ```bash
 npx eslint server/modules/providers/**/*.ts server/shared/types.ts server/shared/interfaces.ts
@@ -214,6 +123,10 @@ npx tsc --noEmit -p server/tsconfig.json
 
 Useful tests in this repo:
 
+- `server/modules/providers/tests/gjc-sessions.test.ts`
+- `server/modules/providers/tests/gjc-session-watcher.test.ts`
+- `server/modules/providers/tests/provider-models.service.test.ts`
+
 If you touch sessions or session synchronization, add or update focused tests
 alongside the implementation.
 
@@ -221,15 +134,10 @@ alongside the implementation.
 
 - Adding provider files but forgetting `provider.registry.ts` or
   `provider.routes.ts`.
-- Updating backend provider ids but not `src/types/app.ts` or the frontend
-  provider constants.
-- Omitting `skills` or `sessionSynchronizer` from the wrapper.
 - Returning duplicate normalized message ids for split content.
 - Treating `limit === 0` as unbounded history.
 - Building file paths from raw session ids without validation.
-- Hardcoding a skill root without checking the provider's actual discovery rules.
-- Forgetting that Claude plugin skills are discovered differently from normal
-  user/project skill folders.
-- Assuming one provider's MCP config file format works for the others.
-
-
+- Writing to GJC's live `agent.db`/`history.db` (they belong to the running CLI;
+  reads only).
+- Reintroducing legacy provider execution lanes — historical sessions are
+  read-only data, not runnable providers.

@@ -5,7 +5,7 @@ import type { JobGitDiffResponse } from '../../shared/gjc-job-projection-protoco
 
 import { GjcGitClient } from './gjc-git-client.js';
 
-type JobSnapshot = { jobId: string; worktreeId?: string | null; branch?: string | null; repositoryRoot?: string | null; baseCommit?: string | null };
+type JobSnapshot = { jobId: string; state?: string | null; lastSequence?: number | null; worktreeId?: string | null; branch?: string | null; repositoryRoot?: string | null; baseCommit?: string | null };
 type Worktree = { worktreeId?: string; path?: string; branch?: string };
 type Jobs = {
   get(params: Record<string, unknown>): Promise<unknown>;
@@ -28,19 +28,72 @@ type Git = {
 function record(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid job authority response.'); return value as Record<string, unknown>; }
 function snapshot(value: unknown): JobSnapshot { const item = record(value); if (typeof item.jobId !== 'string') throw new Error('Invalid job authority response.'); return item as JobSnapshot; }
 function items(value: unknown): Worktree[] { const item = record(value); return Array.isArray(item.items) ? item.items.filter((entry): entry is Worktree => Boolean(entry) && typeof entry === 'object') : []; }
+type GitSummary = { status: 'available'; files: number; additions: number; deletions: number; stale: boolean } | { status: 'unavailable' };
+type CachedGitSummary = { summary: GitSummary; lastSequence: number | null; terminal: boolean };
+const TERMINAL_STATES = new Set(['ready', 'succeeded', 'failed', 'aborted', 'interrupted']);
+function patchSummary(text: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+    else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+  }
+  return { additions, deletions };
+}
+function diffResponse(value: unknown): JobGitDiffResponse {
+  const response = record(value);
+  const text = Buffer.isBuffer(response.patch) ? response.patch.toString('utf8') : typeof response.patch === 'string' ? response.patch : '';
+  const source = Array.isArray(response.paths) ? response.paths : Array.isArray(response.changedPaths) ? response.changedPaths : [...text.matchAll(/^diff --git a\/(.+) b\/(.+)$/gmu)].map(match => match[2]);
+  const paths = [...new Set(source.filter((path): path is string => typeof path === 'string' && path.length > 0 && !path.startsWith('/') && !path.split('/').includes('..')))];
+  return { text, paths };
+}
 /** Resolves git operations from an immutable job binding, never a client-supplied path. */
 function execute(cwd: string, args: string[]): Promise<string> { return new Promise((resolve, reject) => { const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }); let stdout = ''; let stderr = ''; child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; }); child.on('error', reject); child.on('close', code => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `git ${args[0]} failed`))); }); }
 export class GjcJobGitService {
+  private readonly summaryCache = new Map<string, CachedGitSummary>();
   constructor(private readonly jobs: Jobs, private readonly gitForRoot: (root: string) => Git, private readonly publishAdminEvent?: (jobId: string, eventId: string, payload: Record<string, unknown>) => Promise<void>) {}
 
-  async resolve(jobId: string): Promise<{ job: JobSnapshot; path: string; git: Git }> {
-    const job = snapshot(await this.jobs.get({ jobId }));
+  private async resolveSnapshot(job: JobSnapshot): Promise<{ job: JobSnapshot; path: string; git: Git }> {
     if (!job.repositoryRoot || !job.worktreeId || !job.branch || !job.baseCommit) throw new Error('Job has no complete worktree binding.');
     const git = this.gitForRoot(job.repositoryRoot);
     const worktree = items(await git.list({})).find(item => item.worktreeId === job.worktreeId);
     if (!worktree || typeof worktree.path !== 'string' || worktree.branch !== job.branch) throw new Error('Stored worktree is unavailable or no longer on the job branch.');
-    await git.status({ jobId, branch: job.branch, path: worktree.path });
+    await git.status({ jobId: job.jobId, branch: job.branch, path: worktree.path });
     return { job, path: worktree.path, git };
+  }
+  async resolve(jobId: string): Promise<{ job: JobSnapshot; path: string; git: Git }> {
+    return this.resolveSnapshot(snapshot(await this.jobs.get({ jobId })));
+  }
+  async summaries(jobIds: readonly string[], options: { forceRefresh?: boolean } = {}): Promise<Record<string, GitSummary>> {
+    const ids = [...new Set(jobIds)];
+    if (ids.length > 50) throw Object.assign(new Error('At most 50 job IDs are supported.'), { code: 'invalid_request' });
+    const summaries: Record<string, GitSummary> = {};
+    await Promise.all(ids.map(async jobId => {
+      let terminal = false;
+      let lastSequence: number | null = null;
+      let cacheable = false;
+      try {
+        const job = snapshot(await this.jobs.get({ jobId }));
+        terminal = TERMINAL_STATES.has(job.state?.toLowerCase() ?? '');
+        lastSequence = Number.isSafeInteger(job.lastSequence) ? job.lastSequence! : null;
+        cacheable = true;
+        const cached = this.summaryCache.get(jobId);
+        if (!options.forceRefresh && cached && ((terminal && cached.terminal && cached.lastSequence === lastSequence) || !terminal)) {
+          summaries[jobId] = !terminal && cached.summary.status === 'available' ? { ...cached.summary, stale: true } : cached.summary;
+          return;
+        }
+        const binding = await this.resolveSnapshot(job);
+        const response = diffResponse(await binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true }));
+        const summary: GitSummary = { status: 'available', files: response.paths.length, ...patchSummary(response.text), stale: !terminal };
+        this.summaryCache.set(jobId, { summary, lastSequence, terminal });
+        summaries[jobId] = summary;
+      } catch {
+        const summary: GitSummary = { status: 'unavailable' };
+        if (cacheable) this.summaryCache.set(jobId, { summary, lastSequence, terminal });
+        summaries[jobId] = summary;
+      }
+    }));
+    return summaries;
   }
   private async recordAdminEvent(jobId: string, eventId: string, payload: Record<string, unknown>): Promise<void> {
     if (this.publishAdminEvent) await this.publishAdminEvent(jobId, eventId, payload);
@@ -65,11 +118,7 @@ export class GjcJobGitService {
   async diff(jobId: string): Promise<JobGitDiffResponse> {
     const binding = await this.resolve(jobId);
     const value = await binding.git.diff({ jobId, branch: binding.job.branch, path: binding.path, mode: 'base', baseCommit: binding.job.baseCommit, includeUntracked: true });
-    const response = record(value);
-    const text = Buffer.isBuffer(response.patch) ? response.patch.toString('utf8') : typeof response.patch === 'string' ? response.patch : '';
-    const source = Array.isArray(response.paths) ? response.paths : Array.isArray(response.changedPaths) ? response.changedPaths : [...text.matchAll(/^diff --git a\/(.+) b\/(.+)$/gmu)].map(match => match[2]);
-    const paths = [...new Set(source.filter((path): path is string => typeof path === 'string' && path.length > 0 && !path.startsWith('/') && !path.split('/').includes('..')))];
-    return { text, paths };
+    return diffResponse(value);
   }
   async publish(jobId: string): Promise<{ branch: string }> {
     return this.lifecycle(jobId, 'publish', async () => {

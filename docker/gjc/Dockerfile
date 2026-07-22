@@ -1,6 +1,6 @@
 # Build from the repository root:
-# docker build --file docker/claude-code/Dockerfile --tag gajae-app-sandbox:claude-code .
-FROM docker/sandbox-templates:claude-code
+# docker build --file docker/gjc/Dockerfile --tag gajae-app-sandbox:gjc .
+FROM docker/sandbox-templates:gajae-code
 
 USER root
 WORKDIR /opt/gajae-app

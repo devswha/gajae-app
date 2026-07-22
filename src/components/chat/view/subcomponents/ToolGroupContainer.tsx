@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
-import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult, Provider } from '../../types/types';
+import type { ChatMessage, Provider } from '../../types/types';
+import type { CodeEditorDiffInfo } from '../../../code-editor/types/types';
 import type { Project } from '../../../../types/app';
 import type { ToolGroupItem } from '../../utils/toolGrouping';
 import { getToolConfig } from '../../tools';
@@ -19,9 +20,8 @@ interface ToolGroupContainerProps {
   prevMessage: ChatMessage | null;
   createDiff: (oldStr: string, newStr: string) => DiffLine[];
   getMessageKey: (message: ChatMessage) => string;
-  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null) => void;
   onShowSettings?: () => void;
-  onGrantToolPermission?: (suggestion: ClaudePermissionSuggestion) => PermissionGrantResult | null | undefined;
   showRawParameters?: boolean;
   showThinking?: boolean;
   selectedProject?: Project | null;
@@ -64,7 +64,6 @@ export default function ToolGroupContainer({
   getMessageKey,
   onFileOpen,
   onShowSettings,
-  onGrantToolPermission,
   showRawParameters,
   showThinking,
   selectedProject,
@@ -130,7 +129,6 @@ export default function ToolGroupContainer({
               createDiff={createDiff}
               onFileOpen={onFileOpen}
               onShowSettings={onShowSettings}
-              onGrantToolPermission={onGrantToolPermission}
               showRawParameters={showRawParameters}
               showThinking={showThinking}
               selectedProject={selectedProject}

@@ -51,4 +51,3 @@ export type MobileMenuButtonProps = {
   onMenuClick: () => void;
   compact?: boolean;
 };
-

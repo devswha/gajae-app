@@ -33,12 +33,13 @@ export const projectsDb = {
         const normalizedProjectName = normalizeProjectDisplayName(normalizedProjectPath, customProjectName);
         const attemptedId = randomUUID();
         const row = db.prepare(`
-        INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
-            VALUES (?, ?, ?, 0)
+        INSERT INTO projects (project_id, project_path, custom_project_name, isArchived, origin)
+            VALUES (?, ?, ?, 0, 'explicit')
             ON CONFLICT(project_path) DO UPDATE SET
-            isArchived = 0
+            isArchived = 0,
+            origin = 'explicit'
             WHERE projects.isArchived = 1
-            RETURNING project_id, project_path, custom_project_name, isStarred, isArchived
+            RETURNING project_id, project_path, custom_project_name, isStarred, isArchived, origin
         `).get(attemptedId, normalizedProjectPath, normalizedProjectName) as ProjectRepositoryRow | undefined;
 
         if (row) {
@@ -66,8 +67,8 @@ export const projectsDb = {
         const normalizedProjectPath = normalizeProjectPath(projectPath);
         const normalizedProjectName = normalizeProjectDisplayName(normalizedProjectPath, null);
         db.prepare(`
-        INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
-            VALUES (?, ?, ?, 0)
+        INSERT INTO projects (project_id, project_path, custom_project_name, isArchived, origin)
+            VALUES (?, ?, ?, 0, 'auto')
             ON CONFLICT(project_path) DO NOTHING
         `).run(randomUUID(), normalizedProjectPath, normalizedProjectName);
     },
@@ -76,7 +77,7 @@ export const projectsDb = {
         const db = getConnection();
         const normalizedProjectPath = normalizeProjectPath(projectPath);
         const row = db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, origin
             FROM projects
             WHERE project_path = ?
         `).get(normalizedProjectPath) as ProjectRepositoryRow | undefined;
@@ -87,7 +88,7 @@ export const projectsDb = {
     getProjectById(projectId: string): ProjectRepositoryRow | null {
         const db = getConnection();
         const row = db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, origin
             FROM projects
             WHERE project_id = ?
         `).get(projectId) as ProjectRepositoryRow | undefined;
@@ -117,7 +118,7 @@ export const projectsDb = {
     getProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
         const rows = db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, origin
             FROM projects
             WHERE isArchived = 0
         `).all() as ProjectRepositoryRow[];
@@ -131,7 +132,7 @@ export const projectsDb = {
     getArchivedProjectPaths(): ProjectRepositoryRow[] {
         const db = getConnection();
         const rows = db.prepare(`
-            SELECT project_id, project_path, custom_project_name, isStarred, isArchived
+            SELECT project_id, project_path, custom_project_name, isStarred, isArchived, origin
             FROM projects
             WHERE isArchived = 1
         `).all() as ProjectRepositoryRow[];
@@ -167,6 +168,18 @@ export const projectsDb = {
             SET custom_project_name = ?
             WHERE project_id = ?
         `).run(customProjectName, projectId);
+    },
+    promoteProjectOriginById(projectId: string): ProjectRepositoryRow | null {
+        const db = getConnection();
+        const row = db.prepare(`
+            UPDATE projects
+            SET origin = 'explicit'
+            WHERE project_id = ?
+              AND origin IN ('auto', 'legacy')
+            RETURNING project_id, project_path, custom_project_name, isStarred, isArchived, origin
+        `).get(projectId) as ProjectRepositoryRow | undefined;
+
+        return row ?? null;
     },
 
     updateProjectIsStarred(projectPath: string, isStarred: boolean): void {

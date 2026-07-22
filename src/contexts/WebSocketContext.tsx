@@ -46,6 +46,7 @@ type WebSocketContextType = {
   registerJobSubscription: (subscription: JobSubscription) => () => void;
   latestMessage: ServerEvent | null;
   isConnected: boolean;
+  isServerDraining: boolean;
 };
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -54,6 +55,47 @@ export const useWebSocket = () => {
   const context = useContext(WebSocketContext);
   if (!context) throw new Error('useWebSocket must be used within a WebSocketProvider');
   return context;
+};
+export const isServerDrainingCloseEvent = ({ code, reason }: Pick<CloseEvent, 'code' | 'reason'>) =>
+  code === 1001 && reason === 'server-draining';
+
+export const ServerDrainingOverlay = ({ isServerDraining }: { isServerDraining: boolean }) => {
+  if (!isServerDraining) return null;
+
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="server-draining-title"
+      aria-describedby="server-draining-description"
+      aria-live="assertive"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 2147483647,
+        display: 'grid',
+        placeItems: 'center',
+        padding: '1.5rem',
+        background: 'rgba(0, 0, 0, 0.72)',
+      }}
+    >
+      <section
+        style={{
+          maxWidth: '32rem',
+          padding: '2rem',
+          borderRadius: '0.75rem',
+          background: 'var(--background, #fff)',
+          color: 'var(--foreground, #111)',
+          boxShadow: '0 1rem 3rem rgba(0, 0, 0, 0.35)',
+        }}
+      >
+        <h1 id="server-draining-title">Server is shutting down</h1>
+        <p id="server-draining-description">
+          The server is cleaning up active work. Your job state is preserved and will be available when the server returns.
+        </p>
+      </section>
+    </div>
+  );
 };
 
 const buildWebSocketUrl = () => {
@@ -74,6 +116,8 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const [isConnected, setIsConnected] = useState(false);
   const { user } = useAuth();
   const authenticatedUserRef = useRef(user);
+  const isServerDrainingRef = useRef(false);
+  const [isServerDraining, setIsServerDraining] = useState(false);
 
   const dispatch = useCallback((event: ServerEvent) => {
     for (const listener of listenersRef.current) {
@@ -179,15 +223,20 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         }
       };
 
-      websocket.onclose = () => {
+      websocket.onclose = (event) => {
         if (!isCurrentSocket()) return;
         setIsConnected(false);
         wsRef.current = null;
         setSocket(null);
         clearReconnect();
+        if (isServerDrainingCloseEvent(event)) {
+          isServerDrainingRef.current = true;
+          setIsServerDraining(true);
+          return;
+        }
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectTimeoutRef.current = null;
-          if (unmountedRef.current || socketGenerationRef.current !== generation) return;
+          if (unmountedRef.current || socketGenerationRef.current !== generation || isServerDrainingRef.current) return;
           connect(generation, isAuthenticated);
         }, 3000);
       };
@@ -203,9 +252,18 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   }, [clearReconnect, dispatch, sendJobFrame, subscribeJobsForGeneration]);
 
   useEffect(() => {
-    if (authenticatedUserRef.current !== user) {
+    const previousUser = authenticatedUserRef.current;
+    const previousUserIdentity = previousUser?.id ?? previousUser?.username ?? null;
+    const userIdentity = user?.id ?? user?.username ?? null;
+    const isNewAuthenticatedLifecycle = userIdentity !== null && userIdentity !== previousUserIdentity;
+
+    if (previousUser !== user) {
       jobIntentsRef.current.clear();
       authenticatedUserRef.current = user;
+    }
+    if (isNewAuthenticatedLifecycle) {
+      isServerDrainingRef.current = false;
+      setIsServerDraining(false);
     }
   }, [user]);
   useEffect(() => {
@@ -219,7 +277,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     setSocket(null);
     setIsConnected(false);
     previousSocket?.close();
-    connect(generation, Boolean(user));
+    if (!isServerDrainingRef.current) connect(generation, Boolean(user));
 
     return () => {
       if (socketGenerationRef.current !== generation) return;
@@ -297,12 +355,18 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     registerJobSubscription,
     latestMessage,
     isConnected,
-  }), [isConnected, latestMessage, registerJobSubscription, sendMessage, socket, subscribe]);
+    isServerDraining,
+  }), [isConnected, isServerDraining, latestMessage, registerJobSubscription, sendMessage, socket, subscribe]);
 };
 
 export const WebSocketProvider = ({ children }: { children: React.ReactNode }) => {
   const webSocketData = useWebSocketProviderState();
-  return <WebSocketContext.Provider value={webSocketData}>{children}</WebSocketContext.Provider>;
+  return (
+    <WebSocketContext.Provider value={webSocketData}>
+      {children}
+      <ServerDrainingOverlay isServerDraining={webSocketData.isServerDraining} />
+    </WebSocketContext.Provider>
+  );
 };
 
 export default WebSocketContext;

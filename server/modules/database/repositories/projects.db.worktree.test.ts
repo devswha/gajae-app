@@ -53,10 +53,12 @@ test('session-sync ensure never reactivates an archived project', () => {
   // Background sync keeps landing sessions in the archived directory…
   projectsDb.ensureProjectPathForSession('/home/user/parked-project');
   assert.equal(projectsDb.getProjectPath('/home/user/parked-project')?.isArchived, 1);
+  assert.equal(projectsDb.getProjectPath('/home/user/parked-project')?.origin, 'explicit');
 
   // …while a genuinely new directory still gets an active row.
   projectsDb.ensureProjectPathForSession('/home/user/fresh-project');
   assert.equal(projectsDb.getProjectPath('/home/user/fresh-project')?.isArchived, 0);
+  assert.equal(projectsDb.getProjectPath('/home/user/fresh-project')?.origin, 'auto');
 
   // The user-facing create path intentionally keeps its reactivation contract.
   const reactivated = projectsDb.createProjectPath('/home/user/parked-project');

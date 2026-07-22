@@ -68,6 +68,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+    publish: (jobId) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/publish`, {
+      method: 'POST',
+    }),
+    createPullRequest: (jobId, input) => authenticatedFetch(`/api/gjc/jobs/${encodeURIComponent(jobId)}/git/pr`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   },
   archivedProjects: () => authenticatedFetch('/api/projects/archived'),
   // Home-relative directory autocomplete ({ home, suggestions }).
@@ -81,7 +88,7 @@ export const api = {
   },
   // Unified endpoint for persisted session messages.
   // Provider/project metadata are resolved by the backend from sessionId.
-  unifiedSessionMessages: (sessionId, _provider = 'claude', { limit = null, offset = 0 } = {}) => {
+  unifiedSessionMessages: (sessionId, _provider = 'gjc', { limit = null, offset = 0 } = {}) => {
     const params = new URLSearchParams();
     if (limit !== null) {
       params.append('limit', String(limit));
@@ -147,6 +154,10 @@ export const api = {
     authenticatedFetch('/api/projects/migrate-legacy-stars', {
       method: 'POST',
       body: JSON.stringify({ projectIds }),
+    }),
+  promoteProject: (projectId) =>
+    authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/promote`, {
+      method: 'POST',
     }),
   toggleProjectStar: (projectId) =>
     authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/toggle-star`, {

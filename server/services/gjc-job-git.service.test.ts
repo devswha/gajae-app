@@ -95,3 +95,65 @@ test('job git commit resolves its managed worktree, commits changed relative pat
     await rm(directory, { recursive: true, force: true });
   }
 });
+test('job git summaries isolate failures, parse patches, and cache by lifecycle state', async () => {
+  const snapshots = new Map<string, Record<string, unknown>>([
+    ['active', { jobId: 'active', state: 'running', lastSequence: 1, repositoryRoot: '/repo', worktreeId: 'active', branch: 'job/active', baseCommit: 'base' }],
+    ['terminal', { jobId: 'terminal', state: 'ready', lastSequence: 1, repositoryRoot: '/repo', worktreeId: 'terminal', branch: 'job/terminal', baseCommit: 'base' }],
+    ['broken', { jobId: 'broken', state: 'ready', lastSequence: 1, repositoryRoot: '/repo', worktreeId: 'broken', branch: 'job/broken', baseCommit: 'base' }],
+  ]);
+  const calls = { get: 0, list: 0, status: 0, diff: 0 };
+  const service = new GjcJobGitService(
+    {
+      get: async ({ jobId }) => { calls.get++; return snapshots.get(String(jobId)); },
+      appendAdminEvent: async () => ({}),
+    },
+    () => ({
+      list: async () => { calls.list++; return { items: ['active', 'terminal', 'broken'].map(worktreeId => ({ worktreeId, path: `/worktrees/${worktreeId}`, branch: `job/${worktreeId}` })) }; },
+      status: async () => { calls.status++; return {}; },
+      diff: async ({ jobId }) => {
+        calls.diff++;
+        if (jobId === 'broken') throw new Error('diff unavailable');
+        return { patch: [
+          'diff --git a/a.txt b/a.txt',
+          '--- a/a.txt',
+          '+++ b/a.txt',
+          '+added',
+          '-removed',
+          'diff --git a/b.txt b/b.txt',
+          '+second addition',
+          '\\ No newline at end of file',
+        ].join('\n') };
+      },
+    }),
+  );
+
+  assert.deepEqual(await service.summaries(['active', 'broken']), {
+    active: { status: 'available', files: 2, additions: 2, deletions: 1, stale: true },
+    broken: { status: 'unavailable' },
+  });
+  assert.equal(calls.diff, 2);
+  assert.deepEqual(await service.summaries(['active']), { active: { status: 'available', files: 2, additions: 2, deletions: 1, stale: true } });
+  assert.equal(calls.diff, 2);
+
+  assert.deepEqual(await service.summaries(['terminal']), { terminal: { status: 'available', files: 2, additions: 2, deletions: 1, stale: false } });
+  assert.equal(calls.diff, 3);
+  assert.deepEqual(await service.summaries(['terminal']), { terminal: { status: 'available', files: 2, additions: 2, deletions: 1, stale: false } });
+  assert.equal(calls.diff, 3);
+  snapshots.set('active', { ...snapshots.get('active')!, state: 'ready', lastSequence: 2 });
+  assert.deepEqual(await service.summaries(['active']), { active: { status: 'available', files: 2, additions: 2, deletions: 1, stale: false } });
+  assert.equal(calls.diff, 4);
+  assert.deepEqual(await service.summaries(['active'], { forceRefresh: true }), { active: { status: 'available', files: 2, additions: 2, deletions: 1, stale: false } });
+  assert.equal(calls.diff, 5);
+  assert.equal(calls.get, 7);
+  assert.equal(calls.list, 5);
+  assert.equal(calls.status, 5);
+});
+
+test('job git summaries allow 50 unique job IDs and reject larger batches', async () => {
+  const service = new GjcJobGitService(
+    { get: async ({ jobId }) => ({ jobId, state: 'ready', lastSequence: 1, repositoryRoot: '/repo', worktreeId: jobId, branch: `job/${jobId}`, baseCommit: 'base' }), appendAdminEvent: async () => ({}) },
+    () => ({ list: async () => ({ items: [] }), status: async () => ({}), diff: async () => ({}) }),
+  );
+  assert.equal(Object.keys(await service.summaries(Array.from({ length: 50 }, (_, index) => `job-${index}`))).length, 50);
+  await assert.rejects(service.summaries(Array.from({ length: 51 }, (_, index) => `job-${index}`)), { code: 'invalid_request' });
+});

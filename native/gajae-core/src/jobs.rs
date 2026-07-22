@@ -26,6 +26,13 @@ pub enum JobState {
     Aborted,
     Interrupted,
 }
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum ArchiveFilter {
+    Exclude,
+    Include,
+    Only,
+}
 
 impl JobState {
     fn can_transition_to(self, next: Self) -> bool {
@@ -508,6 +515,7 @@ impl PersistentAuthority {
             next_cursor,
         })
     }
+    #[cfg(test)]
     fn list(
         &self,
         state_filter: Option<JobState>,
@@ -515,6 +523,24 @@ impl PersistentAuthority {
         after: Option<&str>,
         limit: u64,
         budget: u64,
+    ) -> Result<JobList, AuthorityError> {
+        self.list_filtered(
+            state_filter,
+            provider,
+            after,
+            limit,
+            budget,
+            ArchiveFilter::Exclude,
+        )
+    }
+    fn list_filtered(
+        &self,
+        state_filter: Option<JobState>,
+        provider: Option<&str>,
+        after: Option<&str>,
+        limit: u64,
+        budget: u64,
+        archived: ArchiveFilter,
     ) -> Result<JobList, AuthorityError> {
         if !(1..=100).contains(&limit) {
             return Err(AuthorityError::InvalidIdentifier);
@@ -526,10 +552,15 @@ impl PersistentAuthority {
             validate_id(value)?;
         }
         let state_value = state_filter.map(JobState::as_str);
+        let archived = match archived {
+            ArchiveFilter::Exclude => "exclude",
+            ArchiveFilter::Include => "include",
+            ArchiveFilter::Only => "only",
+        };
         let after = after.unwrap_or("");
-        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,SUBSTR(j.prompt,1,256) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 GROUP BY j.id ORDER BY j.id LIMIT ?4").map_err(|_| AuthorityError::Storage)?;
+        let mut statement = self.connection.prepare("SELECT j.id,j.provider,j.state,j.lease_owner,j.lease_generation,j.worktree_id,j.branch,j.base_commit,j.repository_root,COALESCE(MAX(e.sequence),0),(SELECT run_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT app_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT provider_session_id FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),(SELECT dispatched_at FROM runs WHERE job_id=j.id ORDER BY rowid DESC LIMIT 1),j.created_at,SUBSTR(j.prompt,1,256) FROM jobs j LEFT JOIN job_events e ON e.job_id=j.id WHERE (?1 IS NULL OR j.state=?1) AND (?2 IS NULL OR j.provider=?2) AND j.id>?3 AND (?4='include' OR (?4='exclude' AND j.archived_at IS NULL) OR (?4='only' AND j.archived_at IS NOT NULL)) GROUP BY j.id ORDER BY j.id LIMIT ?5").map_err(|_| AuthorityError::Storage)?;
         let mut rows = statement
-            .query(params![state_value, provider, after, limit + 1])
+            .query(params![state_value, provider, after, archived, limit + 1])
             .map_err(|_| AuthorityError::Storage)?;
         let mut list = JobList {
             items: Vec::new(),
@@ -553,6 +584,38 @@ impl PersistentAuthority {
             list.items.push(item);
         }
         Ok(list)
+    }
+    fn archive(&mut self, id: &str) -> Result<JobSnapshot, AuthorityError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        if matches!(
+            state(&tx, id)?,
+            JobState::Reserved | JobState::Queued | JobState::Running | JobState::Aborting
+        ) {
+            return Err(AuthorityError::InvalidTransition);
+        }
+        tx.execute(
+            "UPDATE jobs SET archived_at=COALESCE(archived_at,CURRENT_TIMESTAMP) WHERE id=?1",
+            [id],
+        )
+        .map_err(|_| AuthorityError::Storage)?;
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
+    }
+    fn unarchive(&mut self, id: &str) -> Result<JobSnapshot, AuthorityError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| AuthorityError::Storage)?;
+        state(&tx, id)?;
+        tx.execute("UPDATE jobs SET archived_at=NULL WHERE id=?1", [id])
+            .map_err(|_| AuthorityError::Storage)?;
+        let result = snapshot_tx(&tx, id)?;
+        tx.commit().map_err(|_| AuthorityError::Storage)?;
+        Ok(result)
     }
     fn reserve(
         &mut self,
@@ -1261,7 +1324,7 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
             |r| r.get(0),
         )
         .map_err(|_| AuthorityError::Storage)?;
-    if version > 6 {
+    if version > 7 {
         return Err(AuthorityError::Storage);
     }
     if version == 0 {
@@ -1324,6 +1387,11 @@ fn migrate(connection: &mut Connection) -> Result<(), AuthorityError> {
     }
     if version == 5 {
         tx.execute_batch("ALTER TABLE jobs ADD COLUMN prompt TEXT NULL; INSERT INTO schema_migrations(version) VALUES(6);")
+            .map_err(|_| AuthorityError::Storage)?;
+        version = 6;
+    }
+    if version == 6 {
+        tx.execute_batch("ALTER TABLE jobs ADD COLUMN archived_at TEXT NULL; INSERT INTO schema_migrations(version) VALUES(7);")
             .map_err(|_| AuthorityError::Storage)?;
     }
     tx.commit().map_err(|_| AuthorityError::Storage)
@@ -1424,6 +1492,7 @@ struct Request {
     byte_budget: Option<u64>,
     after_cursor: Option<String>,
     limit: Option<u64>,
+    archived: Option<ArchiveFilter>,
     cap: Option<u64>,
     worktree_id: Option<String>,
     branch: Option<String>,
@@ -1624,7 +1693,7 @@ fn dispatch(
             )?,
         ),
         "job.list" => serde_json::to_value(
-            authority.list(
+            authority.list_filtered(
                 request.state,
                 request.provider.as_deref(),
                 request.after_cursor.as_deref(),
@@ -1633,8 +1702,11 @@ fn dispatch(
                     .byte_budget
                     .unwrap_or(DEFAULT_LIST_BUDGET)
                     .min(DEFAULT_LIST_BUDGET),
+                request.archived.unwrap_or(ArchiveFilter::Exclude),
             )?,
         ),
+        "job.archive" => serde_json::to_value(authority.archive(id()?)?),
+        "job.unarchive" => serde_json::to_value(authority.unarchive(id()?)?),
         "job.readmit" => serde_json::to_value(
             authority.readmit(
                 id()?,
@@ -2405,40 +2477,182 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
-    fn migrates_v5_prompt_column_and_lists_existing_jobs() {
+    fn archive_commands_filter_without_changing_snapshot_shape() {
+        let (d, p) = db();
+        let mut a = PersistentAuthority::open(&p).unwrap();
+        a.reserve("active", "p", "owner", 4).unwrap();
+        assert_eq!(a.archive("active"), Err(AuthorityError::InvalidTransition));
+        let active_lease = a.snapshot("active").unwrap().lease.unwrap();
+        a.transition("active", &active_lease, JobState::Queued)
+            .unwrap();
+        assert_eq!(a.archive("active"), Err(AuthorityError::InvalidTransition));
+        a.transition("active", &active_lease, JobState::Running)
+            .unwrap();
+        assert_eq!(a.archive("active"), Err(AuthorityError::InvalidTransition));
+        a.transition("active", &active_lease, JobState::Aborting)
+            .unwrap();
+        assert_eq!(a.archive("active"), Err(AuthorityError::InvalidTransition));
+
+        let ready = a.reserve("ready", "p", "owner", 4).unwrap();
+        let lease = ready.lease.unwrap();
+        a.transition("ready", &lease, JobState::Queued).unwrap();
+        a.transition("ready", &lease, JobState::Running).unwrap();
+        a.finalize("ready", &lease, "done", json!(null), JobState::Succeeded)
+            .unwrap();
+        let archived = a.archive("ready").unwrap();
+        assert_eq!(archived.state, JobState::Succeeded);
+        assert!(
+            serde_json::to_value(&archived)
+                .unwrap()
+                .get("archivedAt")
+                .is_none()
+        );
+        let archived_at: Option<String> = a
+            .connection
+            .query_row("SELECT archived_at FROM jobs WHERE id='ready'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(archived_at.is_some());
+        a.archive("ready").unwrap();
+        let archived_at_after_first_archive = archived_at.clone();
+
+        let archived_at_after_second_archive: Option<String> = a
+            .connection
+            .query_row("SELECT archived_at FROM jobs WHERE id='ready'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            archived_at_after_second_archive,
+            archived_at_after_first_archive
+        );
+        assert_eq!(
+            a.list(None, None, None, 10, DEFAULT_LIST_BUDGET)
+                .unwrap()
+                .items
+                .iter()
+                .map(|item| item.job_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["active"]
+        );
+        assert_eq!(
+            a.list_filtered(
+                None,
+                None,
+                None,
+                10,
+                DEFAULT_LIST_BUDGET,
+                ArchiveFilter::Only,
+            )
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.job_id.as_str())
+            .collect::<Vec<_>>(),
+            vec!["ready"]
+        );
+        assert_eq!(
+            a.list_filtered(
+                None,
+                None,
+                None,
+                10,
+                DEFAULT_LIST_BUDGET,
+                ArchiveFilter::Include,
+            )
+            .unwrap()
+            .items
+            .len(),
+            2
+        );
+        a.unarchive("ready").unwrap();
+        a.unarchive("ready").unwrap();
+        let archived_at: Option<String> = a
+            .connection
+            .query_row("SELECT archived_at FROM jobs WHERE id='ready'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(archived_at, None);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn migrates_v5_and_v6_to_v7_with_nullable_archive_column() {
+        for version in [5, 6] {
+            let (d, p) = db();
+            let mut c = Connection::open(&p).unwrap();
+            let tx = c.transaction().unwrap();
+            create_normalized(&tx).unwrap();
+            if version == 6 {
+                tx.execute("ALTER TABLE jobs ADD COLUMN prompt TEXT NULL", [])
+                    .unwrap();
+            }
+            tx.execute_batch(&format!(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES({version});"
+            ))
+            .unwrap();
+            tx.execute(
+                "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,?3,?4,1,2)",
+                params!["legacy", "p", "reserved", "owner"],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            drop(c);
+
+            let a = PersistentAuthority::open(&p).unwrap();
+            assert_eq!(
+                a.connection
+                    .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            let archived_at: Option<String> = a
+                .connection
+                .query_row("SELECT archived_at FROM jobs WHERE id='legacy'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(archived_at, None);
+            assert_eq!(
+                a.list(None, None, None, 1, DEFAULT_LIST_BUDGET)
+                    .unwrap()
+                    .items
+                    .len(),
+                1
+            );
+            drop(a);
+            std::fs::remove_dir_all(d).unwrap();
+        }
+    }
+    #[test]
+    fn failed_v7_migration_rolls_back_archive_column() {
         let (d, p) = db();
         let mut c = Connection::open(&p).unwrap();
         let tx = c.transaction().unwrap();
         create_normalized(&tx).unwrap();
-        tx.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(5);").unwrap();
-        tx.execute(
-            "INSERT INTO jobs(id,provider,state,lease_owner,lease_generation,next_lease_generation) VALUES(?1,?2,?3,?4,1,2)",
-            params!["legacy", "p", "reserved", "owner"],
-        )
-        .unwrap();
+        tx.execute("ALTER TABLE jobs ADD COLUMN prompt TEXT NULL", [])
+            .unwrap();
+        tx.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO schema_migrations(version) VALUES(6); CREATE TRIGGER fail_v7 BEFORE INSERT ON schema_migrations WHEN NEW.version=7 BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
         tx.commit().unwrap();
         drop(c);
 
-        let a = PersistentAuthority::open(&p).unwrap();
+        assert!(matches!(
+            PersistentAuthority::open(&p),
+            Err(AuthorityError::Storage)
+        ));
+        let c = Connection::open(&p).unwrap();
         assert_eq!(
-            a.connection
-                .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
-                    .get::<_, i64>(0))
+            c.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
+                .get::<_, i64>(0))
                 .unwrap(),
             6
         );
-        let prompt: Option<String> = a
-            .connection
-            .query_row("SELECT prompt FROM jobs WHERE id='legacy'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(prompt, None);
-        let jobs = a.list(None, None, None, 1, DEFAULT_LIST_BUDGET).unwrap();
-        assert_eq!(jobs.items.len(), 1);
-        assert_eq!(jobs.items[0].job_id, "legacy");
-        assert!(jobs.items[0].created_at.len() == 19);
-        assert_eq!(jobs.items[0].prompt, None);
+        assert!(
+            c.query_row("SELECT archived_at FROM jobs LIMIT 1", [], |_| Ok(()))
+                .is_err()
+        );
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
@@ -2457,7 +2671,7 @@ mod tests {
                 .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            6
+            7
         );
         drop(a);
         PersistentAuthority::open(&p).unwrap();
@@ -2580,7 +2794,7 @@ mod tests {
                     .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r
                         .get::<_, i64>(0))
                     .unwrap(),
-                6
+                7
             );
             authority
                 .connection

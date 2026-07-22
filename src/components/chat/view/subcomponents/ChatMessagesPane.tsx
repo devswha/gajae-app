@@ -3,11 +3,11 @@ import { memo, useCallback, useMemo } from 'react';
 import type { RefObject } from 'react';
 
 import type { ChatMessage } from '../../types/types';
+import type { CodeEditorDiffInfo } from '../../../code-editor/types/types';
 import type {
   Project,
   ProjectSession,
   LLMProvider,
-  ProviderModelsDefinition,
 } from '../../../../types/app';
 import { getIntrinsicMessageKey } from '../../utils/messageKeys';
 import { groupConsecutiveTools, isToolGroupItem } from '../../utils/toolGrouping';
@@ -30,18 +30,6 @@ interface ChatMessagesPaneProps {
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
   provider: LLMProvider;
-  setProvider: (provider: LLMProvider) => void;
-  textareaRef: RefObject<HTMLTextAreaElement>;
-  claudeModel: string;
-  setClaudeModel: (model: string) => void;
-  cursorModel: string;
-  setCursorModel: (model: string) => void;
-  codexModel: string;
-  setCodexModel: (model: string) => void;
-  opencodeModel: string;
-  setOpenCodeModel: (model: string) => void;
-  providerModelCatalog: Partial<Record<LLMProvider, ProviderModelsDefinition>>;
-  providerModelsLoading: boolean;
   isLoadingMoreMessages: boolean;
   hasMoreMessages: boolean;
   totalMessages: number;
@@ -55,9 +43,8 @@ interface ChatMessagesPaneProps {
   loadAllJustFinished: boolean;
   showLoadAllOverlay: boolean;
   createDiff: any;
-  onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null) => void;
   onShowSettings?: () => void;
-  onGrantToolPermission: (suggestion: { entry: string; toolName: string }) => { success: boolean };
   showRawParameters?: boolean;
   showThinking?: boolean;
   selectedProject: Project;
@@ -74,18 +61,6 @@ function ChatMessagesPane({
   selectedSession,
   currentSessionId,
   provider,
-  setProvider,
-  textareaRef,
-  claudeModel,
-  setClaudeModel,
-  cursorModel,
-  setCursorModel,
-  codexModel,
-  setCodexModel,
-  opencodeModel,
-  setOpenCodeModel,
-  providerModelCatalog,
-  providerModelsLoading,
   isLoadingMoreMessages,
   hasMoreMessages,
   totalMessages,
@@ -101,12 +76,12 @@ function ChatMessagesPane({
   createDiff,
   onFileOpen,
   onShowSettings,
-  onGrantToolPermission,
   showRawParameters,
   showThinking,
   selectedProject,
 }: ChatMessagesPaneProps) {
   const { t } = useTranslation('chat');
+  const displayProvider = selectedSession?.provider ?? selectedSession?.__provider ?? provider;
   const groupedVisibleMessages = useMemo(
     () => groupConsecutiveTools(visibleMessages, Boolean(showThinking)),
     [visibleMessages, showThinking],
@@ -168,19 +143,6 @@ function ChatMessagesPane({
         <ProviderSelectionEmptyState
           selectedSession={selectedSession}
           currentSessionId={currentSessionId}
-          provider={provider}
-          setProvider={setProvider}
-          textareaRef={textareaRef}
-          claudeModel={claudeModel}
-          setClaudeModel={setClaudeModel}
-          cursorModel={cursorModel}
-          setCursorModel={setCursorModel}
-          codexModel={codexModel}
-          setCodexModel={setCodexModel}
-          opencodeModel={opencodeModel}
-          setOpenCodeModel={setOpenCodeModel}
-          providerModelCatalog={providerModelCatalog}
-          providerModelsLoading={providerModelsLoading}
         />
       ) : (
         <>
@@ -248,11 +210,10 @@ function ChatMessagesPane({
                     getMessageKey={getMessageKey}
                     onFileOpen={onFileOpen}
                     onShowSettings={onShowSettings}
-                    onGrantToolPermission={onGrantToolPermission}
                     showRawParameters={showRawParameters}
                     showThinking={showThinking}
                     selectedProject={selectedProject}
-                    provider={provider}
+                    provider={displayProvider}
                   />
                 );
               }
@@ -268,11 +229,10 @@ function ChatMessagesPane({
                   createDiff={createDiff}
                   onFileOpen={onFileOpen}
                   onShowSettings={onShowSettings}
-                  onGrantToolPermission={onGrantToolPermission}
                   showRawParameters={showRawParameters}
                   showThinking={showThinking}
                   selectedProject={selectedProject}
-                  provider={provider}
+                  provider={displayProvider}
                 />
               );
             });

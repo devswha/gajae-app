@@ -7,7 +7,6 @@ import { cn } from '../../../../lib/utils';
 import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
 import type { SessionWithProvider } from '../../types/types';
 import { createSessionViewModel } from '../../utils/utils';
-import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 
 type SidebarSessionItemProps = {
   project: Project;
@@ -15,6 +14,8 @@ type SidebarSessionItemProps = {
   selectedSession: ProjectSession | null;
   isProcessing: boolean;
   needsAttention: boolean;
+  showProjectName?: boolean;
+  compact?: boolean;
   currentTime: Date;
   editingSession: string | null;
   editingSessionName: string;
@@ -67,6 +68,8 @@ export default function SidebarSessionItem({
   selectedSession,
   isProcessing,
   needsAttention,
+  showProjectName = false,
+  compact = false,
   currentTime,
   editingSession,
   editingSessionName,
@@ -148,26 +151,17 @@ export default function SidebarSessionItem({
       <div className="md:hidden">
         <div
           className={cn(
-            'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
-            isSelected ? 'bg-primary/5 border-primary/20' : '',
+            'relative mx-0 my-0.5 rounded-lg border border-transparent bg-transparent p-2 active:scale-[0.98] transition-all duration-150',
+            isSelected ? 'bg-accent text-accent-foreground' : '',
             !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20'
+              ? 'bg-muted/30'
               : !isSelected && sessionView.isActive
-              ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
-              : 'border-border/30',
+              ? 'bg-green-500/5'
+              : 'hover:bg-accent/70',
           )}
           onClick={selectMobileSession}
         >
           <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                'w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0',
-                isSelected ? 'bg-primary/10' : 'bg-muted/50',
-              )}
-            >
-              <SessionProviderLogo provider={session.__provider} className="h-3 w-3" />
-            </div>
-
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <div className="min-w-0 flex-1 truncate text-sm font-normal text-foreground">{sessionView.sessionName}</div>
@@ -183,8 +177,9 @@ export default function SidebarSessionItem({
                   <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">{compactSessionAge}</span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center">
-                {sessionView.messageCount > 0 && (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                {showProjectName && <span className="truncate text-[11px] text-muted-foreground">{project.displayName}</span>}
+                {!showProjectName && sessionView.messageCount > 0 && (
                   <Badge variant="secondary" className="px-1 py-0 text-xs">
                     {sessionView.messageCount}
                   </Badge>
@@ -194,13 +189,13 @@ export default function SidebarSessionItem({
 
             {!isProcessing && (
               <button
-                className="ml-1 flex h-5 w-5 items-center justify-center rounded-md bg-red-50 opacity-70 transition-transform active:scale-95 dark:bg-red-900/20"
+                className="ml-1 flex size-7 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-destructive active:scale-95"
                 onClick={(event) => {
                   event.stopPropagation();
                   requestDeleteSession();
                 }}
               >
-                <Trash2 className="h-2.5 w-2.5 text-red-600 dark:text-red-400" />
+                <Trash2 className="size-3 text-current" />
               </button>
             )}
           </div>
@@ -212,13 +207,15 @@ export default function SidebarSessionItem({
           href={`/session/${session.id}`}
           className={cn(
             buttonVariants({ variant: 'ghost' }),
-            'h-auto w-full justify-start rounded-md border bg-card p-2 text-left font-normal transition-all duration-150',
-            isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
+            compact
+              ? 'h-8 min-h-8 w-full justify-start rounded-md border border-transparent bg-transparent px-2 py-1 text-left font-normal transition-colors duration-150'
+              : 'h-auto min-h-9 w-full justify-start rounded-lg border border-transparent bg-transparent px-2.5 py-2 text-left font-normal transition-all duration-150',
+            isSelected ? 'bg-accent text-accent-foreground' : '',
             !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
+              ? 'bg-muted/30 hover:bg-muted/40'
               : !isSelected && sessionView.isActive
-                ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
-                : 'hover:bg-accent/50',
+                ? 'bg-green-500/5 hover:bg-green-500/10'
+                : 'hover:bg-accent/70',
           )}
           // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the
           // native right-click menu use the href to open a new tab/window.
@@ -228,15 +225,7 @@ export default function SidebarSessionItem({
             onSessionSelect(session, project.projectId);
           }}
         >
-          <div className="flex w-full min-w-0 items-center gap-2">
-            <div
-              className={cn(
-                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md',
-                isSelected ? 'bg-primary/10' : 'bg-muted/50',
-              )}
-            >
-              <SessionProviderLogo provider={session.__provider} className="h-3 w-3" />
-            </div>
+          <div className={cn('flex w-full min-w-0 items-center', compact ? 'gap-1.5' : 'gap-2')}>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <div className="min-w-0 flex-1 truncate text-sm font-normal text-foreground">{sessionView.sessionName}</div>
@@ -264,9 +253,10 @@ export default function SidebarSessionItem({
                   </span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center">
-                {sessionView.messageCount > 0 && <Badge variant="secondary" className="px-1 py-0 text-xs">{sessionView.messageCount}</Badge>}
-              </div>
+              {!compact && <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                {showProjectName && <span className="truncate text-[11px] text-muted-foreground">{project.displayName}</span>}
+                {!showProjectName && sessionView.messageCount > 0 && <Badge variant="secondary" className="px-1 py-0 text-xs">{sessionView.messageCount}</Badge>}
+              </div>}
             </div>
           </div>
         </a>

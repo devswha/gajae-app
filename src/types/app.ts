@@ -4,6 +4,7 @@ export type ProviderModelOption = {
   value: string;
   label: string;
   description?: string;
+  roles?: Partial<Record<'default' | 'planner' | 'executor' | 'architect' | 'critic', string>>;
   effort?: {
     default?: string;
     values: {
@@ -62,6 +63,7 @@ export interface Project {
   fullPath: string;
   path?: string;
   isStarred?: boolean;
+  origin?: 'legacy' | 'explicit' | 'auto';
   sessions?: ProjectSession[];
   sessionMeta?: ProjectSessionMeta;
   [key: string]: unknown;

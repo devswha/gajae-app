@@ -6,18 +6,14 @@
     "renameProject": "重新命名專案",
     "noProjects": "找不到專案",
     "loadingProjects": "載入專案中...",
-    "searchPlaceholder": "搜尋專案...",
     "projectNamePlaceholder": "專案名稱",
     "starred": "星號標記",
     "all": "全部",
     "untitledSession": "未命名工作階段",
     "newSession": "新工作階段",
-    "codexSession": "Codex 工作階段",
-    "fetchingProjects": "正在取得您的 Claude 專案和工作階段",
+    "fetchingProjects": "正在取得您的專案和工作階段",
     "projects": "專案",
-    "noMatchingProjects": "找不到符合的專案",
-    "tryDifferentSearch": "嘗試調整您的搜尋詞",
-    "runClaudeCli": "在專案目錄中執行 Claude CLI 以開始使用"
+    "createProjectHint": "建立一個專案以開始使用"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "工作階段",
+    "work": "工作",
+    "newTask": "新工作",
+    "newTaskCreatesProject": "建立專案以開始新工作",
     "newSession": "新增工作階段",
     "deleteSession": "刪除工作階段",
     "renameSession": "重新命名工作階段",
@@ -32,12 +31,15 @@
     "loadingSessions": "載入工作階段中...",
     "unnamed": "未命名",
     "loading": "載入中...",
-    "showMore": "顯示更多工作階段"
+    "showMore": "顯示更多工作階段",
+    "createSessionHint": "選擇專案並使用 + 開始工作階段"
   },
   "tooltips": {
     "viewEnvironments": "查看環境",
     "hideSidebar": "隱藏側邊欄",
     "createProject": "建立新專案",
+    "createSession": "建立新工作階段",
+    "selectProjectToCreateSession": "請先選擇一個專案",
     "refresh": "重新整理專案和工作階段 (Ctrl+R)",
     "renameProject": "重新命名專案 (F2)",
     "deleteProject": "從側邊欄移除專案 (Delete)",
@@ -45,9 +47,9 @@
     "removeFromFavorites": "從收藏移除",
     "editSessionName": "手動編輯工作階段名稱",
     "deleteSession": "永久刪除此工作階段",
+    "activeSessionIndicator": "最近活躍的工作階段（最近 10 分鐘）",
     "save": "儲存",
     "cancel": "取消",
-    "clearSearch": "清除搜尋",
     "openCommandPalette": "開啟指令面板",
     "attentionRequiredIndicator": "工作階段需要處理"
   },
@@ -58,6 +60,7 @@
     "terminal": "終端機"
   },
   "actions": {
+    "search": "搜尋",
     "refresh": "重新整理",
     "settings": "設定",
     "collapseAll": "全部收合",
@@ -116,18 +119,6 @@
   "version": {
     "updateAvailable": "有可用更新",
     "restartRequired": "已安裝更新 — 請重新啟動伺服器以套用"
-  },
-  "search": {
-    "modeProjects": "專案",
-    "modeConversations": "對話",
-    "conversationsPlaceholder": "搜尋對話內容...",
-    "searching": "搜尋中...",
-    "noResults": "找不到結果",
-    "tryDifferentQuery": "嘗試不同的搜尋詞",
-    "matches_one": "{{count}} 個符合",
-    "matches_other": "{{count}} 個符合",
-    "projectsScanned_one": "{{count}} 個專案已掃描",
-    "projectsScanned_other": "{{count}} 個專案已掃描"
   },
   "deleteConfirmation": {
     "deleteProject": "移除專案",

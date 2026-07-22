@@ -8,6 +8,14 @@ import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css'
 import './index.css'
 import 'katex/dist/katex.min.css'
 
+const enableReactInspectionTools =
+  import.meta.env.DEV && import.meta.env.VITE_DISABLE_REACT_DEVTOOLS !== '1'
+
+if (enableReactInspectionTools) {
+  void import('react-grab')
+  void import('react-scan')
+}
+
 // Initialize i18n
 import './i18n/config.js'
 

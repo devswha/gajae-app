@@ -212,5 +212,9 @@
   },
   "projectSelection": {
     "startChatWithProvider": "选择一个项目以开始与 {{provider}} 聊天"
+  },
+  "newSession": {
+    "greeting": "今天我们要构建什么？",
+    "subtitle": "Gajae Code 已准备好在 {{project}} 中工作。"
   }
 }

@@ -1,5 +1,8 @@
 import { GjcNativeClient, GjcNativeRequestError, type GjcNativeClientOptions } from './gjc-git-client.js';
 
+export type GjcArchivedFilter = 'exclude' | 'include' | 'only';
+export type GjcJobListParams = Record<string, unknown> & { archived?: GjcArchivedFilter };
+export type GjcJobReferenceParams = Record<string, unknown> & { jobId: string };
 export type GjcJobsClientOptions = GjcNativeClientOptions & { database: string };
 const MAX_JOBS_FRAME_BYTES = 64 * 1024;
 const REQUEST_ID_BYTES = '00000000-0000-0000-0000-000000000000';
@@ -59,8 +62,10 @@ export class GjcJobsClient extends GjcNativeClient {
     return this.request('job.appendAdminEvent', params);
   }
   replayEvents(params: Record<string, unknown>): Promise<unknown> { return this.request('event.replay', params); }
-  list(params: Record<string, unknown> = {}): Promise<unknown> { return this.request('job.list', params); }
-  get(params: Record<string, unknown>): Promise<unknown> { return this.request('job.get', params); }
+  list(params: GjcJobListParams = {}): Promise<unknown> { return this.request('job.list', params); }
+  get(params: GjcJobReferenceParams): Promise<unknown> { return this.request('job.get', params); }
+  archive(params: GjcJobReferenceParams): Promise<unknown> { return this.request('job.archive', params); }
+  unarchive(params: GjcJobReferenceParams): Promise<unknown> { return this.request('job.unarchive', params); }
   reconcile(params: Record<string, unknown> = {}): Promise<unknown> { return this.request('job.reconcile', params); }
   bindProviderSession(params: Record<string, unknown>): Promise<unknown> { return this.request('run.bindProviderSession', params); }
   bindingResolve(params: Record<string, unknown>): Promise<unknown> { return this.request('binding.resolve', params); }

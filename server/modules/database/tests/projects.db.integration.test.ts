@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
-import { closeConnection, getDatabasePath } from '@/modules/database/connection.js';
+import { closeConnection, getConnection, getDatabasePath } from '@/modules/database/connection.js';
 import { initializeDatabase } from '@/modules/database/init-db.js';
 import { projectsDb } from '@/modules/database/repositories/projects.db.js';
 
@@ -40,6 +40,7 @@ test('projectsDb.createProjectPath returns created for fresh paths', async () =>
     assert.ok(created.project);
     assert.equal(created.project?.project_path, '/workspace/new-project');
     assert.equal(created.project?.isArchived, 0);
+    assert.equal(created.project?.origin, 'explicit');
   });
 });
 
@@ -70,6 +71,62 @@ test('projectsDb.createProjectPath returns active_conflict for active duplicates
     assert.ok(conflict.project);
     assert.equal(conflict.project?.project_id, initial.project?.project_id);
     assert.equal(conflict.project?.isArchived, 0);
+    assert.equal(conflict.project?.origin, 'explicit');
+  });
+});
+test('projectsDb.ensureProjectPathForSession creates auto rows and preserves existing origins', async () => {
+  await withIsolatedDatabase(() => {
+    projectsDb.ensureProjectPathForSession('/workspace/auto-project');
+    assert.equal(projectsDb.getProjectPath('/workspace/auto-project')?.origin, 'auto');
+
+    const explicit = projectsDb.createProjectPath('/workspace/explicit-project');
+    assert.equal(explicit.outcome, 'created');
+    projectsDb.ensureProjectPathForSession('/workspace/explicit-project');
+    assert.equal(projectsDb.getProjectPath('/workspace/explicit-project')?.origin, 'explicit');
+
+    getConnection().prepare(`
+      INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
+      VALUES (?, ?, ?, 0)
+    `).run('legacy-project-id', '/workspace/legacy-project', 'Legacy Project');
+    projectsDb.ensureProjectPathForSession('/workspace/legacy-project');
+    assert.equal(projectsDb.getProjectPath('/workspace/legacy-project')?.origin, 'legacy');
+    const legacyConflict = projectsDb.createProjectPath('/workspace/legacy-project');
+    assert.equal(legacyConflict.outcome, 'active_conflict');
+    assert.equal(legacyConflict.project?.origin, 'legacy');
+  });
+});
+
+test('projectsDb.createProjectPath reactivates archived auto rows as explicit', async () => {
+  await withIsolatedDatabase(() => {
+    projectsDb.ensureProjectPathForSession('/workspace/archived-auto-project');
+    projectsDb.updateProjectIsArchived('/workspace/archived-auto-project', true);
+
+    const reactivated = projectsDb.createProjectPath('/workspace/archived-auto-project');
+
+    assert.equal(reactivated.outcome, 'reactivated_archived');
+    assert.equal(reactivated.project?.isArchived, 0);
+    assert.equal(reactivated.project?.origin, 'explicit');
+  });
+});
+
+test('projectsDb.promoteProjectOriginById promotes auto and legacy rows without changing archive state', async () => {
+  await withIsolatedDatabase(() => {
+    projectsDb.ensureProjectPathForSession('/workspace/auto-project');
+    const autoProject = projectsDb.getProjectPath('/workspace/auto-project');
+    assert.ok(autoProject);
+    projectsDb.updateProjectIsArchivedById(autoProject.project_id, true);
+
+    const promotedAuto = projectsDb.promoteProjectOriginById(autoProject.project_id);
+    assert.equal(promotedAuto?.origin, 'explicit');
+    assert.equal(promotedAuto?.isArchived, 1);
+
+    getConnection().prepare(`
+      INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
+      VALUES (?, ?, ?, 0)
+    `).run('legacy-project-id', '/workspace/legacy-project', 'Legacy Project');
+    const promotedLegacy = projectsDb.promoteProjectOriginById('legacy-project-id');
+    assert.equal(promotedLegacy?.origin, 'explicit');
+    assert.equal(promotedLegacy?.isArchived, 0);
   });
 });
 test('uses the gajae-app root and leaves the populated old root untouched without DATABASE_PATH', async () => {

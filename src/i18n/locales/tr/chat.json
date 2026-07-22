@@ -212,5 +212,9 @@
   },
   "projectSelection": {
     "startChatWithProvider": "{{provider}} ile sohbet etmeye başlamak için bir proje seç"
+  },
+  "newSession": {
+    "greeting": "Bugün ne inşa ediyoruz?",
+    "subtitle": "Gajae Code, {{project}} projesinde çalışmaya hazır."
   }
 }

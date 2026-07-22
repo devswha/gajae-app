@@ -273,6 +273,23 @@ test('default model role resolves deterministically and is reported in the start
     assert.equal(((response(f.frames, 'default-model').payload as Record<string, unknown>).result as Record<string, unknown>).model, 'contract-model');
   } finally { await f.close(); }
 });
+test('default model role resolves its selector without the thinking suffix', async () => {
+  const f = await fixture('openai-codex/gpt-5.6-sol:medium', undefined, {
+    id: 'gpt-5.6-sol',
+    provider: 'openai-codex',
+  });
+  try {
+    const run = f.host.handle(request('session.start', 'default-model-role-suffix', {
+      message: 'hello',
+      options: { ...f.options, modelId: 'default' },
+    }));
+    const session = await firstSession(f.sessions);
+    session.complete();
+    await run;
+    assert.equal(f.factoryOptions[0]!.model && (f.factoryOptions[0]!.model as { id: string }).id, 'gpt-5.6-sol');
+    assert.equal(((response(f.frames, 'default-model-role-suffix').payload as Record<string, unknown>).result as Record<string, unknown>).model, 'gpt-5.6-sol');
+  } finally { await f.close(); }
+});
 test('default model profile resolves its selector without the thinking suffix', async () => {
   const f = await fixture('', 'claude-fable', { id: 'claude-fable-5', provider: 'anthropic' });
   try {

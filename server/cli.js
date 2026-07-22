@@ -118,14 +118,13 @@ function showStatus() {
     console.log(`\n${c.info('[INFO]')} Configuration:`);
     console.log(`       SERVER_PORT: ${c.bright(process.env.SERVER_PORT || '3001')} ${c.dim(process.env.SERVER_PORT ? '' : '(default)')}`);
     console.log(`       DATABASE_PATH: ${c.dim(process.env.DATABASE_PATH || '(using default location)')}`);
-    console.log(`       CLAUDE_CLI_PATH: ${c.dim(process.env.CLAUDE_CLI_PATH || 'claude (default)')}`);
     console.log(`       CONTEXT_WINDOW: ${c.dim(process.env.CONTEXT_WINDOW || '160000 (default)')}`);
 
-    // Claude projects folder
-    const claudeProjectsPath = path.join(os.homedir(), '.claude', 'projects');
-    const projectsExists = fs.existsSync(claudeProjectsPath);
-    console.log(`\n${c.info('[INFO]')} Claude Projects Folder:`);
-    console.log(`       ${c.dim(claudeProjectsPath)}`);
+    // GJC data folder (session transcripts, agent state)
+    const gjcDataPath = path.join(os.homedir(), '.gjc');
+    const projectsExists = fs.existsSync(gjcDataPath);
+    console.log(`\n${c.info('[INFO]')} GJC Data Folder:`);
+    console.log(`       ${c.dim(gjcDataPath)}`);
     console.log(`       Status: ${projectsExists ? c.ok('[OK] Exists') : c.warn('[WARN] Not found')}`);
 
     // Config file location
@@ -178,7 +177,6 @@ Environment Variables:
   SERVER_PORT         Set server port (default: 3001)
   HOST                Set bind address (default: 127.0.0.1 — loopback only)
   DATABASE_PATH       Set custom database location
-  CLAUDE_CLI_PATH     Set custom Claude CLI path
   CONTEXT_WINDOW      Set context window size (default: 160000)
   GAJAE_ALLOW_UNAUTH_REMOTE  Set to 1 for a trusted private-network non-loopback bind
 
@@ -198,21 +196,21 @@ function showVersion() {
 
 // ── Sandbox command ─────────────────────────────────────────
 
+// GJC is the only sandboxed agent; the template bundles the Gajae App UI on
+// top of the Gajae Code CLI.
 const SANDBOX_TEMPLATES = {
-    claude: 'gajae-app-sandbox:claude-code',
-    codex: 'gajae-app-sandbox:codex',
+    gjc: 'gajae-app-sandbox:gjc',
 };
 
 const SANDBOX_SECRETS = {
-    claude: 'anthropic',
-    codex: 'openai',
+    gjc: 'gajae',
 };
 
 function parseSandboxArgs(args) {
     const result = {
         subcommand: null,
         workspace: null,
-        agent: 'claude',
+        agent: 'gjc',
         name: null,
         port: 3001,
         template: null,
@@ -257,7 +255,7 @@ function parseSandboxArgs(args) {
 
     // Default template from agent
     if (!result.template) {
-        result.template = SANDBOX_TEMPLATES[result.agent] || SANDBOX_TEMPLATES.claude;
+        result.template = SANDBOX_TEMPLATES[result.agent] || SANDBOX_TEMPLATES.gjc;
     }
 
     return result;
@@ -281,7 +279,7 @@ Subcommands:
   ${c.bright('help')}         Show this help
 
 Options:
-  -a, --agent <agent>       Agent to use: claude, codex (default: claude)
+  -a, --agent <agent>       Agent to use (only gjc is supported)
   -n, --name <name>         Sandbox name (default: derived from workspace folder)
   -t, --template <image>    Custom template image
   -e, --env <KEY=VALUE>     Set environment variable (repeatable)
@@ -289,7 +287,7 @@ Options:
 
 Examples:
   $ gajae-app sandbox ~/my-project
-  $ gajae-app sandbox ~/my-project --agent codex --port 8080
+  $ gajae-app sandbox ~/my-project --port 8080
   $ gajae-app sandbox ~/my-project --env SERVER_PORT=8080 --env HOST=0.0.0.0
   $ gajae-app sandbox ls
   $ gajae-app sandbox stop my-project
@@ -300,15 +298,14 @@ Prerequisites:
   1. Install sbx CLI: https://docs.docker.com/ai/sandboxes/get-started/
   2. Authenticate and store your API key:
        sbx login
-       sbx secret set -g anthropic   # for Claude
-       sbx secret set -g openai      # for Codex
+       sbx secret set -g gajae   # Gajae Code credentials
 
 Advanced usage:
   For branch mode, multiple workspaces, memory limits, network policies,
   or passing prompts to the agent, use sbx directly with the template:
 
-    sbx run --template gajae-app-sandbox:claude-code claude ~/my-project --branch my-feature
-    sbx run --template gajae-app-sandbox:claude-code claude ~/project ~/libs:ro --memory 8g
+    sbx run --template gajae-app-sandbox:gjc gjc ~/my-project --branch my-feature
+    sbx run --template gajae-app-sandbox:gjc gjc ~/project ~/libs:ro --memory 8g
 
   Full Docker Sandboxes docs: https://docs.docker.com/ai/sandboxes/usage/
 `);
@@ -347,7 +344,7 @@ async function sandboxCommand(args) {
         console.error(`\n${c.error('❌')} ${c.bright('sbx')} CLI not found.\n`);
         console.log(`   Install it from: ${c.info('https://docs.docker.com/ai/sandboxes/get-started/')}`);
         console.log(`   Then run: ${c.bright('sbx login')}`);
-        console.log(`   And store your API key: ${c.bright('sbx secret set -g anthropic')}\n`);
+        console.log(`   And store your API key: ${c.bright('sbx secret set -g gajae')}\n`);
         process.exit(1);
     }
 
@@ -442,7 +439,7 @@ async function sandboxCommand(args) {
                 process.exit(1);
             }
 
-            const secret = SANDBOX_SECRETS[opts.agent] || 'anthropic';
+            const secret = SANDBOX_SECRETS[opts.agent] || 'gajae';
 
             // Check if the required secret is stored
             try {

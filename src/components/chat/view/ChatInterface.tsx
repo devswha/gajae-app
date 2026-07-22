@@ -5,7 +5,8 @@ import { ArrowDownIcon } from 'lucide-react';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
 import PermissionContext from '../../../contexts/PermissionContext';
 import { QuickSettingsPanel } from '../../quick-settings-panel';
-import type { ChatInterfaceProps, Provider  } from '../types/types';
+import type { ChatInterfaceProps } from '../types/types';
+import type { ProjectSession } from '../../../types/app';
 import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
@@ -15,6 +16,11 @@ import { useSessionStore } from '../../../stores/useSessionStore';
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
+
+export function isHistoricalNonGjcReadOnlySession(selectedSession: ProjectSession | null): boolean {
+  const provider = selectedSession?.provider ?? selectedSession?.__provider;
+  return Boolean(provider && provider !== 'gjc');
+}
 
 function ChatInterface({
   selectedProject,
@@ -56,32 +62,18 @@ function ChatInterface({
     }
     accumulatedStreamRef.current = '';
   }, []);
+  const provider = 'gjc' as const;
 
   const {
-    provider,
-    setProvider,
-    cursorModel,
-    setCursorModel,
-    claudeModel,
-    setClaudeModel,
-    codexModel,
-    setCodexModel,
-    currentProviderEffort,
-    currentProviderEffortOptions,
-    opencodeModel,
-    setOpenCodeModel,
-    permissionMode,
+    gjcModel,
     pendingPermissionRequests,
     setPendingPermissionRequests,
-    cyclePermissionMode,
     providerModelCatalog,
     providerModelCacheCatalog,
-    providerModelsLoading,
     providerModelsRefreshing,
+    providerModelsLoading,
     hardRefreshProviderModels,
     selectProviderModel,
-    setStoredProviderEffort,
-    resolvePermissionModeForProvider,
   } = useChatProviderState({
     selectedSession,
     selectedProject,
@@ -182,7 +174,6 @@ function ChatInterface({
     handleClearInput,
     handleAbortSession,
     handlePermissionDecision,
-    handleGrantToolPermission,
     handleInputFocusChange,
     isInputFocused,
     commandModalPayload,
@@ -192,14 +183,7 @@ function ChatInterface({
     selectedProject,
     selectedSession,
     currentSessionId,
-    provider,
-    permissionMode,
-    cyclePermissionMode,
-    cursorModel,
-    claudeModel,
-    codexModel,
-    currentProviderEffort,
-    opencodeModel,
+    gjcModel,
     isLoading: isProcessing,
     canAbortSession,
     tokenBudget,
@@ -214,7 +198,6 @@ function ChatInterface({
     addMessage,
     setIsUserScrolledUp,
     setPendingPermissionRequests,
-    resolvePermissionModeForProvider,
   });
 
   // On WebSocket reconnect, re-fetch the current session's messages from the
@@ -289,22 +272,24 @@ function ChatInterface({
   // overlapping the last message.
   const hasActivityIndicator = Boolean(sessionActivity && pendingPermissionRequests.length === 0);
 
-  if (!selectedProject) {
-    const selectedProviderLabel =
-      provider === 'cursor'
-        ? t('messageTypes.cursor')
-        : provider === 'codex'
-          ? t('messageTypes.codex')
-          : provider === 'opencode'
-              ? t('messageTypes.opencode', { defaultValue: 'OpenCode' })
-            : t('messageTypes.claude');
+  const isReadOnlyHistoricalSession = isHistoricalNonGjcReadOnlySession(selectedSession);
 
+  // Codex-style landing: with a project selected but no session yet, the
+  // composer moves to a centered hero instead of sitting at the bottom of an
+  // empty message pane.
+  const isNewSessionLanding =
+    !isReadOnlyHistoricalSession
+    && !selectedSession
+    && !currentSessionId
+    && chatMessages.length === 0;
+
+  if (!selectedProject) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center text-muted-foreground">
           <p className="text-sm">
             {t('projectSelection.startChatWithProvider', {
-              provider: selectedProviderLabel,
+              provider: 'Gajae Code',
               defaultValue: 'Select a project to start chatting with {{provider}}',
             })}
           </p>
@@ -313,146 +298,149 @@ function ChatInterface({
     );
   }
 
+  const composerNode = (
+    <ChatComposer
+      pendingPermissionRequests={pendingPermissionRequests}
+      handlePermissionDecision={handlePermissionDecision}
+      activity={sessionActivity}
+      isLoading={isProcessing}
+      onAbortSession={handleAbortSession}
+      tokenBudget={tokenBudget}
+      onShowTokenUsage={showCostModal}
+      slashCommandsCount={slashCommandsCount}
+      onToggleCommandMenu={handleToggleCommandMenu}
+      hasInput={Boolean(input.trim())}
+      onClearInput={handleClearInput}
+      onSubmit={handleSubmit}
+      isDragActive={isDragActive}
+      queuedDraft={queuedDraft}
+      onEditQueuedDraft={editQueuedDraft}
+      onDeleteQueuedDraft={deleteQueuedDraft}
+      attachedImages={attachedImages}
+      onRemoveImage={(index) =>
+        setAttachedImages((previous) =>
+          previous.filter((_, currentIndex) => currentIndex !== index),
+        )
+      }
+      uploadingImages={uploadingImages}
+      imageErrors={imageErrors}
+      showFileDropdown={showFileDropdown}
+      filteredFiles={filteredFiles}
+      selectedFileIndex={selectedFileIndex}
+      onSelectFile={selectFile}
+      filteredCommands={filteredCommands}
+      selectedCommandIndex={selectedCommandIndex}
+      onCommandSelect={handleCommandSelect}
+      onCloseCommandMenu={resetCommandMenuState}
+      isCommandMenuOpen={showCommandMenu}
+      frequentCommands={commandQuery ? [] : frequentCommands}
+      getRootProps={getRootProps}
+      getInputProps={getInputProps}
+      openImagePicker={openImagePicker}
+      inputHighlightRef={inputHighlightRef}
+      renderInputWithMentions={renderInputWithMentions}
+      textareaRef={textareaRef}
+      input={input}
+      onVoiceTranscript={handleVoiceTranscript}
+      onInputChange={handleInputChange}
+      onTextareaClick={handleTextareaClick}
+      onTextareaKeyDown={handleKeyDown}
+      onTextareaPaste={handlePaste}
+      onTextareaScrollSync={syncInputOverlayScroll}
+      onTextareaInput={handleTextareaInput}
+      isInputFocused={isInputFocused}
+      onInputFocusChange={handleInputFocusChange}
+      placeholder={t('input.placeholder', { provider: 'Gajae Code' })}
+      isTextareaExpanded={isTextareaExpanded}
+      sendByCtrlEnter={sendByCtrlEnter}
+      modelPreset={gjcModel}
+      modelPresetOptions={providerModelCatalog.gjc?.OPTIONS ?? []}
+      modelPresetsLoading={providerModelsLoading}
+      onSelectModelPreset={(model) => selectProviderModel(
+        'gjc',
+        model,
+        currentSessionId || selectedSession?.id || null,
+      )}
+    />
+  );
+
   return (
     <PermissionContext.Provider value={permissionContextValue}>
       <div className="flex h-full min-h-0 flex-col">
-        <ChatMessagesPane
-          scrollContainerRef={scrollContainerRef}
-          onWheel={handleScroll}
-          onTouchMove={handleScroll}
-          isLoadingSessionMessages={isLoadingSessionMessages}
-          isProcessing={isProcessing}
-          hasActivityIndicator={hasActivityIndicator}
-          chatMessages={chatMessages}
-          selectedSession={selectedSession}
-          currentSessionId={currentSessionId}
-          provider={provider}
-          setProvider={(nextProvider) => setProvider(nextProvider as Provider)}
-          textareaRef={textareaRef}
-          claudeModel={claudeModel}
-          setClaudeModel={setClaudeModel}
-          cursorModel={cursorModel}
-          setCursorModel={setCursorModel}
-          codexModel={codexModel}
-          setCodexModel={setCodexModel}
-          opencodeModel={opencodeModel}
-          setOpenCodeModel={setOpenCodeModel}
-          providerModelCatalog={providerModelCatalog}
-          providerModelsLoading={providerModelsLoading}
-          isLoadingMoreMessages={isLoadingMoreMessages}
-          hasMoreMessages={hasMoreMessages}
-          totalMessages={totalMessages}
-          sessionMessagesCount={chatMessages.length}
-          visibleMessageCount={visibleMessageCount}
-          visibleMessages={visibleMessages}
-          loadEarlierMessages={loadEarlierMessages}
-          loadAllMessages={loadAllMessages}
-          allMessagesLoaded={allMessagesLoaded}
-          isLoadingAllMessages={isLoadingAllMessages}
-          loadAllJustFinished={loadAllJustFinished}
-          showLoadAllOverlay={showLoadAllOverlay}
-          createDiff={createDiff}
-          onFileOpen={onFileOpen}
-          onShowSettings={onShowSettings}
-          onGrantToolPermission={handleGrantToolPermission}
-          showRawParameters={showRawParameters}
-          showThinking={showThinking}
-          selectedProject={selectedProject}
-        />
-
-        <div className="relative flex-shrink-0">
-          {isUserScrolledUp && chatMessages.length > 0 && (
-            <div className="pointer-events-none absolute -top-11 left-0 right-0 z-20 flex justify-center">
-              <button
-                type="button"
-                onClick={scrollToBottomAndReset}
-                aria-label={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
-                title={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
-                className={
-                  hasNewMessagesBelow
-                    ? 'pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-all duration-200 hover:brightness-110'
-                    : 'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground'
-                }
-              >
-                {hasNewMessagesBelow && (
-                  <span>{t('input.newMessages', { defaultValue: '새 메시지' })}</span>
-                )}
-                <ArrowDownIcon className="h-4 w-4" aria-hidden />
-              </button>
+        {isNewSessionLanding ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 pb-[10vh] sm:px-6">
+            <div className="w-full max-w-[46rem]">
+              <h1 className="text-center text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                {t('newSession.greeting', { defaultValue: 'What are we building today?' })}
+              </h1>
+              <p className="mb-8 mt-2 text-center text-sm text-muted-foreground">
+                {t('newSession.subtitle', {
+                  project: selectedProject.displayName,
+                  defaultValue: 'Gajae Code is ready to work in {{project}}.',
+                })}
+              </p>
+              {composerNode}
             </div>
-          )}
+          </div>
+        ) : (
+          <>
+            <ChatMessagesPane
+              scrollContainerRef={scrollContainerRef}
+              onWheel={handleScroll}
+              onTouchMove={handleScroll}
+              isLoadingSessionMessages={isLoadingSessionMessages}
+              isProcessing={isProcessing}
+              hasActivityIndicator={hasActivityIndicator}
+              chatMessages={chatMessages}
+              selectedSession={selectedSession}
+              currentSessionId={currentSessionId}
+              provider="gjc"
+              isLoadingMoreMessages={isLoadingMoreMessages}
+              hasMoreMessages={hasMoreMessages}
+              totalMessages={totalMessages}
+              sessionMessagesCount={chatMessages.length}
+              visibleMessageCount={visibleMessageCount}
+              visibleMessages={visibleMessages}
+              loadEarlierMessages={loadEarlierMessages}
+              loadAllMessages={loadAllMessages}
+              allMessagesLoaded={allMessagesLoaded}
+              isLoadingAllMessages={isLoadingAllMessages}
+              loadAllJustFinished={loadAllJustFinished}
+              showLoadAllOverlay={showLoadAllOverlay}
+              createDiff={createDiff}
+              onFileOpen={onFileOpen}
+              onShowSettings={onShowSettings}
+              showRawParameters={showRawParameters}
+              showThinking={showThinking}
+              selectedProject={selectedProject}
+            />
 
-          <ChatComposer
-          pendingPermissionRequests={pendingPermissionRequests}
-          handlePermissionDecision={handlePermissionDecision}
-          handleGrantToolPermission={handleGrantToolPermission}
-          activity={sessionActivity}
-          isLoading={isProcessing}
-          onAbortSession={handleAbortSession}
-          permissionMode={permissionMode}
-          onModeSwitch={cyclePermissionMode}
-          effort={currentProviderEffort}
-          availableEffortOptions={currentProviderEffortOptions}
-          onSelectEffort={(nextEffort) => setStoredProviderEffort(provider, nextEffort)}
-          tokenBudget={tokenBudget}
-          onShowTokenUsage={showCostModal}
-          slashCommandsCount={slashCommandsCount}
-          onToggleCommandMenu={handleToggleCommandMenu}
-          hasInput={Boolean(input.trim())}
-          onClearInput={handleClearInput}
-          onSubmit={handleSubmit}
-          isDragActive={isDragActive}
-          queuedDraft={queuedDraft}
-          onEditQueuedDraft={editQueuedDraft}
-          onDeleteQueuedDraft={deleteQueuedDraft}
-          attachedImages={attachedImages}
-          onRemoveImage={(index) =>
-            setAttachedImages((previous) =>
-              previous.filter((_, currentIndex) => currentIndex !== index),
-            )
-          }
-          uploadingImages={uploadingImages}
-          imageErrors={imageErrors}
-          showFileDropdown={showFileDropdown}
-          filteredFiles={filteredFiles}
-          selectedFileIndex={selectedFileIndex}
-          onSelectFile={selectFile}
-          filteredCommands={filteredCommands}
-          selectedCommandIndex={selectedCommandIndex}
-          onCommandSelect={handleCommandSelect}
-          onCloseCommandMenu={resetCommandMenuState}
-          isCommandMenuOpen={showCommandMenu}
-          frequentCommands={commandQuery ? [] : frequentCommands}
-          getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
-          getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
-          openImagePicker={openImagePicker}
-          inputHighlightRef={inputHighlightRef}
-          renderInputWithMentions={renderInputWithMentions}
-          textareaRef={textareaRef}
-          input={input}
-          onVoiceTranscript={handleVoiceTranscript}
-          onInputChange={handleInputChange}
-          onTextareaClick={handleTextareaClick}
-          onTextareaKeyDown={handleKeyDown}
-          onTextareaPaste={handlePaste}
-          onTextareaScrollSync={syncInputOverlayScroll}
-          onTextareaInput={handleTextareaInput}
-          isInputFocused={isInputFocused}
-          onInputFocusChange={handleInputFocusChange}
-          placeholder={t('input.placeholder', {
-            provider:
-              provider === 'cursor'
-                ? t('messageTypes.cursor')
-                : provider === 'codex'
-                  ? t('messageTypes.codex')
-                  : provider === 'opencode'
-                      ? t('messageTypes.opencode', { defaultValue: 'OpenCode' })
-                    : t('messageTypes.claude'),
-          })}
-          isTextareaExpanded={isTextareaExpanded}
-          sendByCtrlEnter={sendByCtrlEnter}
-        />
-        </div>
+            <div className="relative flex-shrink-0">
+              {isUserScrolledUp && chatMessages.length > 0 && (
+                <div className="pointer-events-none absolute -top-11 left-0 right-0 z-20 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={scrollToBottomAndReset}
+                    aria-label={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
+                    title={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
+                    className={
+                      hasNewMessagesBelow
+                        ? 'pointer-events-auto flex h-8 items-center gap-1.5 rounded-full border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground shadow-md transition-all duration-200 hover:brightness-110'
+                        : 'pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground'
+                    }
+                  >
+                    {hasNewMessagesBelow && (
+                      <span>{t('input.newMessages', { defaultValue: '새 메시지' })}</span>
+                    )}
+                    <ArrowDownIcon className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+              )}
+
+              {!isReadOnlyHistoricalSession && composerNode}
+            </div>
+          </>
+        )}
       </div>
 
       <QuickSettingsPanel />

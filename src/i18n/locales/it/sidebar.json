@@ -6,18 +6,14 @@
     "renameProject": "Rinomina progetto",
     "noProjects": "Nessun progetto trovato",
     "loadingProjects": "Caricamento progetti...",
-    "searchPlaceholder": "Cerca progetti...",
     "projectNamePlaceholder": "Nome progetto",
     "starred": "Preferiti",
     "all": "Tutti",
     "untitledSession": "Sessione senza titolo",
     "newSession": "Nuova sessione",
-    "codexSession": "Sessione Codex",
-    "fetchingProjects": "Recupero dei tuoi progetti e sessioni Claude",
+    "fetchingProjects": "Recupero dei tuoi progetti e sessioni",
     "projects": "progetti",
-    "noMatchingProjects": "Nessun progetto corrispondente",
-    "tryDifferentSearch": "Prova a modificare il termine di ricerca",
-    "runClaudeCli": "Esegui Claude CLI in una directory di progetto per iniziare"
+    "createProjectHint": "Crea un progetto per iniziare"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "Sessioni",
+    "work": "Lavoro",
+    "newTask": "Nuova attività",
+    "newTaskCreatesProject": "Crea un progetto per iniziare una nuova attività",
     "newSession": "Nuova sessione",
     "deleteSession": "Elimina sessione",
     "renameSession": "Rinomina sessione",
@@ -32,12 +31,15 @@
     "loadingSessions": "Caricamento sessioni...",
     "unnamed": "Senza nome",
     "loading": "Caricamento...",
-    "showMore": "Mostra più sessioni"
+    "showMore": "Mostra più sessioni",
+    "createSessionHint": "Seleziona un progetto e usa + per avviare una sessione"
   },
   "tooltips": {
     "viewEnvironments": "Visualizza ambienti",
     "hideSidebar": "Nascondi barra laterale",
     "createProject": "Crea nuovo progetto",
+    "createSession": "Crea nuova sessione",
+    "selectProjectToCreateSession": "Seleziona prima un progetto",
     "refresh": "Aggiorna progetti e sessioni (Ctrl+R)",
     "renameProject": "Rinomina progetto (F2)",
     "deleteProject": "Rimuovi progetto dalla barra laterale (Canc)",
@@ -48,7 +50,6 @@
     "activeSessionIndicator": "Sessione attiva di recente (ultimi 10 minuti)",
     "save": "Salva",
     "cancel": "Annulla",
-    "clearSearch": "Cancella ricerca",
     "openCommandPalette": "Apri tavolozza comandi",
     "attentionRequiredIndicator": "La sessione richiede attenzione"
   },
@@ -59,6 +60,7 @@
     "terminal": "Terminale"
   },
   "actions": {
+    "search": "Cerca",
     "refresh": "Aggiorna",
     "settings": "Impostazioni",
     "collapseAll": "Comprimi tutto",
@@ -117,18 +119,6 @@
   "version": {
     "updateAvailable": "Aggiornamento disponibile",
     "restartRequired": "Aggiornamento installato — riavvia il server per applicarlo"
-  },
-  "search": {
-    "modeProjects": "Progetti",
-    "modeConversations": "Conversazioni",
-    "conversationsPlaceholder": "Cerca nelle conversazioni...",
-    "searching": "Ricerca in corso...",
-    "noResults": "Nessun risultato trovato",
-    "tryDifferentQuery": "Prova con una ricerca diversa",
-    "matches_one": "{{count}} corrispondenza",
-    "matches_other": "{{count}} corrispondenze",
-    "projectsScanned_one": "{{count}} progetto analizzato",
-    "projectsScanned_other": "{{count}} progetti analizzati"
   },
   "deleteConfirmation": {
     "deleteProject": "Rimuovi progetto",

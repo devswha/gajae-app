@@ -223,6 +223,11 @@ export async function resolveGjcResumeSessionRoot(
 
 export async function enrichGjcSdkRunOptions(options: GjcWorkerOptions): Promise<GjcWorkerOptions> {
   let modelId = options.modelId ?? options.model;
+  let modelProfile = typeof options.modelProfile === 'string' ? options.modelProfile.trim() : '';
+  if (typeof modelId === 'string' && modelId.startsWith('profile:')) {
+    modelProfile = modelId.slice('profile:'.length).trim();
+    modelId = 'default';
+  }
   if (modelId === null || modelId === undefined) {
     try {
       const { providerModelsService } = await import('./modules/providers/services/provider-models.service.js');
@@ -247,6 +252,7 @@ export async function enrichGjcSdkRunOptions(options: GjcWorkerOptions): Promise
     sessionRoot,
     credential: options.credential ?? { kind: 'stored' },
     modelId,
+    ...(modelProfile ? { modelProfile } : {}),
     toolNames: options.toolNames ?? ['bash', 'read', 'write', 'edit', 'search', 'find', 'ask'],
     spawns: options.spawns ?? '*',
     bashPolicy: options.bashPolicy ?? { allowedPrefixes: [] },

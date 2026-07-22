@@ -19,8 +19,6 @@ import type {
 } from '../types/types';
 import { getAllChangedFiles } from '../utils/gitPanelUtils';
 
-import { useSelectedProvider } from './useSelectedProvider';
-
 // ! use authenticatedFetch directly. fetchWithAuth is redundant 
 const fetchWithAuth = authenticatedFetch as (url: string, options?: RequestInit) => Promise<Response>;
 
@@ -73,8 +71,6 @@ export function useGitPanelController({
   useEffect(() => {
     selectedProjectIdRef.current = selectedProject?.projectId ?? null;
   }, [selectedProject]);
-
-  const provider = useSelectedProvider();
 
   const fetchFileDiff = useCallback(
     async (filePath: string, signal?: AbortSignal) => {
@@ -619,7 +615,6 @@ export function useGitPanelController({
           body: JSON.stringify({
             project: selectedProject.projectId,
             files,
-            provider,
           }),
         });
 
@@ -635,7 +630,7 @@ export function useGitPanelController({
         return null;
       }
     },
-    [provider, selectedProject],
+    [selectedProject],
   );
 
   const commitChanges = useCallback(

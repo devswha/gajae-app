@@ -34,7 +34,9 @@ export const decodeListQuery = query => {
   if (limit === 0) throw invalidQuery('limit must be at least 1.');
   const cursor = queryValue(query.cursor, 'cursor');
   if (cursor && !NATIVE_ID.test(cursor)) throw invalidQuery('cursor is invalid.');
-  return { ...(cursor ? { afterCursor: cursor } : {}), ...(limit === undefined ? {} : { limit: Math.min(limit, MAX_LIST_LIMIT) }) };
+  const archived = queryValue(query.archived, 'archived') ?? 'exclude';
+  if (!['exclude', 'include', 'only'].includes(archived)) throw invalidQuery('archived must be exclude, include, or only.');
+  return { archived, ...(cursor ? { afterCursor: cursor } : {}), ...(limit === undefined ? {} : { limit: Math.min(limit, MAX_LIST_LIMIT) }) };
 };
 export const decodeReplayQuery = query => {
   const after = u64(query.cursor, 'cursor');
@@ -43,6 +45,17 @@ export const decodeReplayQuery = query => {
   const byteBudget = rawBudget === undefined ? undefined : Number(rawBudget);
   if (byteBudget !== undefined && (!Number.isSafeInteger(byteBudget) || byteBudget > MAX_SAFE_U64)) throw invalidQuery('byteBudget is outside the supported range.');
   return { ...(after === undefined ? {} : { after }), ...(byteBudget === undefined ? {} : { byteBudget: Math.max(MIN_REPLAY_BYTE_BUDGET, Math.min(MAX_REPLAY_BYTE_BUDGET, byteBudget)) }) };
+};
+export const decodeGitSummariesQuery = query => {
+  const source = queryValue(query.jobIds, 'jobIds');
+  if (!source) throw invalidQuery('jobIds must include between 1 and 50 unique job IDs.');
+  const jobIds = source.split(',');
+  if (jobIds.length > 50 || jobIds.some(jobId => !NATIVE_ID.test(jobId)) || new Set(jobIds).size !== jobIds.length) {
+    throw invalidQuery('jobIds must include between 1 and 50 unique safe job IDs.');
+  }
+  const refresh = queryValue(query.refresh, 'refresh');
+  if (refresh !== undefined && refresh !== 'true') throw invalidQuery('refresh must be true when provided.');
+  return { jobIds, forceRefresh: refresh === 'true' };
 };
 export const statusForGjcError = error => {
   const code = error?.code;
@@ -76,6 +89,10 @@ const jobGit = () => gitService;
 router.post('/jobs', async (req, res) => {
   const message = text(req.body?.message); const projectPath = text(req.body?.projectPath);
   if (!message || !projectPath) return res.status(400).json({ error: 'message and projectPath are required.' });
+  // Managed job worktrees live under <repo>/.gjc-worktrees/<jobId>; accepting one
+  // as a job target would nest worktrees. The client already filters these out,
+  // but the HTTP surface must reject them too (defense in depth for direct calls).
+  if (projectPath.split(/[\\/]/u).includes('.gjc-worktrees')) return res.status(400).json({ error: 'projectPath must not target a managed job worktree.', code: 'managed_worktree_project' });
   try { const appSessionId = appSession(req.body); const handle = await orchestrator.start('gjc', appSessionId, projectPath, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
 });
 router.post('/jobs/:jobId/turns', async (req, res) => {
@@ -95,9 +112,19 @@ router.post('/jobs/:jobId/resume', async (req, res) => {
   try { const handle = await orchestrator.resume(req.params.jobId, appSessionId, message, { writer, provider: 'gjc', appSessionId, model: text(req.body.model), effort: text(req.body.effort) }); return jobResponse(res, handle, appSessionId); } catch (error) { return fail(res, error); }
 });
 router.post('/jobs/:jobId/abort', async (req, res) => { try { return res.status(202).json({ provider: 'gjc', jobId: req.params.jobId, aborted: await orchestrator.abort(req.params.jobId) }); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/archive', async (req, res) => { try { return res.json(await authority.archive({ jobId: req.params.jobId })); } catch (error) { return fail(res, error); } });
+router.post('/jobs/:jobId/unarchive', async (req, res) => { try { return res.json(await authority.unarchive({ jobId: req.params.jobId })); } catch (error) { return fail(res, error); } });
 router.get('/jobs', async (req, res) => {
   try {
     return res.json(listResponse(await authority.list(decodeListQuery(req.query))));
+  } catch (error) {
+    return fail(res, error);
+  }
+});
+router.get('/jobs/git-summaries', async (req, res) => {
+  try {
+    const { jobIds, forceRefresh } = decodeGitSummariesQuery(req.query);
+    return res.json(await jobGit().summaries(jobIds, { forceRefresh }));
   } catch (error) {
     return fail(res, error);
   }

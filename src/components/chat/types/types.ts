@@ -1,4 +1,5 @@
 import type { Project, ProjectSession, LLMProvider } from '../../../types/app';
+import type { CodeEditorDiffInfo } from '../../code-editor/types/types';
 import type {
   MarkSessionIdle,
   MarkSessionProcessing,
@@ -65,27 +66,6 @@ export interface ChatMessage {
   [key: string]: unknown;
 }
 
-export interface ClaudeSettings {
-  allowedTools: string[];
-  disallowedTools: string[];
-  skipPermissions: boolean;
-  projectSortOrder: string;
-  lastUpdated?: string;
-  [key: string]: unknown;
-}
-
-export interface ClaudePermissionSuggestion {
-  toolName: string;
-  entry: string;
-  isAllowed: boolean;
-}
-
-export interface PermissionGrantResult {
-  success: boolean;
-  alreadyAllowed?: boolean;
-  updatedSettings?: ClaudeSettings;
-}
-
 export interface PendingPermissionRequest {
   requestId: string;
   toolName: string;
@@ -122,7 +102,7 @@ export interface ChatInterfaceProps {
   selectedSession: ProjectSession | null;
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
-  onFileOpen?: (filePath: string, diffInfo?: any) => void;
+  onFileOpen?: (filePath: string, diffInfo?: CodeEditorDiffInfo | null) => void;
   onInputFocusChange?: (focused: boolean) => void;
   onSessionProcessing?: MarkSessionProcessing;
   onSessionIdle?: MarkSessionIdle;

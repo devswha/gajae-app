@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { FolderOpen, Hammer } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 
 import type { MainContentHeaderProps } from '../../types/types';
 
@@ -21,7 +20,7 @@ export default function MainContentHeader({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
-  const navigate = useNavigate();
+
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current;
@@ -38,7 +37,6 @@ export default function MainContentHeader({
     observer.observe(el);
     return () => observer.disconnect();
   }, [updateScrollState]);
-
   return (
     <div className="pwa-header-safe flex-shrink-0 border-b border-border/60 bg-background px-3 py-1.5 sm:px-4 sm:py-2">
       <div className="flex items-center justify-between gap-3">
@@ -70,26 +68,18 @@ export default function MainContentHeader({
             <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
           )}
         </div>
-        <button
-          type="button"
-          onClick={onToggleFilesPanel}
-          title={filesPanelOpen ? '파일 패널 닫기' : '파일 패널 열기'}
-          className={`shrink-0 rounded-md p-1.5 transition-colors ${
-            filesPanelOpen
-              ? 'bg-muted text-foreground'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-          }`}
-        >
-          <FolderOpen className="h-4 w-4" />
-        </button>
-        {selectedProject && <button
-          type="button"
-          onClick={() => navigate('/jobs/new', { state: { projectPath: selectedProject.fullPath } })}
-          title="백그라운드 잡으로 위임"
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-        >
-          <Hammer className="h-4 w-4" />
-        </button>}
+          <button
+            type="button"
+            onClick={onToggleFilesPanel}
+            title={filesPanelOpen ? '파일 패널 닫기' : '파일 패널 열기'}
+            className={`shrink-0 rounded-md p-1.5 transition-colors ${
+              filesPanelOpen
+                ? 'bg-muted text-foreground'
+                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+            }`}
+          >
+            <FolderOpen className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>

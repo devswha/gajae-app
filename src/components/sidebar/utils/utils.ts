@@ -65,7 +65,7 @@ const getSessionProvider = (session: ProjectSession): LLMProvider => {
   const provider = session.__provider ?? session.provider;
   return typeof provider === 'string' && provider.trim()
     ? provider as LLMProvider
-    : 'claude';
+    : 'gjc';
 };
 
 export const getSessionDate = (session: SessionWithProvider): Date => {
@@ -145,22 +145,6 @@ export const sortProjects = (
 
   return byName;
 };
-
-export const filterProjects = (projects: Project[], searchFilter: string): Project[] => {
-  const normalizedSearch = searchFilter.trim().toLowerCase();
-  if (!normalizedSearch) {
-    return projects;
-  }
-
-  return projects.filter((project) => {
-    const displayName = (project.displayName || project.projectId).toLowerCase();
-    // `project.path`/`fullPath` is the most useful search target now that the
-    // folder-derived name is gone; fall back to displayName above.
-    const searchPath = (project.path || project.fullPath || '').toLowerCase();
-    return displayName.includes(normalizedSearch) || searchPath.includes(normalizedSearch);
-  });
-};
-
 
 export const normalizeProjectForSettings = (project: Project): SettingsProject => {
   const fallbackPath =

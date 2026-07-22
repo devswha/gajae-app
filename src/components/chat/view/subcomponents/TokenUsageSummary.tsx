@@ -39,6 +39,12 @@ export default function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryP
   const outputTokens = readUsageNumber(usage?.outputTokens ?? breakdown?.output);
   const usedTokens = readUsageNumber(usage?.used) || inputTokens + outputTokens;
 
+  // Zero-usage sessions (e.g. a fresh composer) get no pill — the Codex-style
+  // landing keeps the footer to actual tools only.
+  if (usedTokens <= 0) {
+    return null;
+  }
+
   return (
     <button
       type="button"

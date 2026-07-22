@@ -25,10 +25,9 @@ export function deepLinkPath(rawUrl: unknown): string | null {
     return null;
   }
   if (url.protocol !== 'gajae-app:') return null;
-  // gajae-app://open/job/<id> — URL parses "open" as host, the rest as path.
   const segments = `${url.host}${url.pathname}`.split('/').filter(Boolean);
   if (segments[0] === 'open' && segments[1] === 'job' && /^[A-Za-z0-9._:-]{1,128}$/u.test(segments[2] ?? '')) {
-    return `/jobs/${segments[2]}`;
+    return '/';
   }
   return null;
 }

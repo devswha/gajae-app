@@ -6,18 +6,14 @@
     "renameProject": "Переименовать проект",
     "noProjects": "Проекты не найдены",
     "loadingProjects": "Загрузка проектов...",
-    "searchPlaceholder": "Поиск проектов...",
     "projectNamePlaceholder": "Имя проекта",
     "starred": "Избранное",
     "all": "Все",
     "untitledSession": "Безымянный сеанс",
     "newSession": "Новый сеанс",
-    "codexSession": "Сеанс Codex",
-    "fetchingProjects": "Получение ваших проектов и сеансов Claude",
+    "fetchingProjects": "Получение ваших проектов и сеансов",
     "projects": "проекты",
-    "noMatchingProjects": "Нет подходящих проектов",
-    "tryDifferentSearch": "Попробуйте изменить поисковый запрос",
-    "runClaudeCli": "Запустите Claude CLI в каталоге проекта для начала работы"
+    "createProjectHint": "Создайте проект, чтобы начать"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "Сеансы",
+    "work": "Работа",
+    "newTask": "Новая задача",
+    "newTaskCreatesProject": "Создайте проект, чтобы начать новую задачу",
     "newSession": "Новый сеанс",
     "deleteSession": "Удалить сеанс",
     "renameSession": "Переименовать сеанс",
@@ -32,12 +31,15 @@
     "loadingSessions": "Загрузка сеансов...",
     "unnamed": "Без имени",
     "loading": "Загрузка...",
-    "showMore": "Показать больше сеансов"
+    "showMore": "Показать больше сеансов",
+    "createSessionHint": "Выберите проект и нажмите +, чтобы начать сеанс"
   },
   "tooltips": {
     "viewEnvironments": "Просмотр окружений",
     "hideSidebar": "Скрыть боковую панель",
     "createProject": "Создать новый проект",
+    "createSession": "Создать новый сеанс",
+    "selectProjectToCreateSession": "Сначала выберите проект",
     "refresh": "Обновить проекты и сеансы (Ctrl+R)",
     "renameProject": "Переименовать проект (F2)",
     "deleteProject": "Убрать проект из боковой панели (Delete)",
@@ -48,7 +50,6 @@
     "activeSessionIndicator": "Недавно активный сеанс (последние 10 минут)",
     "save": "Сохранить",
     "cancel": "Отмена",
-    "clearSearch": "Очистить поиск",
     "openCommandPalette": "Открыть палитру команд",
     "attentionRequiredIndicator": "Сессия требует внимания"
   },
@@ -59,6 +60,7 @@
     "terminal": "Терминал"
   },
   "actions": {
+    "search": "Поиск",
     "refresh": "Обновить",
     "settings": "Настройки",
     "collapseAll": "Свернуть все",
@@ -117,22 +119,6 @@
   "version": {
     "updateAvailable": "Доступно обновление",
     "restartRequired": "Обновление установлено — перезапустите сервер для применения"
-  },
-  "search": {
-    "modeProjects": "Проекты",
-    "modeConversations": "Разговоры",
-    "conversationsPlaceholder": "Поиск в разговорах...",
-    "searching": "Поиск...",
-    "noResults": "Результаты не найдены",
-    "tryDifferentQuery": "Попробуйте другой поисковый запрос",
-    "matches_one": "{{count}} совпадение",
-    "matches_few": "{{count}} совпадения",
-    "matches_many": "{{count}} совпадений",
-    "matches_other": "{{count}} совпадений",
-    "projectsScanned_one": "{{count}} проект просканирован",
-    "projectsScanned_few": "{{count}} проекта просканировано",
-    "projectsScanned_many": "{{count}} проектов просканировано",
-    "projectsScanned_other": "{{count}} проектов просканировано"
   },
   "deleteConfirmation": {
     "deleteProject": "Убрать проект",

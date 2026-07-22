@@ -54,18 +54,13 @@ type RegisterOptimisticSessionArgs = {
 
 type ProjectSessionPage = Pick<Project, 'sessions' | 'sessionMeta'>;
 
-const DEFAULT_PROVIDER: LLMProvider = 'claude';
+const DEFAULT_PROVIDER: LLMProvider = 'gjc';
 
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
-const readSelectedProvider = (): LLMProvider => {
-  try {
-    const storedProvider = localStorage.getItem('selected-provider');
-    return storedProvider ? storedProvider as LLMProvider : DEFAULT_PROVIDER;
-  } catch {
-    return DEFAULT_PROVIDER;
-  }
-};
+// Live session creation is GJC-only; historical non-GJC sessions keep their
+// provider from the indexed DB row.
+const readSelectedProvider = (): LLMProvider => DEFAULT_PROVIDER;
 
 const getSessionProvider = (session: ProjectSession): LLMProvider => {
   const provider = session.__provider ?? session.provider;

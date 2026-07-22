@@ -21,12 +21,13 @@ type CreateProjectDependencies = {
   getProjectByPath: (projectPath: string) => ProjectRepositoryRow | null;
 };
 
-type ProjectApiView = {
+export type ProjectApiView = {
   projectId: string;
   path: string;
   fullPath: string;
   displayName: string;
   customName: string | null;
+  origin: 'legacy' | 'explicit' | 'auto';
   isArchived: boolean;
   isStarred: boolean;
   sessions: [];
@@ -75,6 +76,7 @@ function mapProjectRowToApiView(projectRow: ProjectRepositoryRow): ProjectApiVie
     fullPath: projectRow.project_path,
     displayName: resolveDisplayName(projectRow.custom_project_name, projectRow.project_path),
     customName: projectRow.custom_project_name,
+    origin: projectRow.origin ?? 'legacy',
     isArchived: Boolean(projectRow.isArchived),
     isStarred: Boolean(projectRow.isStarred),
     sessions: [],
@@ -150,6 +152,29 @@ export async function createProject(
     outcome: persistedProject.outcome,
     project: mapProjectRowToApiView(projectRow),
   };
+}
+/**
+ * Promotes a project to an explicit user-created project without changing its
+ * archive state.
+ */
+export function promoteProjectOrigin(projectId: string): ProjectApiView {
+  const normalizedProjectId = projectId.trim();
+  if (!normalizedProjectId) {
+    throw new AppError('Project ID is required.', {
+      code: 'PROJECT_ID_REQUIRED',
+      statusCode: 400,
+    });
+  }
+
+  const projectRow = projectsDb.promoteProjectOriginById(normalizedProjectId) ?? projectsDb.getProjectById(normalizedProjectId);
+  if (!projectRow) {
+    throw new AppError(`Project "${projectId}" was not found.`, {
+      code: 'PROJECT_NOT_FOUND',
+      statusCode: 404,
+    });
+  }
+
+  return mapProjectRowToApiView(projectRow);
 }
 
 /**

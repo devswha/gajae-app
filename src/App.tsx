@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -6,7 +6,9 @@ import { AuthProvider, ProtectedRoute } from './components/auth';
 import { WebSocketProvider } from './contexts/WebSocketContext';
 import AppContent from './components/app/AppContent';
 import DesktopDeepLinkBridge from './components/app/DesktopDeepLinkBridge';
+import { appShellRoutePaths, rootFallbackRoutePath } from './components/app/appRoutes';
 import i18n from './i18n/config.js';
+
 
 const DEPLOYMENT_ASSET_DIRECTORIES = new Set(['assets', 'static', 'icons', 'images']);
 
@@ -110,10 +112,8 @@ export default function App() {
               <Router basename={routerBasename}>
                 <DesktopDeepLinkBridge />
                 <Routes>
-                  <Route path="/" element={<AppContent />} />
-                  <Route path="/session/:sessionId" element={<AppContent />} />
-                  <Route path="/jobs/new" element={<AppContent />} />
-                  <Route path="/jobs/:jobId" element={<AppContent />} />
+                  {appShellRoutePaths.map((path) => <Route key={path} path={path} element={<AppContent />} />)}
+                  <Route path={rootFallbackRoutePath} element={<Navigate to="/" replace />} />
                 </Routes>
               </Router>
             </ProtectedRoute>

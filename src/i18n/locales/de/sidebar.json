@@ -6,18 +6,14 @@
     "renameProject": "Projekt umbenennen",
     "noProjects": "Keine Projekte gefunden",
     "loadingProjects": "Projekte werden geladen...",
-    "searchPlaceholder": "Projekte durchsuchen...",
     "projectNamePlaceholder": "Projektname",
     "starred": "Favoriten",
     "all": "Alle",
     "untitledSession": "Unbenannte Sitzung",
     "newSession": "Neue Sitzung",
-    "codexSession": "Codex-Sitzung",
-    "fetchingProjects": "Deine Claude-Projekte und -Sitzungen werden abgerufen",
+    "fetchingProjects": "Deine Projekte und Sitzungen werden abgerufen",
     "projects": "Projekte",
-    "noMatchingProjects": "Keine passenden Projekte",
-    "tryDifferentSearch": "Versuch, den Suchbegriff anzupassen",
-    "runClaudeCli": "Führ Claude CLI in einem Projektverzeichnis aus, um zu beginnen"
+    "createProjectHint": "Erstell ein Projekt, um zu beginnen"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "Sitzungen",
+    "work": "Arbeit",
+    "newTask": "Neue Aufgabe",
+    "newTaskCreatesProject": "Erstelle ein Projekt, um eine neue Aufgabe zu starten",
     "newSession": "Neue Sitzung",
     "deleteSession": "Sitzung löschen",
     "renameSession": "Sitzung umbenennen",
@@ -32,12 +31,15 @@
     "loadingSessions": "Sitzungen werden geladen...",
     "unnamed": "Unbenannt",
     "loading": "Lädt...",
-    "showMore": "Weitere Sitzungen anzeigen"
+    "showMore": "Weitere Sitzungen anzeigen",
+    "createSessionHint": "Wähle ein Projekt und starte mit + eine Sitzung"
   },
   "tooltips": {
     "viewEnvironments": "Umgebungen anzeigen",
     "hideSidebar": "Seitenleiste ausblenden",
     "createProject": "Neues Projekt erstellen",
+    "createSession": "Neue Sitzung erstellen",
+    "selectProjectToCreateSession": "Wähle zuerst ein Projekt aus",
     "refresh": "Projekte und Sitzungen aktualisieren (Strg+R)",
     "renameProject": "Projekt umbenennen (F2)",
     "deleteProject": "Projekt aus Seitenleiste entfernen (Entf)",
@@ -48,7 +50,6 @@
     "activeSessionIndicator": "Kürzlich aktive Sitzung (letzte 10 Minuten)",
     "save": "Speichern",
     "cancel": "Abbrechen",
-    "clearSearch": "Suche leeren",
     "openCommandPalette": "Befehlspalette öffnen",
     "attentionRequiredIndicator": "Sitzung erfordert Aufmerksamkeit"
   },
@@ -59,6 +60,7 @@
     "terminal": "Terminal"
   },
   "actions": {
+    "search": "Suchen",
     "refresh": "Aktualisieren",
     "settings": "Einstellungen",
     "collapseAll": "Alle einklappen",
@@ -117,18 +119,6 @@
   "version": {
     "updateAvailable": "Update verfügbar",
     "restartRequired": "Update installiert – zum Anwenden Server neu starten"
-  },
-  "search": {
-    "modeProjects": "Projekte",
-    "modeConversations": "Unterhaltungen",
-    "conversationsPlaceholder": "In Unterhaltungen suchen...",
-    "searching": "Sucht...",
-    "noResults": "Keine Ergebnisse gefunden",
-    "tryDifferentQuery": "Versuch eine andere Suchanfrage",
-    "matches_one": "{{count}} Treffer",
-    "matches_other": "{{count}} Treffer",
-    "projectsScanned_one": "{{count}} Projekt durchsucht",
-    "projectsScanned_other": "{{count}} Projekte durchsucht"
   },
   "deleteConfirmation": {
     "deleteProject": "Projekt entfernen",

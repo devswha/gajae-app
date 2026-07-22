@@ -212,5 +212,9 @@
   },
   "projectSelection": {
     "startChatWithProvider": "Выберите проект для начала чата с {{provider}}"
+  },
+  "newSession": {
+    "greeting": "Что будем создавать сегодня?",
+    "subtitle": "Gajae Code готов работать в проекте {{project}}."
   }
 }

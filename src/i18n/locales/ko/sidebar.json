@@ -6,18 +6,14 @@
     "renameProject": "프로젝트 이름 변경",
     "noProjects": "프로젝트가 없습니다",
     "loadingProjects": "프로젝트 로딩 중...",
-    "searchPlaceholder": "프로젝트 검색...",
     "projectNamePlaceholder": "프로젝트 이름",
     "starred": "즐겨찾기",
     "all": "전체",
     "untitledSession": "제목 없는 세션",
     "newSession": "새 세션",
-    "codexSession": "Codex 세션",
-    "fetchingProjects": "Claude 프로젝트와 세션을 가져오는 중",
+    "fetchingProjects": "프로젝트와 세션을 가져오는 중",
     "projects": "프로젝트",
-    "noMatchingProjects": "일치하는 프로젝트 없음",
-    "tryDifferentSearch": "검색어를 변경해보세요",
-    "runClaudeCli": "프로젝트 디렉토리에서 Claude CLI를 실행하여 시작하세요"
+    "createProjectHint": "프로젝트를 만들어 시작하세요"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "세션",
+    "work": "작업",
+    "newTask": "새 작업",
+    "newTaskCreatesProject": "새 작업을 시작할 프로젝트를 만드세요",
     "newSession": "새 세션",
     "deleteSession": "세션 삭제",
     "renameSession": "세션 이름 변경",
@@ -32,12 +31,15 @@
     "loadingSessions": "세션 로딩 중...",
     "unnamed": "이름 없음",
     "loading": "로딩 중...",
-    "showMore": "더 많은 세션 보기"
+    "showMore": "더 많은 세션 보기",
+    "createSessionHint": "프로젝트를 선택하고 + 버튼으로 세션을 시작하세요"
   },
   "tooltips": {
     "viewEnvironments": "환경 보기",
     "hideSidebar": "사이드바 숨기기",
     "createProject": "새 프로젝트 생성",
+    "createSession": "새 세션 생성",
+    "selectProjectToCreateSession": "세션을 만들려면 먼저 프로젝트를 선택하세요",
     "refresh": "프로젝트 및 세션 새로고침 (Ctrl+R)",
     "renameProject": "프로젝트 이름 변경 (F2)",
     "deleteProject": "사이드바에서 프로젝트 제거 (Delete)",
@@ -58,6 +60,7 @@
     "terminal": "터미널"
   },
   "actions": {
+    "search": "검색",
     "refresh": "새로고침",
     "settings": "설정",
     "collapseAll": "모두 접기",

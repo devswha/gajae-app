@@ -88,7 +88,7 @@ function resolveResumeSessionId(
 ): string {
   const hasSession = readBoolean(message.hasSession);
   const sessionId = readString(message.sessionId);
-  const provider = readString(message.provider, 'claude');
+  const provider = readString(message.provider, 'gjc');
 
   if (!hasSession || !sessionId) {
     return '';
@@ -119,7 +119,7 @@ function buildShellCommand(
 ): string {
   const hasSession = readBoolean(message.hasSession);
   const initialCommand = readString(message.initialCommand);
-  const provider = readString(message.provider, 'claude');
+  const provider = readString(message.provider, 'gjc');
   const resumeSessionId = resolveResumeSessionId(message, dependencies);
   const isPlainShell =
     readBoolean(message.isPlainShell) ||
@@ -130,38 +130,18 @@ function buildShellCommand(
     return initialCommand;
   }
 
-  if (provider === 'cursor') {
-    if (resumeSessionId) {
-      return `cursor-agent --resume="${resumeSessionId}"`;
-    }
-    return 'cursor-agent';
-  }
-
-  if (provider === 'codex') {
+  // GJC is the only runnable provider; historical non-GJC sessions are
+  // read-only in the UI and never reach this code.
+  if (provider === 'gjc') {
     if (resumeSessionId) {
       if (os.platform() === 'win32') {
-        return `codex resume "${resumeSessionId}"; if ($LASTEXITCODE -ne 0) { codex }`;
+        return `gjc --resume "${resumeSessionId}"; if ($LASTEXITCODE -ne 0) { gjc }`;
       }
-      return `codex resume "${resumeSessionId}" || codex`;
+      return `gjc --resume "${resumeSessionId}" || gjc`;
     }
-    return 'codex';
+    return initialCommand || 'gjc';
   }
-
-  if (provider === 'opencode') {
-    if (resumeSessionId) {
-      return `opencode --session "${resumeSessionId}"`;
-    }
-    return initialCommand || 'opencode';
-  }
-
-  const command = initialCommand || 'claude';
-  if (resumeSessionId) {
-    if (os.platform() === 'win32') {
-      return `claude --resume "${resumeSessionId}"; if ($LASTEXITCODE -ne 0) { claude }`;
-    }
-    return `claude --resume "${resumeSessionId}" || claude`;
-  }
-  return command;
+  return initialCommand;
 }
 
 function readEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -245,7 +225,7 @@ export function handleShellConnection(
         const projectPath = readString(data.projectPath, process.cwd());
         const sessionId = readString(data.sessionId) || null;
         const hasSession = readBoolean(data.hasSession);
-        const provider = readString(data.provider, 'claude');
+        const provider = readString(data.provider, 'gjc');
         const initialCommand = readString(data.initialCommand);
         const forceRestart = readBoolean(data.forceRestart);
         const isPlainShell =
@@ -469,14 +449,9 @@ export function handleShellConnection(
 
         let welcomeMsg = `\x1b[36mStarting terminal in: ${projectPath}\x1b[0m\r\n`;
         if (!isPlainShell) {
-          const providerName =
-            provider === 'cursor'
-              ? 'Cursor'
-              : provider === 'codex'
-                ? 'Codex'
-                : provider === 'opencode'
-                    ? 'OpenCode'
-                  : 'Claude';
+          // Only 'gjc' can start a live session; anything else is a historical
+          // id that the read-only UI never sends here.
+          const providerName = 'Gajae Code';
           welcomeMsg = hasSession && resumeSessionId
             ? `\x1b[36mResuming ${providerName} session ${resumeSessionId} in: ${projectPath}\x1b[0m\r\n`
             : `\x1b[36mStarting new ${providerName} session in: ${projectPath}\x1b[0m\r\n`;

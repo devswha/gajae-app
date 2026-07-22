@@ -58,6 +58,8 @@ type ModelOption = {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
+  gjc: 'Gajae Code',
+  // Legacy providers only appear on historical read-only sessions.
   claude: 'Claude',
   cursor: 'Cursor',
   codex: 'Codex',
@@ -68,7 +70,7 @@ const FALLBACK_COMMANDS: CommandEntry[] = [
   { name: '/models', description: 'Browse available models for the active provider.' },
   { name: '/cost', description: 'Review token usage for the active session.' },
   { name: '/status', description: 'Inspect runtime, version, provider, and environment status.' },
-  { name: '/memory', description: 'Open the project CLAUDE.md memory file.' },
+  { name: '/memory', description: 'Open the project memory file.' },
   { name: '/config', description: 'Open settings and configuration.' },
   { name: '/help', description: 'Show command documentation and syntax.' },
 ];
@@ -246,7 +248,7 @@ function ModelsContent({
   const [changingModel, setChangingModel] = useState<string | null>(null);
   const [pendingSessionModel, setPendingSessionModel] = useState<string | null>(null);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
-  const currentProvider = (data?.current?.provider || 'claude') as LLMProvider;
+  const currentProvider = (data?.current?.provider || 'gjc') as LLMProvider;
   const currentModel = data?.current?.model || 'Unknown';
   const providerLabel = data?.current?.providerLabel || getProviderLabel(currentProvider);
   const liveDefinition = providerModelCatalog[currentProvider];
@@ -479,7 +481,7 @@ function CostContent({ data }: { data: CostCommandData }) {
 function StatusContent({ data }: { data: StatusCommandData }) {
   const memoryRssMb = data.memoryUsage?.rssMb;
   const rows = [
-    { label: 'Package', value: data.packageName || 'claude-code-ui', icon: Package },
+    { label: 'Package', value: data.packageName || 'gajae-app', icon: Package },
     { label: 'Version', value: data.version || 'Unknown', icon: BadgeCheck, tone: 'success' as const },
     { label: 'Uptime', value: data.uptime || 'Unknown', icon: Timer },
     { label: 'Provider', value: getProviderLabel(data.provider, data.provider || 'Unknown'), icon: Server, tone: 'primary' as const },

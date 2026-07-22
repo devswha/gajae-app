@@ -3,8 +3,8 @@ import { test } from 'node:test';
 
 import { deepLinkPath } from '../DesktopDeepLinkBridge';
 
-test('gajae-app job deep links map to the job route', () => {
-  assert.equal(deepLinkPath('gajae-app://open/job/job-7fb9426de036'), '/jobs/job-7fb9426de036');
+test('gajae-app job deep links return to the root shell', () => {
+  assert.equal(deepLinkPath('gajae-app://open/job/job-7fb9426de036'), '/');
 });
 
 test('foreign schemes, malformed urls, and unknown shapes are rejected', () => {

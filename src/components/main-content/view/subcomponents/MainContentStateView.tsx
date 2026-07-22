@@ -5,7 +5,11 @@ import type { MainContentStateViewProps } from '../../types/types';
 
 import MobileMenuButton from './MobileMenuButton';
 
-export default function MainContentStateView({ mode, isMobile, onMenuClick }: MainContentStateViewProps) {
+export default function MainContentStateView({
+  mode,
+  isMobile,
+  onMenuClick,
+}: MainContentStateViewProps) {
   const { t } = useTranslation();
 
   const isLoading = mode === 'loading';

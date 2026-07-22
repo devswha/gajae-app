@@ -6,7 +6,7 @@ import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useSidebarController } from '../hooks/useSidebarController';
 import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
-import type { LLMProvider } from '../../../types/app';
+import type { LLMProvider, Project } from '../../../types/app';
 import type { SidebarProps } from '../types/types';
 
 import SidebarCollapsed from './subcomponents/SidebarCollapsed';
@@ -53,18 +53,12 @@ function Sidebar({
     isRefreshing,
     editingSession,
     editingSessionName,
-    searchFilter,
-    searchMode,
-    setSearchMode,
-    conversationResults,
-    isSearching,
-    searchProgress,
-    clearConversationResults,
-    runningSessionsCount,
     deletingProjects,
     deleteConfirmation,
     sessionDeleteConfirmation,
     filteredProjects,
+    isArchiveOpen,
+    archiveLoadError,
     archivedProjects,
     archivedSessions,
     archivedSessionsCount,
@@ -87,6 +81,8 @@ function Sidebar({
     openArchivedSession,
     restoreArchivedProject,
     restoreArchivedSession,
+    openArchive,
+    closeArchive,
     refreshProjects,
     updateSessionSummary,
     collapseSidebar: handleCollapseSidebar,
@@ -95,14 +91,12 @@ function Sidebar({
     setEditingName,
     setEditingSession,
     setEditingSessionName,
-    setSearchFilter,
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
   } = useSidebarController({
     projects,
     selectedProject,
     selectedSession,
-    activeSessions,
     isLoading,
     isMobile,
     t,
@@ -129,9 +123,18 @@ function Sidebar({
     void paletteOps.refreshProjects();
   };
 
+  // Sandbox project visibility: a clean first run shows nothing (Codex-style),
+  // because every pre-existing project is discovered as 'legacy'/'auto'. Only
+  // projects the user explicitly creates or opens in-app ('explicit') surface in
+  // the sidebar, and they persist across relaunches via the DB. Backend rows are
+  // untouched, so this is fully reversible by removing the filter.
+  const isSandboxVisibleProject = (project: Project) => project.origin === 'explicit';
+  const sandboxProjects = projects.filter(isSandboxVisibleProject);
+  const sandboxFilteredProjects = filteredProjects.filter(isSandboxVisibleProject);
+
   const projectListProps: SidebarProjectListProps = {
-    projects,
-    filteredProjects,
+    projects: sandboxProjects,
+    filteredProjects: sandboxFilteredProjects,
     selectedProject,
     selectedSession,
     isLoading,
@@ -148,7 +151,6 @@ function Sidebar({
     loadingMoreProjects,
     activeSessions,
     attentionSessionIds,
-    forceExpanded: searchMode === 'running',
     isProjectStarred,
     onEditingNameChange: setEditingName,
     onToggleProject: toggleProject,
@@ -209,24 +211,14 @@ function Sidebar({
         <SidebarContent
             isPWA={isPWA}
             isMobile={isMobile}
-            isLoading={isLoading}
-            projects={projects}
-            runningSessionsCount={runningSessionsCount}
+            isArchiveOpen={isArchiveOpen}
             archivedProjects={archivedProjects}
             archivedSessions={archivedSessions}
             archivedSessionsCount={archivedSessionsCount}
             isArchivedSessionsLoading={isArchivedSessionsLoading}
-            searchFilter={searchFilter}
-            onSearchFilterChange={setSearchFilter}
-            onClearSearchFilter={() => setSearchFilter('')}
-            searchMode={searchMode}
-            onSearchModeChange={(mode) => {
-              setSearchMode(mode);
-              if (mode === 'projects') clearConversationResults();
-            }}
-            conversationResults={conversationResults}
-            isSearching={isSearching}
-            searchProgress={searchProgress}
+            archiveLoadError={archiveLoadError}
+            onOpenArchive={openArchive}
+            onCloseArchive={closeArchive}
             onRestoreArchivedProject={restoreArchivedProject}
             onArchivedSessionClick={openArchivedSession}
             onRestoreArchivedSession={restoreArchivedSession}
@@ -239,37 +231,11 @@ function Sidebar({
                 { isArchived: true },
               );
             }}
-            onConversationResultClick={(projectId: string | null, sessionId: string, provider: string, messageTimestamp?: string | null, messageSnippet?: string | null) => {
-              // `projectId` (DB key) is the canonical identifier post-migration.
-              // The server emits null when it can't resolve a project row for
-              // the search hit; treat that as "no project" and still navigate
-              // to the session so the user can open it from the URL.
-              const resolvedProvider = (provider || 'claude') as LLMProvider;
-              const project = projectId ? projects.find(p => p.projectId === projectId) : null;
-              const searchTarget = { __searchTargetTimestamp: messageTimestamp || null, __searchTargetSnippet: messageSnippet || null };
-              const sessionObj = {
-                id: sessionId,
-                __provider: resolvedProvider,
-                __projectId: projectId ?? undefined,
-                ...searchTarget,
-              };
-              if (project) {
-                handleProjectSelect(project);
-                const sessions = getProjectSessions(project);
-                const existing = sessions.find(s => s.id === sessionId);
-                if (existing) {
-                  handleSessionClick({ ...existing, ...searchTarget }, project.projectId);
-                } else {
-                  handleSessionClick(sessionObj, project.projectId);
-                }
-              } else {
-                handleSessionClick(sessionObj, projectId ?? '');
-              }
-            }}
             onRefresh={() => {
               void refreshProjects();
             }}
             isRefreshing={isRefreshing}
+            onSearch={paletteOps.openCommandPalette}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}
             currentVersion={currentVersion}

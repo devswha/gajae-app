@@ -214,5 +214,9 @@
   },
   "projectSelection": {
     "startChatWithProvider": "Sélectionnez un projet pour commencer à chatter avec {{provider}}"
+  },
+  "newSession": {
+    "greeting": "Que construisons-nous aujourd’hui ?",
+    "subtitle": "Gajae Code est prêt à travailler dans {{project}}."
   }
 }

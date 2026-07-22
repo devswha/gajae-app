@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { createProject, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
+import { createProject, promoteProjectOrigin, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
 import { startCloneProject } from '@/modules/projects/services/project-clone.service.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 import { getArchivedProjectsWithSessions, getProjectSessionsPage, getProjectsWithSessions } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
@@ -88,6 +88,21 @@ router.get(
     const sessionsOffset = readOptionalNumericQueryValue(req.query.sessionsOffset) ?? undefined;
     const projects = await getArchivedProjectsWithSessions({ sessionsLimit, sessionsOffset });
     res.json(createApiSuccessResponse({ projects }));
+  }),
+);
+router.post(
+  '/:projectId/promote',
+  asyncHandler(async (req, res) => {
+    const projectId = typeof req.params.projectId === 'string' ? req.params.projectId.trim() : '';
+    if (!projectId) {
+      throw new AppError('projectId is required', {
+        code: 'PROJECT_ID_REQUIRED',
+        statusCode: 400,
+      });
+    }
+
+    const project = promoteProjectOrigin(projectId);
+    res.json({ success: true, project });
   }),
 );
 

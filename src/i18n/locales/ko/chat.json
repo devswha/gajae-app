@@ -212,5 +212,9 @@
   },
   "projectSelection": {
     "startChatWithProvider": "{{provider}}와 채팅을 시작하려면 프로젝트를 선택하세요"
+  },
+  "newSession": {
+    "greeting": "오늘은 무엇을 만들어볼까요?",
+    "subtitle": "{{project}} 프로젝트에서 Gajae Code가 준비됐습니다."
   }
 }

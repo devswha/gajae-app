@@ -6,18 +6,14 @@
     "renameProject": "Rename Project",
     "noProjects": "No projects found",
     "loadingProjects": "Loading projects...",
-    "searchPlaceholder": "Search projects...",
     "projectNamePlaceholder": "Project name",
     "starred": "Starred",
     "all": "All",
     "untitledSession": "Untitled Session",
     "newSession": "New Session",
-    "codexSession": "Codex Session",
-    "fetchingProjects": "Fetching your Claude projects and sessions",
+    "fetchingProjects": "Fetching your projects and sessions",
     "projects": "projects",
-    "noMatchingProjects": "No matching projects",
-    "tryDifferentSearch": "Try adjusting your search term",
-    "runClaudeCli": "Run Claude CLI in a project directory to get started"
+    "createProjectHint": "Create a project to get started"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "Sessions",
+    "work": "Work",
+    "newTask": "New task",
+    "newTaskCreatesProject": "Create a project to start a new task",
     "newSession": "New Session",
     "deleteSession": "Delete Session",
     "renameSession": "Rename Session",
@@ -32,12 +31,15 @@
     "loadingSessions": "Loading sessions...",
     "unnamed": "Unnamed",
     "loading": "Loading...",
-    "showMore": "Show more sessions"
+    "showMore": "Show more sessions",
+    "createSessionHint": "Select a project and use + to start a session"
   },
   "tooltips": {
     "viewEnvironments": "View Environments",
     "hideSidebar": "Hide sidebar",
     "createProject": "Create new project",
+    "createSession": "Create new session",
+    "selectProjectToCreateSession": "Select a project before creating a session",
     "refresh": "Refresh projects and sessions (Ctrl+R)",
     "renameProject": "Rename project (F2)",
     "deleteProject": "Remove project from sidebar (Delete)",
@@ -48,7 +50,6 @@
     "activeSessionIndicator": "Recently active session (last 10 minutes)",
     "save": "Save",
     "cancel": "Cancel",
-    "clearSearch": "Clear search",
     "openCommandPalette": "Open command palette",
     "attentionRequiredIndicator": "Session needs attention"
   },
@@ -59,6 +60,7 @@
     "terminal": "Terminal"
   },
   "actions": {
+    "search": "Search",
     "refresh": "Refresh",
     "settings": "Settings",
     "collapseAll": "Collapse All",
@@ -117,18 +119,6 @@
   "version": {
     "updateAvailable": "Update available",
     "restartRequired": "Update installed — restart the server to apply"
-  },
-  "search": {
-    "modeProjects": "Projects",
-    "modeConversations": "Conversations",
-    "conversationsPlaceholder": "Search in conversations...",
-    "searching": "Searching...",
-    "noResults": "No results found",
-    "tryDifferentQuery": "Try a different search query",
-    "matches_one": "{{count}} match",
-    "matches_other": "{{count}} matches",
-    "projectsScanned_one": "{{count}} project scanned",
-    "projectsScanned_other": "{{count}} projects scanned"
   },
   "deleteConfirmation": {
     "deleteProject": "Remove Project",

@@ -6,18 +6,14 @@
     "renameProject": "Renommer le projet",
     "noProjects": "Aucun projet trouvé",
     "loadingProjects": "Chargement des projets...",
-    "searchPlaceholder": "Rechercher des projets...",
     "projectNamePlaceholder": "Nom du projet",
     "starred": "Favoris",
     "all": "Tous",
     "untitledSession": "Session sans titre",
     "newSession": "Nouvelle session",
-    "codexSession": "Session Codex",
-    "fetchingProjects": "Récupération de vos projets et sessions Claude",
+    "fetchingProjects": "Récupération de vos projets et sessions",
     "projects": "projets",
-    "noMatchingProjects": "Aucun projet correspondant",
-    "tryDifferentSearch": "Essayez d'ajuster votre terme de recherche",
-    "runClaudeCli": "Exécutez le CLI Claude dans un répertoire de projet pour commencer"
+    "createProjectHint": "Créez un projet pour commencer"
   },
   "app": {
     "title": "가재코드",
@@ -25,6 +21,9 @@
   },
   "sessions": {
     "title": "Sessions",
+    "work": "Travail",
+    "newTask": "Nouvelle tâche",
+    "newTaskCreatesProject": "Créez un projet pour démarrer une nouvelle tâche",
     "newSession": "Nouvelle session",
     "deleteSession": "Supprimer la session",
     "renameSession": "Renommer la session",
@@ -32,12 +31,15 @@
     "loadingSessions": "Chargement des sessions...",
     "unnamed": "Sans nom",
     "loading": "Chargement...",
-    "showMore": "Afficher plus de sessions"
+    "showMore": "Afficher plus de sessions",
+    "createSessionHint": "Sélectionnez un projet et utilisez + pour démarrer une session"
   },
   "tooltips": {
     "viewEnvironments": "Voir les environnements",
     "hideSidebar": "Masquer la barre latérale",
     "createProject": "Créer un nouveau projet",
+    "createSession": "Créer une nouvelle session",
+    "selectProjectToCreateSession": "Sélectionnez d’abord un projet",
     "refresh": "Actualiser les projets et sessions (Ctrl+R)",
     "renameProject": "Renommer le projet (F2)",
     "deleteProject": "Retirer le projet de la barre latérale (Suppr)",
@@ -48,7 +50,6 @@
     "activeSessionIndicator": "Session récemment active (10 dernières minutes)",
     "save": "Enregistrer",
     "cancel": "Annuler",
-    "clearSearch": "Effacer la recherche",
     "openCommandPalette": "Ouvrir la palette de commandes",
     "attentionRequiredIndicator": "La session nécessite votre attention"
   },
@@ -59,6 +60,7 @@
     "terminal": "Terminal"
   },
   "actions": {
+    "search": "Rechercher",
     "refresh": "Actualiser",
     "settings": "Paramètres",
     "collapseAll": "Tout réduire",
@@ -117,18 +119,6 @@
   "version": {
     "updateAvailable": "Mise à jour disponible",
     "restartRequired": "Mise à jour installée — redémarrez le serveur pour l'appliquer"
-  },
-  "search": {
-    "modeProjects": "Projets",
-    "modeConversations": "Conversations",
-    "conversationsPlaceholder": "Rechercher dans les conversations...",
-    "searching": "Recherche en cours...",
-    "noResults": "Aucun résultat trouvé",
-    "tryDifferentQuery": "Essayez une autre requête de recherche",
-    "matches_one": "{{count}} résultat",
-    "matches_other": "{{count}} résultats",
-    "projectsScanned_one": "{{count}} projet analysé",
-    "projectsScanned_other": "{{count}} projets analysés"
   },
   "deleteConfirmation": {
     "deleteProject": "Supprimer le projet",

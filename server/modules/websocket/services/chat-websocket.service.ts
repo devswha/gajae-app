@@ -11,7 +11,7 @@ import type {
   AuthenticatedWebSocketRequest,
   LLMProvider,
 } from '@/shared/types.js';
-import { parseIncomingJsonObject } from '@/shared/utils.js';
+import { createNormalizedMessage, parseIncomingJsonObject } from '@/shared/utils.js';
 import type { GjcJobProjectionService } from '@/modules/websocket/services/gjc-job-projection.service.js';
 
 /**
@@ -78,12 +78,6 @@ type ChatWebSocketDependencies = {
   ) => void;
   /** Provider-runtime approvals included in `chat_subscribed` after reconnect. */
   getPendingApprovalsForSession: (providerSessionId: string) => unknown[];
-  gjcResume?: (
-    appSessionId: string,
-    command: string,
-    options: AnyRecord,
-    writer: unknown
-  ) => Promise<unknown>;
   gjcProjection?: GjcJobProjectionService;
 };
 
@@ -152,8 +146,7 @@ async function handleChatSend(
   ws: WebSocket,
   userId: string | number | null,
   data: AnyRecord,
-  dependencies: ChatWebSocketDependencies,
-  resumeGjcJob = false
+  dependencies: ChatWebSocketDependencies
 ): Promise<void> {
   const sessionId = readRequiredSessionId(data);
   if (!sessionId) {
@@ -176,14 +169,6 @@ async function handleChatSend(
   const spawnFn = dependencies.spawnFns[provider];
   if (!spawnFn) {
     sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', `Provider "${provider}" is not available.`, sessionId);
-    return;
-  }
-  if (resumeGjcJob && provider !== 'gjc') {
-    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', 'gjc.job.resume requires a GJC session.', sessionId);
-    return;
-  }
-  if (resumeGjcJob && !dependencies.gjcResume) {
-    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', 'GJC job resume is not available.', sessionId);
     return;
   }
 
@@ -219,14 +204,12 @@ async function handleChatSend(
     images: filterImagesToUploadStore(clientOptions.images),
     sessionId: session.provider_session_id ?? undefined,
     resume: Boolean(session.provider_session_id),
-    cwd: clientOptions.cwd ?? session.project_path ?? undefined,
-    projectPath: session.project_path ?? clientOptions.projectPath,
+    cwd: session.project_path ?? undefined,
+    projectPath: session.project_path ?? undefined,
   };
 
   try {
-    const providerRun = resumeGjcJob
-      ? dependencies.gjcResume!(sessionId, command, runtimeOptions, run.writer)
-      : spawnFn(command, runtimeOptions, run.writer);
+    const providerRun = spawnFn(command, runtimeOptions, run.writer);
     if (provider === 'gjc') {
       const abortHandle = (providerRun as ProviderSpawnResult).abortHandle;
       if (abortHandle) {
@@ -242,6 +225,13 @@ async function handleChatSend(
       : null;
     if (provider === 'gjc' && code) {
       sendProtocolError(ws, code, message, sessionId);
+    } else {
+      run.writer.send(createNormalizedMessage({
+        kind: 'error',
+        provider,
+        sessionId: session.provider_session_id ?? sessionId,
+        content: message,
+      }));
     }
   } finally {
     // Safety net: a runtime that crashed (or resolved) without emitting its
@@ -277,7 +267,7 @@ async function handleChatAbort(
 
   const abortFn = dependencies.abortFns[run.provider];
   const abortSessionId = run.provider === 'gjc'
-    ? sessionId
+    ? run.writer.getAbortHandle() ?? run.providerSessionId
     : run.providerSessionId ?? run.writer.getAbortHandle();
   let success = false;
   try {
@@ -402,7 +392,6 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.abort`               { sessionId }
- * - `gjc.job.resume`           { sessionId, content, options? }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
  *
@@ -440,9 +429,6 @@ export function handleChatConnection(
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);
-          return;
-        case 'gjc.job.resume':
-          await handleChatSend(ws, userId, data, dependencies, true);
           return;
         case 'chat.subscribe':
           handleChatSubscribe(ws, data, dependencies);
